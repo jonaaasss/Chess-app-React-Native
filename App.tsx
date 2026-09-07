@@ -1,8 +1,19 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator, NativeStackScreenProps } from '@react-navigation/native-stack';
+import * as SplashScreen from 'expo-splash-screen';
+import {
+  useFonts,
+  Inter_400Regular,
+  Inter_500Medium,
+  Inter_600SemiBold,
+  Inter_700Bold,
+  Inter_800ExtraBold
+} from '@expo-google-fonts/inter';
 import { ensureSeeded } from './src/storage';
 import type { GroupId } from './src/types';
 import { colors } from './src/theme';
@@ -12,59 +23,111 @@ import { RepertoiresScreen } from './src/screens/RepertoiresScreen';
 import { OpeningsScreen } from './src/screens/OpeningsScreen';
 import { CardsScreen } from './src/screens/CardsScreen';
 
-type ViewState =
-  | { name: 'home' }
-  | { name: 'repertoires'; group: GroupId }
-  | { name: 'openings'; repertoireId: string }
-  | { name: 'cards'; openingId: string };
+// One param list shared by the native stack — each screen still receives
+// plain callback props (via the wrappers below) so the screen components
+// themselves stay untouched; only this file knows about navigation.
+type RootStackParamList = {
+  Home: undefined;
+  Repertoires: { group: GroupId };
+  Openings: { repertoireId: string };
+  Cards: { openingId: string };
+};
+
+const Stack = createNativeStackNavigator<RootStackParamList>();
+
+SplashScreen.preventAutoHideAsync().catch(() => {});
+
+function HomeRoute({ navigation }: NativeStackScreenProps<RootStackParamList, 'Home'>) {
+  return (
+    <HomeScreen onOpenGroup={(group) => navigation.navigate('Repertoires', { group })} />
+  );
+}
+
+function RepertoiresRoute({ navigation, route }: NativeStackScreenProps<RootStackParamList, 'Repertoires'>) {
+  return (
+    <RepertoiresScreen
+      group={route.params.group}
+      onBack={() => navigation.goBack()}
+      onOpenRepertoire={(repertoireId) => navigation.navigate('Openings', { repertoireId })}
+    />
+  );
+}
+
+function OpeningsRoute({ navigation, route }: NativeStackScreenProps<RootStackParamList, 'Openings'>) {
+  return (
+    <OpeningsScreen
+      repertoireId={route.params.repertoireId}
+      onBack={() => navigation.goBack()}
+      onOpenOpening={(openingId) => navigation.navigate('Cards', { openingId })}
+    />
+  );
+}
+
+function CardsRoute({ navigation, route }: NativeStackScreenProps<RootStackParamList, 'Cards'>) {
+  return <CardsScreen openingId={route.params.openingId} onBack={() => navigation.goBack()} />;
+}
 
 export default function App() {
-  const [stack, setStack] = useState<ViewState[]>([{ name: 'home' }]);
-  const [ready, setReady] = useState(false);
+  const [dataReady, setDataReady] = useState(false);
+  const [fontsLoaded] = useFonts({
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
+    Inter_700Bold,
+    Inter_800ExtraBold
+  });
+  const ready = dataReady && fontsLoaded;
 
   useEffect(() => {
-    ensureSeeded().then(() => setReady(true));
+    ensureSeeded().then(() => setDataReady(true));
   }, []);
 
-  function push(v: ViewState) {
-    setStack((s) => [...s, v]);
-  }
-  function pop() {
-    setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
-  }
-  function goHome() {
-    setStack([{ name: 'home' }]);
-  }
-
-  const view = stack[stack.length - 1];
+  const onLayoutRootView = useCallback(() => {
+    if (ready) SplashScreen.hideAsync().catch(() => {});
+  }, [ready]);
 
   return (
     <SafeAreaProvider>
-      <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }}>
+      <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }} onLayout={onLayoutRootView}>
         <StatusBar style="light" />
         {!ready ? (
           <View style={{ flex: 1, backgroundColor: colors.bg }} />
         ) : (
-          <>
-            {view.name === 'home' && (
-              <HomeScreen onOpenGroup={(group) => push({ name: 'repertoires', group })} />
-            )}
-            {view.name === 'repertoires' && (
-              <RepertoiresScreen
-                group={view.group}
-                onBack={goHome}
-                onOpenRepertoire={(repertoireId) => push({ name: 'openings', repertoireId })}
-              />
-            )}
-            {view.name === 'openings' && (
-              <OpeningsScreen
-                repertoireId={view.repertoireId}
-                onBack={pop}
-                onOpenOpening={(openingId) => push({ name: 'cards', openingId })}
-              />
-            )}
-            {view.name === 'cards' && <CardsScreen openingId={view.openingId} onBack={pop} />}
-          </>
+          <NavigationContainer
+            theme={{
+              dark: true,
+              colors: {
+                primary: colors.primary,
+                background: colors.bg,
+                card: colors.bg,
+                text: colors.textPrimary,
+                border: colors.border,
+                notification: colors.danger
+              },
+              fonts: {
+                regular: { fontFamily: 'System', fontWeight: '400' },
+                medium: { fontFamily: 'System', fontWeight: '500' },
+                bold: { fontFamily: 'System', fontWeight: '700' },
+                heavy: { fontFamily: 'System', fontWeight: '800' }
+              }
+            }}
+          >
+            <Stack.Navigator
+              screenOptions={{
+                headerShown: false,
+                // Native slide-from-right-to-left push (and its mirrored pop)
+                // on both platforms, using each OS's real screen-transition
+                // APIs rather than a hand-rolled Animated timing.
+                animation: 'slide_from_right',
+                contentStyle: { backgroundColor: colors.bg }
+              }}
+            >
+              <Stack.Screen name="Home" component={HomeRoute} />
+              <Stack.Screen name="Repertoires" component={RepertoiresRoute} />
+              <Stack.Screen name="Openings" component={OpeningsRoute} />
+              <Stack.Screen name="Cards" component={CardsRoute} />
+            </Stack.Navigator>
+          </NavigationContainer>
         )}
         <OverlayHost />
       </GestureHandlerRootView>

@@ -153,6 +153,7 @@ export const BoardEditor = forwardRef<BoardEditorHandle, Props>(function BoardEd
             <Pressable
               key={idx}
               onPress={() => handleStyleChange(idx)}
+              hitSlop={6}
               style={[styles.styleSwatch, state.style === idx && styles.swatchActive]}
             >
               {[0, 1, 2, 3].map((cell) => {
@@ -179,6 +180,7 @@ export const BoardEditor = forwardRef<BoardEditorHandle, Props>(function BoardEd
                 setArrowColor(color);
                 setMode('arrow');
               }}
+              hitSlop={9}
               style={[
                 styles.arrowSwatch,
                 { backgroundColor: arrowColors[color] },
@@ -191,7 +193,7 @@ export const BoardEditor = forwardRef<BoardEditorHandle, Props>(function BoardEd
 
       <View style={styles.row}>
         <Pressable onPress={() => setMode('move')} style={[styles.toolBtn, mode === 'move' && styles.toolBtnActive]}>
-          <Text style={styles.toolBtnText}>✥</Text>
+          <Text style={[styles.toolBtnText, mode === 'move' && styles.toolBtnTextActive]}>✥</Text>
         </Pressable>
         <Pressable onPress={handleUndo} style={styles.toolBtn}>
           <Text style={styles.toolBtnText}>↶</Text>
@@ -281,9 +283,9 @@ const styles = StyleSheet.create({
   arrowSwatch: { width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: 'transparent' },
   swatchActive: { borderColor: colors.accent },
   toolBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 8,
+    width: 44,
+    height: 44,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.panel2,
@@ -291,7 +293,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center'
   },
   toolBtnActive: { backgroundColor: colors.accent, borderColor: colors.accent },
-  toolBtnText: { color: colors.text, fontSize: 16 },
+  toolBtnText: { color: colors.text, fontSize: 18 },
+  toolBtnTextActive: { color: colors.onPrimary },
   board: {
     alignSelf: 'center',
     borderRadius: 6,

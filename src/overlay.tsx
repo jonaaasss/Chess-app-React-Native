@@ -1,6 +1,37 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Modal, View, Text, TextInput, StyleSheet, Pressable } from 'react-native';
-import { colors, radius } from './theme';
+import { Modal, View, Text, TextInput, StyleSheet, Pressable, Dimensions } from 'react-native';
+import Svg, { Path } from 'react-native-svg';
+import { colors, radius, spacing, type } from './theme';
+
+function CloseIcon({ size, color }: { size: number; color: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path
+        d="M18.3 5.71 12 12.01l-6.3-6.3-1.41 1.41 6.3 6.3-6.3 6.3 1.41 1.41 6.3-6.3 6.3 6.3 1.41-1.41-6.3-6.3 6.3-6.3z"
+        fill={color}
+      />
+    </Svg>
+  );
+}
+
+function CloseCircleButton({ onPress }: { onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} hitSlop={12} style={closeStyles.circle}>
+      <CloseIcon size={13} color="#ffffff" />
+    </Pressable>
+  );
+}
+
+const closeStyles = StyleSheet.create({
+  circle: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: colors.danger,
+    alignItems: 'center',
+    justifyContent: 'center'
+  }
+});
 
 interface Entry {
   id: number;
@@ -69,7 +100,7 @@ export function DialogButton({
         pressed && styles.btnPressed
       ]}
     >
-      <Text style={[styles.btnText, variant === 'secondary' && { color: colors.text }]}>{title}</Text>
+      <Text style={[styles.btnText, variant === 'primary' && styles.btnTextPrimary]}>{title}</Text>
     </Pressable>
   );
 }
@@ -123,20 +154,62 @@ function PromptDialog({
   );
 }
 
-function SimpleMenu({ options, close }: { options: string[]; close: (result: string | null) => void }) {
+// Rename/Delete-style actions get colored to match their meaning (green =
+// constructive, red = destructive) instead of every option looking the same
+// neutral gray — the same color language used for every other button in
+// the app.
+function menuOptionVariant(opt: string): 'primary' | 'danger' | 'secondary' {
+  if (/^delete/i.test(opt)) return 'danger';
+  if (/^rename/i.test(opt)) return 'primary';
+  return 'secondary';
+}
+
+function SimpleMenu({
+  title,
+  options,
+  close
+}: {
+  title?: string;
+  options: string[];
+  close: (result: string | null) => void;
+}) {
   return (
-    <Backdrop>
-      {options.map((opt) => (
-        <View key={opt} style={{ marginTop: 8 }}>
-          <DialogButton title={opt} variant="secondary" onPress={() => close(opt)} />
+    <View style={menuStyles.backdrop}>
+      <View style={styles.box}>
+        <View style={menuStyles.header}>
+          <Text style={menuStyles.title} numberOfLines={1}>
+            {title ?? ''}
+          </Text>
+          <CloseCircleButton onPress={() => close(null)} />
         </View>
-      ))}
-      <View style={{ marginTop: 8 }}>
-        <DialogButton title="Cancel" variant="secondary" onPress={() => close(null)} />
+        {options.map((opt) => (
+          <View key={opt} style={{ marginTop: 8 }}>
+            <DialogButton title={opt} variant={menuOptionVariant(opt)} onPress={() => close(opt)} />
+          </View>
+        ))}
       </View>
-    </Backdrop>
+    </View>
   );
 }
+
+const menuStyles = StyleSheet.create({
+  // Anchored near the top of the screen (roughly where the page's own
+  // header sits) instead of vertically centered, so the close button reads
+  // as being in the top-right of the page, not floating mid-screen.
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    paddingHorizontal: 16,
+    paddingTop: 64
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md
+  },
+  title: { color: colors.textPrimary, ...type.h2, flex: 1, marginRight: spacing.md }
+});
 
 export function confirmDialog(message: string): Promise<boolean> {
   return showOverlay<boolean>((close) => <ConfirmDialog message={message} close={close} />);
@@ -148,8 +221,66 @@ export function promptDialog(title: string, initial = '', placeholder = ''): Pro
   ));
 }
 
-export function simpleMenu(options: string[]): Promise<string | null> {
-  return showOverlay<string | null>((close) => <SimpleMenu options={options} close={close} />);
+export function simpleMenu(options: string[], title?: string): Promise<string | null> {
+  return showOverlay<string | null>((close) => <SimpleMenu title={title} options={options} close={close} />);
+}
+
+export interface AnchorRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+// A plain-text popover pinned just under a given anchor (e.g. a row's "⋮"
+// button), with no card/backdrop behind it — just tappable colored labels,
+// for spots where a full-screen menu dialog would be overkill.
+function AnchoredMenu({
+  anchor,
+  options,
+  close
+}: {
+  anchor: AnchorRect;
+  options: string[];
+  close: (result: string | null) => void;
+}) {
+  const screenWidth = Dimensions.get('window').width;
+  const top = anchor.y + anchor.height + 4;
+  const right = Math.max(8, screenWidth - (anchor.x + anchor.width));
+
+  return (
+    <>
+      <Pressable style={StyleSheet.absoluteFill} onPress={() => close(null)} />
+      <View style={[anchoredStyles.menu, { top, right }]}>
+        {options.map((opt) => (
+          <Pressable
+            key={opt}
+            onPress={() => close(opt)}
+            hitSlop={6}
+            style={({ pressed }) => [anchoredStyles.item, pressed && styles.btnPressed]}
+          >
+            <Text style={anchoredStyles.itemText}>{opt}</Text>
+          </Pressable>
+        ))}
+      </View>
+    </>
+  );
+}
+
+const anchoredStyles = StyleSheet.create({
+  menu: {
+    position: 'absolute',
+    alignItems: 'flex-end'
+  },
+  item: {
+    paddingVertical: 10,
+    paddingHorizontal: 14
+  },
+  itemText: { color: colors.textPrimary, fontSize: 15, fontWeight: '600' }
+});
+
+export function anchoredMenu(options: string[], anchor: AnchorRect): Promise<string | null> {
+  return showOverlay<string | null>((close) => <AnchoredMenu anchor={anchor} options={options} close={close} />);
 }
 
 const styles = StyleSheet.create({
@@ -162,7 +293,7 @@ const styles = StyleSheet.create({
   },
   box: {
     backgroundColor: colors.panel,
-    borderRadius: radius,
+    borderRadius: radius.lg,
     padding: 20,
     width: '100%',
     maxWidth: 380,
@@ -182,9 +313,10 @@ const styles = StyleSheet.create({
     fontSize: 15
   },
   row: { flexDirection: 'row', gap: 10, justifyContent: 'flex-end', marginTop: 16 },
-  btn: { borderRadius: 10, paddingVertical: 12, paddingHorizontal: 16, backgroundColor: colors.panel2 },
+  btn: { borderRadius: radius.pill, paddingVertical: 12, paddingHorizontal: 18, backgroundColor: colors.panel2 },
   btnPrimary: { backgroundColor: colors.accent },
   btnDanger: { backgroundColor: colors.danger },
   btnPressed: { opacity: 0.8 },
-  btnText: { color: 'white', fontSize: 14, fontWeight: '600' }
+  btnText: { color: colors.textPrimary, fontSize: 14, fontWeight: '600' },
+  btnTextPrimary: { color: colors.onPrimary }
 });

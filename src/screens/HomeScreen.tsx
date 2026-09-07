@@ -1,16 +1,25 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { getGroupStats, getSetting, setSetting } from '../storage';
-import type { GroupId } from '../types';
-import { colors, radius } from '../theme';
+import type { GroupId, PieceCode } from '../types';
+import { colors, radius, spacing, type } from '../theme';
 import { Screen } from '../components/Common';
+import { PieceGlyph } from '../components/ChessBoard';
 
 const SHUFFLE_TOOLTIP =
   'When enabled, the cards within each opening are shuffled during study — the order of openings in a full repertoire session is always randomized.';
 
-const GROUPS: { id: GroupId; label: string; icon: string }[] = [
-  { id: 'white', label: 'White', icon: '♔' },
-  { id: 'black', label: 'Black', icon: '♚' }
+const BADGE_SIZE = 68;
+
+// Real chess pieces are physically light or dark objects, not an outline
+// convention — so each badge is colored to make its own piece's true fill
+// pop (a dark badge behind the light white-king art, a light badge behind
+// the dark black-king art), rather than relying on a text glyph whose
+// outline/solid rendering isn't guaranteed consistent across Android fonts
+// (the actual bug reported: ♔/♚ were reading as swapped on-device).
+const GROUPS: { id: GroupId; label: string; piece: PieceCode; badgeBg: string }[] = [
+  { id: 'white', label: 'White', piece: 'wK', badgeBg: '#12161f' },
+  { id: 'black', label: 'Black', piece: 'bK', badgeBg: '#dde2ea' }
 ];
 
 export function HomeScreen({ onOpenGroup }: { onOpenGroup: (group: GroupId) => void }) {
@@ -43,10 +52,10 @@ export function HomeScreen({ onOpenGroup }: { onOpenGroup: (group: GroupId) => v
     <Screen>
       <View style={styles.shuffleRow}>
         <Text style={styles.shuffleLabel}>Shuffle</Text>
-        <Pressable onPress={() => setShowTooltip((v) => !v)} style={{ padding: 6 }}>
+        <Pressable onPress={() => setShowTooltip((v) => !v)} hitSlop={12} style={{ padding: 6 }}>
           <Text style={{ color: colors.textDim, fontSize: 16 }}>ⓘ</Text>
         </Pressable>
-        <Pressable onPress={toggleShuffle} style={[styles.toggle, shuffleOn && styles.toggleOn]}>
+        <Pressable onPress={toggleShuffle} hitSlop={10} style={[styles.toggle, shuffleOn && styles.toggleOn]}>
           <View style={[styles.toggleThumb, shuffleOn && styles.toggleThumbOn]} />
         </Pressable>
       </View>
@@ -57,20 +66,18 @@ export function HomeScreen({ onOpenGroup }: { onOpenGroup: (group: GroupId) => v
         </View>
       )}
 
+      <Text style={styles.sectionLabel}>Choose a side</Text>
       {GROUPS.map((g) => {
         const s = stats[g.id];
-        const tileBg = g.id === 'white' ? colors.tileWhiteBg : colors.tileBlackBg;
         return (
           <Pressable
             key={g.id}
             onPress={() => onOpenGroup(g.id)}
-            style={({ pressed }) => [
-              styles.tile,
-              { backgroundColor: tileBg },
-              pressed && { opacity: 0.85 }
-            ]}
+            style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
           >
-            <Text style={styles.tileIcon}>{g.icon}</Text>
+            <View style={[styles.badge, { backgroundColor: g.badgeBg }]}>
+              <PieceGlyph code={g.piece} cell={BADGE_SIZE * 0.92} />
+            </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.tileTitle}>{g.label}</Text>
               <Text style={styles.tileSub}>
@@ -78,7 +85,9 @@ export function HomeScreen({ onOpenGroup }: { onOpenGroup: (group: GroupId) => v
                 {s.openings === 1 ? '' : 's'} · {s.cards} card{s.cards === 1 ? '' : 's'}
               </Text>
             </View>
-            <Text style={styles.tileChevron}>›</Text>
+            <View style={styles.chevronCircle}>
+              <Text style={styles.tileChevron}>›</Text>
+            </View>
           </Pressable>
         );
       })}
@@ -94,7 +103,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     marginBottom: 20
   },
-  shuffleLabel: { color: colors.text, fontWeight: '600', fontSize: 15.5, flex: 1 },
+  shuffleLabel: { color: colors.text, ...type.bodyStrong, fontSize: 16, flex: 1 },
   toggle: { width: 46, height: 26, borderRadius: 13, backgroundColor: colors.border, justifyContent: 'center' },
   toggleOn: { backgroundColor: colors.accent },
   toggleThumb: { width: 20, height: 20, borderRadius: 10, backgroundColor: 'white', marginLeft: 3 },
@@ -107,17 +116,42 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 16
   },
-  tooltipText: { color: colors.textDim, fontSize: 12.5 },
+  tooltipText: { color: colors.textDim, ...type.caption },
+  sectionLabel: {
+    color: colors.textDim,
+    ...type.micro,
+    textTransform: 'uppercase',
+    marginBottom: spacing.md
+  },
   tile: {
-    borderRadius: radius + 4,
-    padding: 20,
+    backgroundColor: colors.tileWhiteBg,
+    borderRadius: radius.xl + 4,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    padding: spacing.xl,
+    minHeight: 108,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
-    marginBottom: 12
+    gap: spacing.lg,
+    marginBottom: spacing.lg
   },
-  tileIcon: { fontSize: 32, color: colors.text },
-  tileTitle: { color: colors.text, fontSize: 19, fontWeight: '700' },
-  tileSub: { color: colors.textDim, fontSize: 13, marginTop: 4 },
-  tileChevron: { color: colors.textDim, fontSize: 22 }
+  tilePressed: { opacity: 0.9, transform: [{ scale: 0.99 }] },
+  badge: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  tileTitle: { color: colors.text, ...type.h1, fontSize: 22 },
+  tileSub: { color: colors.textDim, ...type.caption, marginTop: 5 },
+  chevronCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  tileChevron: { color: colors.text, fontSize: 18 }
 });

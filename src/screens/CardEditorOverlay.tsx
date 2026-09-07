@@ -5,7 +5,7 @@ import { cloneBoardState, newBoardState } from '../chess';
 import { deleteCard, getCard, saveCard } from '../storage';
 import { confirmDialog, showOverlay } from '../overlay';
 import type { Card, Side } from '../types';
-import { colors } from '../theme';
+import { colors, type } from '../theme';
 import { ChessBoardView } from '../components/ChessBoard';
 import { openBoardEditorFullscreen } from './BoardEditorOverlay';
 import { openMoveDuplicateDialog } from './MoveDuplicateOverlay';
@@ -190,9 +190,9 @@ const styles = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: colors.bg },
   content: { padding: 16, paddingBottom: 32 },
   topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
-  topBarBtn: { color: colors.textDim, fontSize: 15 },
-  saveBtn: { color: colors.accentHover, fontWeight: '600' },
-  title: { color: colors.text, fontWeight: '600', fontSize: 15 },
+  topBarBtn: { color: colors.textDim, ...type.body },
+  saveBtn: { color: colors.accentHover, ...type.bodyStrong },
+  title: { color: colors.text, ...type.h2 },
   tabs: {
     flexDirection: 'row',
     gap: 24,
@@ -202,7 +202,7 @@ const styles = StyleSheet.create({
   },
   tabBtn: { paddingVertical: 10, borderBottomWidth: 2, borderBottomColor: 'transparent' },
   tabBtnActive: { borderBottomColor: colors.accent },
-  tabText: { color: colors.textDim, fontWeight: '600', fontSize: 15 },
+  tabText: { color: colors.textDim, ...type.bodyStrong },
   tabTextActive: { color: colors.text },
   fieldLabel: { color: colors.textDim, fontSize: 12.5, marginBottom: 6, marginTop: 14 },
   textArea: {
@@ -228,7 +228,7 @@ const styles = StyleSheet.create({
   },
   addBoardText: { color: colors.textDim, fontSize: 14 },
   boardIconRow: { flexDirection: 'row', gap: 16, marginBottom: 10 },
-  iconBtn: { padding: 6 },
+  iconBtn: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   iconBtnText: { color: colors.textDim, fontSize: 20 },
   hint: { color: colors.textDim, fontSize: 12, marginTop: 8, textAlign: 'center' },
   blockBtn: { width: '100%', borderRadius: 10, paddingVertical: 13, alignItems: 'center', marginTop: 12 },

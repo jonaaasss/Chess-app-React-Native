@@ -4,8 +4,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { getCard, getCards, getOpening, getSetting } from '../storage';
 import { showOverlay } from '../overlay';
 import type { Card } from '../types';
-import { colors, radius } from '../theme';
+import { colors, radius, type } from '../theme';
 import { ChessBoardView } from '../components/ChessBoard';
+import { BackCircleButton } from '../components/Common';
 import { openCardEditor } from './CardEditorOverlay';
 
 interface QueueItem {
@@ -131,16 +132,16 @@ function StudySessionOverlay({
             ))}
           </View>
           <View style={styles.doneCheck}>
-            <Text style={{ fontSize: 40, color: 'white' }}>✓</Text>
+            <Text style={{ fontSize: 40, color: colors.onPrimary }}>✓</Text>
           </View>
           <Text style={styles.doneTitle}>Done!</Text>
           <Text style={styles.doneSub}>Great job — you completed the session.</Text>
           <View style={styles.doneActions}>
             <Pressable onPress={handleRestart} style={[styles.blockBtn, styles.primaryBtn]}>
-              <Text style={styles.blockBtnText}>Restart</Text>
+              <Text style={[styles.blockBtnText, { color: colors.onPrimary }]}>Restart</Text>
             </Pressable>
             <Pressable onPress={close} style={[styles.blockBtn, styles.secondaryBtn]}>
-              <Text style={[styles.blockBtnText, { color: colors.text }]}>Back to home</Text>
+              <Text style={[styles.blockBtnText, { color: colors.textPrimary }]}>Back to home</Text>
             </Pressable>
           </View>
         </View>
@@ -159,13 +160,11 @@ function StudySessionOverlay({
     <SafeAreaView style={styles.overlay}>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.topBar}>
-          <Pressable onPress={close}>
-            <Text style={styles.topBarBtn}>←</Text>
-          </Pressable>
+          <BackCircleButton onPress={close} />
           <Text style={styles.title} numberOfLines={1}>
             {openingName}
           </Text>
-          <View style={{ width: 22 }} />
+          <View style={{ width: 38 }} />
         </View>
 
         <View style={styles.progressHeaderRow}>
@@ -251,7 +250,7 @@ const styles = StyleSheet.create({
   content: { padding: 16, paddingBottom: 32, flexGrow: 1 },
   topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
   topBarBtn: { color: colors.textDim, fontSize: 18 },
-  title: { color: colors.text, fontWeight: '700', fontSize: 17, flex: 1, textAlign: 'center' },
+  title: { color: colors.text, ...type.h2, flex: 1, textAlign: 'center' },
   progressHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
   roundLabel: { color: colors.textDim, fontSize: 13, fontWeight: '600' },
   progressCount: { color: colors.textDim, fontSize: 13 },
@@ -259,7 +258,7 @@ const styles = StyleSheet.create({
   progressFill: { height: '100%', backgroundColor: colors.accent },
   studyCard: {
     backgroundColor: colors.panel,
-    borderRadius: radius,
+    borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
     padding: 20,
@@ -270,7 +269,7 @@ const styles = StyleSheet.create({
   studyCardText: { color: colors.text, fontSize: 16, lineHeight: 24, alignSelf: 'stretch' },
   hint: { color: colors.textDim, fontSize: 12, textAlign: 'center', marginTop: 6 },
   evalRow: { flexDirection: 'row', gap: 12, marginTop: 16 },
-  evalBtn: { flex: 1, borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
+  evalBtn: { flex: 1, borderRadius: radius.pill, paddingVertical: 14, alignItems: 'center' },
   evalBtnText: { color: 'white', fontSize: 15, fontWeight: '700' },
   footerRow: {
     flexDirection: 'row',
@@ -281,7 +280,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.border
   },
-  footerBtn: { padding: 6 },
+  footerBtn: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   footerIcon: { color: colors.textDim, fontSize: 18 },
   footerCount: { color: colors.textDim, fontSize: 13 },
   doneScreen: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 20 },
@@ -294,10 +293,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 10
   },
-  doneTitle: { color: colors.text, fontSize: 26, fontWeight: '700' },
+  doneTitle: { color: colors.text, ...type.display },
   doneSub: { color: colors.textDim, marginBottom: 20, textAlign: 'center' },
   doneActions: { gap: 10, width: '100%', maxWidth: 280 },
-  blockBtn: { borderRadius: 10, paddingVertical: 13, alignItems: 'center' },
+  blockBtn: { borderRadius: radius.pill, paddingVertical: 13, alignItems: 'center' },
   primaryBtn: { backgroundColor: colors.accent },
   secondaryBtn: { backgroundColor: colors.panel2, borderWidth: 1, borderColor: colors.border },
   blockBtnText: { color: 'white', fontSize: 15, fontWeight: '600' }

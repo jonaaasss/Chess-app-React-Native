@@ -1,22 +1,114 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { Pressable, Text, StyleSheet } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, TextInput, Pressable } from 'react-native';
 import {
   addOpening,
   deleteOpening,
-  deleteRepertoire,
   getCards,
   getOpenings,
   getRepertoire,
   renameOpening,
   renameRepertoire
 } from '../storage';
-import { confirmDialog, promptDialog, simpleMenu } from '../overlay';
+import { confirmDialog, promptDialog, simpleMenu, anchoredMenu } from '../overlay';
 import type { Opening, Repertoire } from '../types';
-import { Screen, TopBar, Breadcrumb, EmptyState, ListRow, BigButton } from '../components/Common';
-import { colors } from '../theme';
+import { Screen, TopBar, Breadcrumb, EmptyState, BigButton, rowStyles } from '../components/Common';
+import { colors, spacing } from '../theme';
 import { startStudySession } from './StudySessionOverlay';
 
-interface OpeningRow {
+// Used only on this screen: the opening row's "⋮" opens a small plain-text
+// popover pinned right under the button (no card/backdrop) instead of the
+// full-screen Rename/Delete menu used elsewhere, and choosing "Rename"
+// edits the name in place (a cursor appears right in the row) instead of
+// opening a text-input dialog — the same pattern as the repertoire title.
+function OpeningRow({
+  title,
+  subtitle,
+  onPress,
+  onRename,
+  onDelete
+}: {
+  title: string;
+  subtitle: string;
+  onPress: () => void;
+  onRename: (newName: string) => void;
+  onDelete: () => void;
+}) {
+  const menuRef = useRef<View>(null);
+  const inputRef = useRef<TextInput>(null);
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(title);
+
+  useEffect(() => {
+    if (!editing) return;
+    const t = setTimeout(() => inputRef.current?.focus(), 50);
+    return () => clearTimeout(t);
+  }, [editing]);
+
+  function startEdit() {
+    setValue(title);
+    setEditing(true);
+  }
+
+  function commitEdit() {
+    setEditing(false);
+    const trimmed = value.trim();
+    if (trimmed && trimmed !== title) onRename(trimmed);
+  }
+
+  function openMenu() {
+    menuRef.current?.measureInWindow(async (x, y, width, height) => {
+      const action = await anchoredMenu(['Rename', 'Delete'], { x, y, width, height });
+      if (action === 'Rename') startEdit();
+      else if (action === 'Delete') onDelete();
+    });
+  }
+
+  return (
+    <View style={rowStyles.row}>
+      {editing ? (
+        <View style={rowStyles.main}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <TextInput
+              ref={inputRef}
+              style={[rowStyles.title, rowTitleInputStyle]}
+              value={value}
+              onChangeText={setValue}
+              onSubmitEditing={commitEdit}
+              onBlur={commitEdit}
+              returnKeyType="done"
+            />
+            <Text style={rowStyles.subtitle} numberOfLines={1}>
+              {subtitle}
+            </Text>
+          </View>
+        </View>
+      ) : (
+        <Pressable onPress={onPress} style={({ pressed }) => [rowStyles.main, pressed && { opacity: 0.7 }]}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={rowStyles.title} numberOfLines={1}>
+              {title}
+            </Text>
+            <Text style={rowStyles.subtitle} numberOfLines={1}>
+              {subtitle}
+            </Text>
+          </View>
+        </Pressable>
+      )}
+      <Pressable
+        ref={menuRef}
+        onPress={openMenu}
+        hitSlop={4}
+        style={({ pressed }) => [rowStyles.menuBtn, pressed && { opacity: 0.7 }]}
+      >
+        <Text style={{ color: colors.textSecondary, fontSize: 18 }}>⋮</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const rowTitleInputStyle = { padding: 0, borderBottomWidth: 1, borderBottomColor: colors.accent };
+
+interface OpeningRowData {
   opening: Opening;
   cards: number;
 }
@@ -31,7 +123,7 @@ export function OpeningsScreen({
   onOpenOpening: (openingId: string) => void;
 }) {
   const [rep, setRep] = useState<Repertoire | null>(null);
-  const [rows, setRows] = useState<OpeningRow[]>([]);
+  const [rows, setRows] = useState<OpeningRowData[]>([]);
 
   const load = useCallback(async () => {
     const r = await getRepertoire(repertoireId);
@@ -41,7 +133,7 @@ export function OpeningsScreen({
     }
     setRep(r);
     const openings = await getOpenings(repertoireId);
-    const rowsData: OpeningRow[] = [];
+    const rowsData: OpeningRowData[] = [];
     for (const opening of openings) {
       const cards = await getCards(opening.id);
       rowsData.push({ opening, cards: cards.length });
@@ -54,22 +146,10 @@ export function OpeningsScreen({
     load();
   }, [load]);
 
-  async function handleEditRepertoire() {
+  async function handleRenameRepertoire(name: string) {
     if (!rep) return;
-    const action = await simpleMenu(['Rename repertoire', 'Delete repertoire']);
-    if (action === 'Rename repertoire') {
-      const name = await promptDialog('Rename repertoire', rep.name);
-      if (name) {
-        await renameRepertoire(rep.id, name);
-        load();
-      }
-    } else if (action === 'Delete repertoire') {
-      const ok = await confirmDialog(`Delete "${rep.name}" and all its openings/cards?`);
-      if (ok) {
-        await deleteRepertoire(rep.id);
-        onBack();
-      }
-    }
+    await renameRepertoire(rep.id, name);
+    load();
   }
 
   async function handleStudy() {
@@ -97,20 +177,16 @@ export function OpeningsScreen({
     }
   }
 
-  async function handleMenu(opening: Opening) {
-    const action = await simpleMenu(['Rename', 'Delete']);
-    if (action === 'Rename') {
-      const name = await promptDialog('Rename opening', opening.name);
-      if (name) {
-        await renameOpening(opening.id, name);
-        load();
-      }
-    } else if (action === 'Delete') {
-      const ok = await confirmDialog(`Delete "${opening.name}" and all its cards?`);
-      if (ok) {
-        await deleteOpening(opening.id);
-        load();
-      }
+  async function handleRenameOpening(opening: Opening, name: string) {
+    await renameOpening(opening.id, name);
+    load();
+  }
+
+  async function handleDeleteOpening(opening: Opening) {
+    const ok = await confirmDialog(`Delete "${opening.name}" and all its cards?`);
+    if (ok) {
+      await deleteOpening(opening.id);
+      load();
     }
   }
 
@@ -119,38 +195,31 @@ export function OpeningsScreen({
   return (
     <Screen>
       <Breadcrumb text={rep.group === 'white' ? 'White' : 'Black'} />
-      <TopBar title={rep.name} onBack={onBack} onEdit={handleEditRepertoire} />
+      <TopBar title={rep.name} onBack={onBack} onRename={handleRenameRepertoire} />
 
-      <Pressable onPress={handleAddOpening} style={styles.addOpeningBtn}>
-        <Text style={styles.addOpeningText}>+ Add opening</Text>
-      </Pressable>
+      <BigButton title="+ Add opening" onPress={handleAddOpening} />
+      <View style={{ height: spacing.lg }} />
 
       {rows.length === 0 && <EmptyState text="No openings yet. Add one to get started." />}
 
       {rows.map(({ opening, cards }) => (
-        <ListRow
+        <OpeningRow
           key={opening.id}
           title={opening.name}
           subtitle={`${cards} card${cards === 1 ? '' : 's'}`}
           onPress={() => onOpenOpening(opening.id)}
-          onMenu={() => handleMenu(opening)}
+          onRename={(name) => handleRenameOpening(opening, name)}
+          onDelete={() => handleDeleteOpening(opening)}
         />
       ))}
 
-      <BigButton title="▶ Study this repertoire" onPress={handleStudy} />
+      {/* Pushes the Study CTA to the bottom of the screen when there's only
+          a little content, instead of leaving it stranded under a short
+          list with empty space below — a bottom-anchored primary action is
+          a standard mobile pattern and reads as intentional, not unfinished. */}
+      <View style={{ flex: 1, minHeight: 24 }} />
+
+      <BigButton title="▶ Study this repertoire" onPress={handleStudy} variant="gold" />
     </Screen>
   );
 }
-
-const styles = StyleSheet.create({
-  addOpeningBtn: {
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    borderStyle: 'dashed',
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: 'center',
-    marginBottom: 18
-  },
-  addOpeningText: { color: colors.textDim, fontWeight: '600', fontSize: 14.5 }
-});

@@ -3,7 +3,7 @@ import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BoardEditor, BoardEditorHandle } from '../components/BoardEditor';
 import type { BoardState } from '../types';
-import { colors } from '../theme';
+import { colors, type } from '../theme';
 import { showOverlay } from '../overlay';
 
 function BoardEditorOverlay({ initial, close }: { initial: BoardState; close: (result: BoardState | null) => void }) {
@@ -35,7 +35,7 @@ const styles = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: colors.bg },
   content: { padding: 16, paddingBottom: 32 },
   topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
-  topBarBtn: { color: colors.textDim, fontSize: 15 },
-  saveBtn: { color: colors.accentHover, fontWeight: '600' },
-  title: { color: colors.text, fontWeight: '600', fontSize: 15 }
+  topBarBtn: { color: colors.textDim, ...type.body },
+  saveBtn: { color: colors.accentHover, ...type.bodyStrong },
+  title: { color: colors.text, ...type.h2 }
 });

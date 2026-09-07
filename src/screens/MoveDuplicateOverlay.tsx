@@ -4,7 +4,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { getOpening, getOpenings, getRepertoire, getRepertoires, moveOrDuplicateCard } from '../storage';
 import { simpleMenu, showOverlay } from '../overlay';
 import type { Card, Opening, Repertoire } from '../types';
-import { colors, radius } from '../theme';
+import { colors, radius, type } from '../theme';
+import { BackCircleButton } from '../components/Common';
 
 type Mode = 'move' | 'duplicate';
 type Result = 'moved' | 'duplicated' | 'cancelled';
@@ -135,9 +136,7 @@ function MoveDuplicateOverlay({ card, close }: { card: Card; close: (result: Res
     <SafeAreaView style={styles.overlay}>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.topBar}>
-          <Pressable onPress={() => close('cancelled')}>
-            <Text style={styles.backArrow}>←</Text>
-          </Pressable>
+          <BackCircleButton onPress={() => close('cancelled')} />
           <Text style={styles.title}>Move or duplicate</Text>
         </View>
 
@@ -182,7 +181,7 @@ const styles = StyleSheet.create({
   content: { padding: 16, paddingBottom: 32 },
   topBar: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 20 },
   backArrow: { color: colors.textDim, fontSize: 22 },
-  title: { color: colors.text, fontSize: 19, fontWeight: '700' },
+  title: { color: colors.text, ...type.h1 },
   sectionLabel: { color: colors.textDim, fontSize: 12.5, marginBottom: 14, textTransform: 'uppercase', letterSpacing: 0.5 },
   fieldLabel: { color: colors.textDim, fontSize: 12.5, marginBottom: 6 },
   dropdown: {
@@ -204,7 +203,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     backgroundColor: colors.panel,
-    borderRadius: radius,
+    borderRadius: radius.lg,
     padding: 14,
     marginBottom: 10
   },
@@ -223,10 +222,10 @@ const styles = StyleSheet.create({
   radioCaption: { color: colors.textDim, fontSize: 12.5, marginTop: 2 },
   confirmBtn: {
     backgroundColor: colors.accent,
-    borderRadius: 14,
+    borderRadius: radius.pill,
     paddingVertical: 16,
     alignItems: 'center',
     marginTop: 18
   },
-  confirmBtnText: { color: 'white', fontSize: 15.5, fontWeight: '700' }
+  confirmBtnText: { color: colors.onPrimary, fontSize: 15.5, fontWeight: '700' }
 });

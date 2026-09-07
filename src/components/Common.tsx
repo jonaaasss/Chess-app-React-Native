@@ -1,7 +1,49 @@
-import React from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { colors, radius } from '../theme';
+import Svg, { Path } from 'react-native-svg';
+import { colors, radius, spacing, type, touchTarget } from '../theme';
+
+// A drawn icon instead of a Unicode "←" glyph — text glyphs don't sit
+// centered within their own em-box consistently (the same lesson learned
+// from the home-screen king icons), so a custom SVG guarantees the arrow is
+// pixel-centered and lets us control its weight directly.
+function BackArrowIcon({ size, color }: { size: number; color: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" fill={color} />
+    </Svg>
+  );
+}
+
+// Drawn pencil, tip fixed at lower-left / cap at upper-right (matching the
+// standard "edit" pencil orientation) — same reasoning as the back arrow.
+function EditPencilIcon({ size, color }: { size: number; color: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path
+        d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"
+        fill={color}
+      />
+    </Svg>
+  );
+}
+
+// Shared circular back button — used by TopBar, and by the full-screen
+// overlays (Study session, Move/Duplicate) that draw their own header
+// instead of using TopBar, so every back arrow in the app looks the same.
+export function BackCircleButton({ onPress }: { onPress: () => void }) {
+  return (
+    <IconButton
+      onPress={onPress}
+      icon={
+        <View style={styles.backCircle}>
+          <BackArrowIcon size={20} color={colors.textPrimary} />
+        </View>
+      }
+    />
+  );
+}
 
 export function Screen({ children, scroll = true }: { children: React.ReactNode; scroll?: boolean }) {
   const Container = scroll ? ScrollView : View;
@@ -14,18 +56,39 @@ export function Screen({ children, scroll = true }: { children: React.ReactNode;
   );
 }
 
+// Every icon-only control renders at least 44x44 (Apple HIG / Material
+// minimum touch target), even when the glyph itself is visually smaller —
+// hitSlop compensates so tiny glyphs never shrink the tappable area.
 export function IconButton({
   label,
   onPress,
-  size = 20
+  size = 20,
+  rotateDeg,
+  icon
 }: {
-  label: string;
+  label?: string;
   onPress: () => void;
   size?: number;
+  rotateDeg?: number;
+  icon?: React.ReactNode;
 }) {
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.iconBtn, pressed && styles.pressedDim]}>
-      <Text style={{ color: colors.textDim, fontSize: size }}>{label}</Text>
+    <Pressable
+      onPress={onPress}
+      hitSlop={8}
+      style={({ pressed }) => [styles.iconBtn, pressed && styles.pressedDim]}
+    >
+      {icon ?? (
+        <Text
+          style={{
+            color: colors.textSecondary,
+            fontSize: size,
+            transform: rotateDeg ? [{ rotate: `${rotateDeg}deg` }] : undefined
+          }}
+        >
+          {label}
+        </Text>
+      )}
     </Pressable>
   );
 }
@@ -34,20 +97,77 @@ export function TopBar({
   title,
   onBack,
   onEdit,
+  onRename,
   onAdd
 }: {
   title: string;
   onBack?: () => void;
   onEdit?: () => void;
+  // When set, the pencil edits the title in place (a cursor appears right
+  // in the title text) instead of opening a Rename/Delete menu — used where
+  // there's nothing to delete from this button, just a name to change.
+  onRename?: (newName: string) => void;
   onAdd?: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(title);
+  const inputRef = useRef<TextInput>(null);
+
+  useEffect(() => {
+    if (!editing) return;
+    const t = setTimeout(() => inputRef.current?.focus(), 50);
+    return () => clearTimeout(t);
+  }, [editing]);
+
+  function startEdit() {
+    setValue(title);
+    setEditing(true);
+  }
+
+  function commitEdit() {
+    setEditing(false);
+    const trimmed = value.trim();
+    if (trimmed && trimmed !== title) onRename?.(trimmed);
+  }
+
   return (
     <View style={styles.topBar}>
-      {onBack && <IconButton label="←" onPress={onBack} size={22} />}
-      <Text style={styles.title} numberOfLines={1}>
-        {title}
-      </Text>
-      {onEdit && <IconButton label="✎" onPress={onEdit} size={18} />}
+      {onBack && <BackCircleButton onPress={onBack} />}
+      {editing ? (
+        <TextInput
+          ref={inputRef}
+          style={[styles.title, styles.titleInput]}
+          value={value}
+          onChangeText={setValue}
+          onSubmitEditing={commitEdit}
+          onBlur={commitEdit}
+          returnKeyType="done"
+        />
+      ) : (
+        <Text style={styles.title} numberOfLines={1}>
+          {title}
+        </Text>
+      )}
+      {onRename && !editing && (
+        <IconButton
+          onPress={startEdit}
+          icon={
+            <View style={styles.backCircle}>
+              <EditPencilIcon size={21} color={colors.textPrimary} />
+            </View>
+          }
+        />
+      )}
+      {onEdit && (
+        <IconButton
+          onPress={onEdit}
+          icon={
+            <View style={styles.backCircle}>
+              <EditPencilIcon size={21} color={colors.textPrimary} />
+            </View>
+          }
+        />
+      )}
       {onAdd && <IconButton label="+" onPress={onAdd} size={24} />}
     </View>
   );
@@ -72,7 +192,7 @@ export function BigButton({
 }: {
   title: string;
   onPress: () => void;
-  variant?: 'primary' | 'secondary' | 'danger';
+  variant?: 'primary' | 'gold' | 'secondary' | 'danger';
 }) {
   return (
     <Pressable
@@ -80,12 +200,21 @@ export function BigButton({
       style={({ pressed }) => [
         bigStyles.base,
         variant === 'primary' && bigStyles.primary,
+        variant === 'gold' && bigStyles.gold,
         variant === 'secondary' && bigStyles.secondary,
         variant === 'danger' && bigStyles.danger,
-        pressed && { opacity: 0.85, transform: [{ scale: 0.98 }] }
+        pressed && bigStyles.pressed
       ]}
     >
-      <Text style={bigStyles.text}>{title}</Text>
+      <Text
+        style={[
+          bigStyles.text,
+          variant === 'gold' && bigStyles.textGold,
+          variant === 'secondary' && bigStyles.textSecondary
+        ]}
+      >
+        {title}
+      </Text>
     </Pressable>
   );
 }
@@ -121,8 +250,8 @@ export function ListRow({
         </View>
         {icon && <Text style={rowStyles.chevron}>›</Text>}
       </Pressable>
-      <Pressable onPress={onMenu} style={({ pressed }) => [rowStyles.menuBtn, pressed && styles.pressedDim]}>
-        <Text style={{ color: colors.textDim, fontSize: 18 }}>⋮</Text>
+      <Pressable onPress={onMenu} hitSlop={4} style={({ pressed }) => [rowStyles.menuBtn, pressed && styles.pressedDim]}>
+        <Text style={{ color: colors.textSecondary, fontSize: 18 }}>⋮</Text>
       </Pressable>
     </View>
   );
@@ -131,44 +260,75 @@ export function ListRow({
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   screen: { flex: 1 },
-  screenContent: { padding: 16, flexGrow: 1 },
-  topBar: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 20, minHeight: 32 },
-  title: { color: colors.text, fontSize: 20, fontWeight: '700', flex: 1 },
-  breadcrumb: { color: colors.textDim, fontSize: 12, marginBottom: 4 },
-  iconBtn: { padding: 6 },
-  pressedDim: { opacity: 0.7 },
-  emptyState: { paddingVertical: 30, paddingHorizontal: 10, alignItems: 'center' },
-  emptyStateText: { color: colors.textDim, textAlign: 'center' }
-});
-
-const bigStyles = StyleSheet.create({
-  base: { width: '100%', borderRadius: 14, paddingVertical: 16, alignItems: 'center', marginTop: 12 },
-  primary: { backgroundColor: colors.accent },
-  secondary: { backgroundColor: colors.panel2, borderWidth: 1, borderColor: colors.border },
-  danger: { backgroundColor: colors.danger },
-  text: { color: 'white', fontSize: 15.5, fontWeight: '700' }
-});
-
-const rowStyles = StyleSheet.create({
-  row: {
-    backgroundColor: colors.panel,
-    borderRadius: radius,
-    marginBottom: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingRight: 6
+  screenContent: { padding: spacing.lg, flexGrow: 1 },
+  topBar: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginBottom: spacing.xl, minHeight: touchTarget },
+  title: { color: colors.textPrimary, ...type.h1, flex: 1 },
+  titleInput: {
+    padding: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.accent
   },
-  main: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16 },
-  iconBadge: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
-    backgroundColor: colors.panel2,
+  breadcrumb: { color: colors.textTertiary, ...type.caption, marginBottom: spacing.xs },
+  iconBtn: {
+    minWidth: touchTarget,
+    minHeight: touchTarget,
     alignItems: 'center',
     justifyContent: 'center'
   },
-  title: { color: colors.text, fontSize: 15.5, fontWeight: '600' },
-  subtitle: { color: colors.textDim, fontSize: 12.5, marginTop: 3 },
-  chevron: { color: colors.textDim, fontSize: 18, marginRight: 4 },
-  menuBtn: { padding: 10 }
+  backCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: colors.surfaceRaised,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  pressedDim: { opacity: 0.7 },
+  emptyState: { paddingVertical: spacing.xxxl, paddingHorizontal: spacing.md, alignItems: 'center' },
+  emptyStateText: { color: colors.textSecondary, ...type.body, textAlign: 'center' }
+});
+
+const bigStyles = StyleSheet.create({
+  // Pill-shaped CTAs per Material 3 Expressive's mobile pattern.
+  base: {
+    width: '100%',
+    borderRadius: radius.pill,
+    paddingVertical: spacing.lg,
+    minHeight: touchTarget,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.md
+  },
+  primary: { backgroundColor: colors.primary },
+  gold: { backgroundColor: colors.gold },
+  secondary: { backgroundColor: colors.surfaceRaised, borderWidth: 1, borderColor: colors.border },
+  danger: { backgroundColor: colors.danger },
+  pressed: { opacity: 0.85, transform: [{ scale: 0.98 }] },
+  text: { color: colors.onPrimary, ...type.bodyStrong },
+  textGold: { color: colors.onGold },
+  textSecondary: { color: colors.textPrimary }
+});
+
+export const rowStyles = StyleSheet.create({
+  row: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    marginBottom: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingRight: spacing.xs
+  },
+  main: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.lg, minHeight: touchTarget },
+  iconBadge: {
+    width: 38,
+    height: 38,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surfaceRaised,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  title: { color: colors.textPrimary, ...type.bodyStrong },
+  subtitle: { color: colors.textSecondary, ...type.caption, marginTop: 3 },
+  chevron: { color: colors.textTertiary, fontSize: 18, marginRight: spacing.xs },
+  menuBtn: { width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center' }
 });

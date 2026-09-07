@@ -36,7 +36,7 @@ export function RepertoiresScreen({
   }, [load]);
 
   async function handleMenu(rep: Repertoire) {
-    const action = await simpleMenu(['Rename', 'Delete']);
+    const action = await simpleMenu(['Rename', 'Delete'], 'Edit Repertoire');
     if (action === 'Rename') {
       const name = await promptDialog('Rename repertoire', rep.name);
       if (name) {

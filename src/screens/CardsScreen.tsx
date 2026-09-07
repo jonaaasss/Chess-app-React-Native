@@ -64,7 +64,7 @@ export function CardsScreen({
 
   async function handleEditOpening() {
     if (!opening) return;
-    const action = await simpleMenu(['Rename opening', 'Delete opening']);
+    const action = await simpleMenu(['Rename opening', 'Delete opening'], 'Edit Opening');
     if (action === 'Rename opening') {
       const name = await promptDialog('Rename opening', opening.name);
       if (name) {
@@ -153,7 +153,7 @@ export function CardsScreen({
       <Breadcrumb text={`${rep.group === 'white' ? 'White' : 'Black'} › ${rep.name}`} />
       <TopBar title={opening.name} onBack={onBack} onEdit={handleEditOpening} />
 
-      <BigButton title="Study this opening" onPress={handleStudy} />
+      <BigButton title="▶ Study this opening" onPress={handleStudy} variant="gold" />
 
       {cards.length === 0 && <EmptyState text="No cards yet. Add one to get started." />}
 
@@ -188,7 +188,7 @@ export function CardsScreen({
 const styles = StyleSheet.create({
   row: {
     backgroundColor: colors.panel,
-    borderRadius: radius,
+    borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
     marginBottom: 10,
@@ -196,8 +196,8 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
   rowDragging: { opacity: 0.85, borderColor: colors.accent },
-  dragHandle: { padding: 14 },
-  main: { flex: 1, paddingVertical: 14 },
+  dragHandle: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  main: { flex: 1, paddingVertical: 14, justifyContent: 'center', minHeight: 44 },
   mainText: { color: colors.text, fontSize: 15, fontWeight: '500' },
-  menuBtn: { padding: 10 }
+  menuBtn: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }
 });
