@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, TextInput, Pressable } from 'react-native';
+import { View, Text, TextInput, Pressable, useWindowDimensions } from 'react-native';
 import {
   addOpening,
   deleteOpening,
@@ -11,8 +11,9 @@ import {
 } from '../storage';
 import { confirmDialog, promptDialog, simpleMenu, anchoredMenu } from '../overlay';
 import type { Opening, Repertoire } from '../types';
-import { Screen, TopBar, Breadcrumb, EmptyState, BigButton, rowStyles } from '../components/Common';
-import { colors, spacing } from '../theme';
+import { Screen, TopBar, Breadcrumb, BigButton, rowStyles } from '../components/Common';
+import { PieceGlyph } from '../components/ChessBoard';
+import { colors, spacing, type } from '../theme';
 import { startStudySession } from './StudySessionOverlay';
 
 // Used only on this screen: the opening row's "⋮" opens a small plain-text
@@ -124,6 +125,8 @@ export function OpeningsScreen({
 }) {
   const [rep, setRep] = useState<Repertoire | null>(null);
   const [rows, setRows] = useState<OpeningRowData[]>([]);
+  const { width } = useWindowDimensions();
+  const emptyPieceSize = Math.min(width * 0.55, 240);
 
   const load = useCallback(async () => {
     const r = await getRepertoire(repertoireId);
@@ -155,7 +158,7 @@ export function OpeningsScreen({
   async function handleStudy() {
     const openings = await getOpenings(repertoireId);
     if (openings.length === 0) return;
-    const choice = await simpleMenu(['Full repertoire (random order)', 'Choose one opening']);
+    const choice = await simpleMenu(['Full repertoire (random order)', 'Choose one opening'], 'Study this repertoire');
     if (choice === 'Full repertoire (random order)') {
       await startStudySession(openings.map((o) => o.id), { shuffleOpenings: true });
       load();
@@ -194,32 +197,51 @@ export function OpeningsScreen({
 
   return (
     <Screen>
-      <Breadcrumb text={rep.group === 'white' ? 'White' : 'Black'} />
+      <Breadcrumb text={`${rep.group === 'white' ? 'White' : 'Black'} › ${rep.name}`} />
       <TopBar title={rep.name} onBack={onBack} onRename={handleRenameRepertoire} />
 
       <BigButton title="+ Add opening" onPress={handleAddOpening} />
       <View style={{ height: spacing.lg }} />
 
-      {rows.length === 0 && <EmptyState text="No openings yet. Add one to get started." />}
+      {rows.length === 0 ? (
+        // A big, group-colored rook instead of a plain line of text — it
+        // fills the same space a short list would otherwise leave empty,
+        // and doubles as a reminder of which side ("White"/"Black") this
+        // repertoire belongs to.
+        <View style={emptyStyles.wrap}>
+          <PieceGlyph code={rep.group === 'white' ? 'wR' : 'bR'} cell={emptyPieceSize} />
+          <Text style={emptyStyles.text}>No openings yet. Add one to get started.</Text>
+        </View>
+      ) : (
+        <>
+          {rows.map(({ opening, cards }) => (
+            <OpeningRow
+              key={opening.id}
+              title={opening.name}
+              subtitle={`${cards} card${cards === 1 ? '' : 's'}`}
+              onPress={() => onOpenOpening(opening.id)}
+              onRename={(name) => handleRenameOpening(opening, name)}
+              onDelete={() => handleDeleteOpening(opening)}
+            />
+          ))}
 
-      {rows.map(({ opening, cards }) => (
-        <OpeningRow
-          key={opening.id}
-          title={opening.name}
-          subtitle={`${cards} card${cards === 1 ? '' : 's'}`}
-          onPress={() => onOpenOpening(opening.id)}
-          onRename={(name) => handleRenameOpening(opening, name)}
-          onDelete={() => handleDeleteOpening(opening)}
-        />
-      ))}
+          {/* Pushes the Study CTA to the bottom of the screen when there's
+              only a little content, instead of leaving it stranded under a
+              short list with empty space below — a bottom-anchored primary
+              action is a standard mobile pattern and reads as intentional,
+              not unfinished. */}
+          <View style={{ flex: 1, minHeight: 24 }} />
+        </>
+      )}
 
-      {/* Pushes the Study CTA to the bottom of the screen when there's only
-          a little content, instead of leaving it stranded under a short
-          list with empty space below — a bottom-anchored primary action is
-          a standard mobile pattern and reads as intentional, not unfinished. */}
-      <View style={{ flex: 1, minHeight: 24 }} />
-
-      <BigButton title="▶ Study this repertoire" onPress={handleStudy} variant="gold" />
+      {rows.some((r) => r.cards > 0) && (
+        <BigButton title="▶ Study this repertoire" onPress={handleStudy} variant="gold" />
+      )}
     </Screen>
   );
 }
+
+const emptyStyles = {
+  wrap: { flex: 1, alignItems: 'center' as const, justifyContent: 'center' as const, paddingVertical: spacing.xxl },
+  text: { color: colors.textSecondary, ...type.body, textAlign: 'center' as const, marginTop: spacing.lg }
+};

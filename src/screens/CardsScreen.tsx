@@ -1,19 +1,28 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, PanResponder, PanResponderInstance, StyleSheet, LayoutChangeEvent } from 'react-native';
+import {
+  View,
+  Text,
+  Pressable,
+  PanResponder,
+  PanResponderInstance,
+  StyleSheet,
+  LayoutChangeEvent,
+  useWindowDimensions
+} from 'react-native';
 import {
   addCard,
   deleteCard,
-  deleteOpening,
   getCards,
   getOpening,
   getRepertoire,
   renameOpening,
   reorderCards
 } from '../storage';
-import { confirmDialog, promptDialog, simpleMenu } from '../overlay';
+import { confirmDialog, anchoredMenu } from '../overlay';
 import type { Card, Opening, Repertoire } from '../types';
-import { Screen, TopBar, Breadcrumb, EmptyState, BigButton } from '../components/Common';
-import { colors, radius } from '../theme';
+import { Screen, TopBar, Breadcrumb, BigButton } from '../components/Common';
+import { PieceGlyph } from '../components/ChessBoard';
+import { colors, radius, spacing, type } from '../theme';
 import { openCardEditor } from './CardEditorOverlay';
 import { startStudySession } from './StudySessionOverlay';
 
@@ -25,6 +34,51 @@ function cardPreviewText(card: Card): string {
 }
 
 const DEFAULT_ROW_HEIGHT = 60;
+
+// Same "⋮" treatment as the opening/repertoire rows: a small plain-text
+// popover pinned right under the button instead of a full-screen menu.
+function CardRow({
+  card,
+  idx,
+  isDragging,
+  responder,
+  onLayout,
+  onOpen,
+  onDelete
+}: {
+  card: Card;
+  idx: number;
+  isDragging: boolean;
+  responder: PanResponderInstance;
+  onLayout?: (e: LayoutChangeEvent) => void;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  const menuRef = useRef<View>(null);
+
+  function openMenu() {
+    menuRef.current?.measureInWindow(async (x, y, width, height) => {
+      const action = await anchoredMenu(['Delete'], { x, y, width, height });
+      if (action === 'Delete') onDelete();
+    });
+  }
+
+  return (
+    <View onLayout={onLayout} style={[styles.row, isDragging && styles.rowDragging]}>
+      <View {...responder.panHandlers} style={styles.dragHandle}>
+        <Text style={{ color: colors.textDim, fontSize: 18 }}>≡</Text>
+      </View>
+      <Pressable onPress={onOpen} style={styles.main}>
+        <Text style={styles.mainText} numberOfLines={1}>
+          {idx + 1}. {cardPreviewText(card)}
+        </Text>
+      </Pressable>
+      <Pressable ref={menuRef} onPress={openMenu} style={styles.menuBtn}>
+        <Text style={{ color: colors.textDim, fontSize: 18 }}>⋮</Text>
+      </Pressable>
+    </View>
+  );
+}
 
 export function CardsScreen({
   openingId,
@@ -39,6 +93,8 @@ export function CardsScreen({
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const rowHeightRef = useRef(DEFAULT_ROW_HEIGHT);
   const snapshotRef = useRef<Card[]>([]);
+  const { width } = useWindowDimensions();
+  const emptyPieceSize = Math.min(width * 0.55, 240);
 
   const load = useCallback(async () => {
     const o = await getOpening(openingId);
@@ -62,22 +118,10 @@ export function CardsScreen({
     load();
   }, [load]);
 
-  async function handleEditOpening() {
+  async function handleRenameOpening(name: string) {
     if (!opening) return;
-    const action = await simpleMenu(['Rename opening', 'Delete opening'], 'Edit Opening');
-    if (action === 'Rename opening') {
-      const name = await promptDialog('Rename opening', opening.name);
-      if (name) {
-        await renameOpening(opening.id, name);
-        load();
-      }
-    } else if (action === 'Delete opening') {
-      const ok = await confirmDialog(`Delete "${opening.name}" and all its cards?`);
-      if (ok) {
-        await deleteOpening(opening.id);
-        onBack();
-      }
-    }
+    await renameOpening(opening.id, name);
+    load();
   }
 
   async function handleStudy() {
@@ -97,14 +141,11 @@ export function CardsScreen({
     if (result.changed) load();
   }
 
-  async function handleMenu(card: Card) {
-    const action = await simpleMenu(['Delete']);
-    if (action === 'Delete') {
-      const ok = await confirmDialog('Delete this card?');
-      if (ok) {
-        await deleteCard(card.id);
-        load();
-      }
+  async function handleDeleteCard(card: Card) {
+    const ok = await confirmDialog('Delete this card?');
+    if (ok) {
+      await deleteCard(card.id);
+      load();
     }
   }
 
@@ -150,40 +191,47 @@ export function CardsScreen({
 
   return (
     <Screen>
-      <Breadcrumb text={`${rep.group === 'white' ? 'White' : 'Black'} › ${rep.name}`} />
-      <TopBar title={opening.name} onBack={onBack} onEdit={handleEditOpening} />
-
-      <BigButton title="▶ Study this opening" onPress={handleStudy} variant="gold" />
-
-      {cards.length === 0 && <EmptyState text="No cards yet. Add one to get started." />}
-
-      {cards.map((card, idx) => {
-        const responder = makeResponder(card.id);
-        return (
-          <View
-            key={card.id}
-            onLayout={idx === 0 ? handleRowLayout : undefined}
-            style={[styles.row, draggingId === card.id && styles.rowDragging]}
-          >
-            <View {...responder.panHandlers} style={styles.dragHandle}>
-              <Text style={{ color: colors.textDim, fontSize: 18 }}>≡</Text>
-            </View>
-            <Pressable onPress={() => handleOpenCard(card)} style={styles.main}>
-              <Text style={styles.mainText} numberOfLines={1}>
-                {idx + 1}. {cardPreviewText(card)}
-              </Text>
-            </Pressable>
-            <Pressable onPress={() => handleMenu(card)} style={styles.menuBtn}>
-              <Text style={{ color: colors.textDim, fontSize: 18 }}>⋮</Text>
-            </Pressable>
-          </View>
-        );
-      })}
+      <Breadcrumb text={`${rep.group === 'white' ? 'White' : 'Black'} › ${rep.name} › ${opening.name}`} />
+      <TopBar title={opening.name} onBack={onBack} onRename={handleRenameOpening} />
 
       <BigButton title="+ Add card" onPress={handleAddCard} />
+      <View style={{ height: spacing.lg }} />
+
+      {cards.length === 0 ? (
+        <View style={emptyStyles.wrap}>
+          <PieceGlyph code={rep.group === 'white' ? 'wN' : 'bN'} cell={emptyPieceSize} />
+          <Text style={emptyStyles.text}>No cards yet. Add one to get started.</Text>
+        </View>
+      ) : (
+        <>
+          {cards.map((card, idx) => (
+            <CardRow
+              key={card.id}
+              card={card}
+              idx={idx}
+              isDragging={draggingId === card.id}
+              responder={makeResponder(card.id)}
+              onLayout={idx === 0 ? handleRowLayout : undefined}
+              onOpen={() => handleOpenCard(card)}
+              onDelete={() => handleDeleteCard(card)}
+            />
+          ))}
+
+          {/* Pushes the Study CTA to the bottom of the screen, matching the
+              repertoire/openings screens' layout. */}
+          <View style={{ flex: 1, minHeight: 24 }} />
+        </>
+      )}
+
+      {cards.length > 0 && <BigButton title="▶ Study this opening" onPress={handleStudy} variant="gold" />}
     </Screen>
   );
 }
+
+const emptyStyles = {
+  wrap: { flex: 1, alignItems: 'center' as const, justifyContent: 'center' as const, paddingVertical: spacing.xxl },
+  text: { color: colors.textSecondary, ...type.body, textAlign: 'center' as const, marginTop: spacing.lg }
+};
 
 const styles = StyleSheet.create({
   row: {

@@ -3,7 +3,7 @@ import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getOpening, getOpenings, getRepertoire, getRepertoires, moveOrDuplicateCard } from '../storage';
 import { simpleMenu, showOverlay } from '../overlay';
-import type { Card, Opening, Repertoire } from '../types';
+import type { Card, GroupId, Opening, Repertoire } from '../types';
 import { colors, radius, type } from '../theme';
 import { BackCircleButton } from '../components/Common';
 
@@ -68,6 +68,7 @@ function RadioRow({
 
 function MoveDuplicateOverlay({ card, close }: { card: Card; close: (result: Result) => void }) {
   const [currentRepertoire, setCurrentRepertoire] = useState<Repertoire | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<GroupId | null>(null);
   const [repertoires, setRepertoires] = useState<Repertoire[]>([]);
   const [selectedRepertoire, setSelectedRepertoire] = useState<Repertoire | null>(null);
   const [openings, setOpenings] = useState<Opening[]>([]);
@@ -87,6 +88,7 @@ function MoveDuplicateOverlay({ card, close }: { card: Card; close: (result: Res
         return;
       }
       setCurrentRepertoire(rep);
+      setSelectedGroup(rep.group);
       setSelectedRepertoire(rep);
       const reps = await getRepertoires(rep.group);
       setRepertoires(reps);
@@ -96,6 +98,21 @@ function MoveDuplicateOverlay({ card, close }: { card: Card; close: (result: Res
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card.id]);
+
+  async function handlePickGroup() {
+    const label = await simpleMenu(['White', 'Black']);
+    if (!label) return;
+    const group: GroupId = label === 'White' ? 'white' : 'black';
+    if (group === selectedGroup) return;
+    setSelectedGroup(group);
+    const reps = await getRepertoires(group);
+    setRepertoires(reps);
+    const rep = reps[0] ?? null;
+    setSelectedRepertoire(rep);
+    const ops = rep ? await getOpenings(rep.id) : [];
+    setOpenings(ops);
+    setSelectedOpening(ops[0] ?? null);
+  }
 
   async function handlePickRepertoire() {
     const name = await simpleMenu(repertoires.map((r) => r.name));
@@ -128,7 +145,7 @@ function MoveDuplicateOverlay({ card, close }: { card: Card; close: (result: Res
     close(mode === 'move' ? 'moved' : 'duplicated');
   }
 
-  if (!currentRepertoire || !selectedRepertoire) {
+  if (!currentRepertoire || !selectedGroup) {
     return <SafeAreaView style={styles.overlay} />;
   }
 
@@ -144,11 +161,15 @@ function MoveDuplicateOverlay({ card, close }: { card: Card; close: (result: Res
 
         <DropdownField
           label="Group"
-          value={currentRepertoire.group === 'white' ? 'White' : 'Black'}
-          icon={currentRepertoire.group === 'white' ? '♔' : '♚'}
-          disabled
+          value={selectedGroup === 'white' ? 'White' : 'Black'}
+          icon={selectedGroup === 'white' ? '♔' : '♚'}
+          onPress={handlePickGroup}
         />
-        <DropdownField label="Repertoire" value={selectedRepertoire.name} onPress={handlePickRepertoire} />
+        <DropdownField
+          label="Repertoire"
+          value={selectedRepertoire?.name ?? 'No repertoires in this group'}
+          onPress={handlePickRepertoire}
+        />
         <DropdownField label="Opening" value={selectedOpening?.name ?? '—'} onPress={handlePickOpening} />
 
         <RadioRow

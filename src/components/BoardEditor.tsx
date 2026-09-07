@@ -1,7 +1,6 @@
-import React, { forwardRef, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, PanResponder, PanResponderInstance } from 'react-native';
-import Svg, { Line } from 'react-native-svg';
-import { allSquares, cloneBoardState, newBoardState, pieceColor, squareFromIndex } from '../chess';
+import { allSquares, cloneBoardState, legalMoves, newBoardState, squareFromIndex } from '../chess';
 import type { ArrowColor, BoardState } from '../types';
 import { arrowColors, boardStyles, colors } from '../theme';
 import { ArrowsSvg, PieceGlyph } from './ChessBoard';
@@ -29,10 +28,15 @@ export const BoardEditor = forwardRef<BoardEditorHandle, Props>(function BoardEd
   const gridOrigin = useRef({ x: 0, y: 0 });
   const gridRef = useRef<View>(null);
 
-  const [dragGhost, setDragGhost] = useState<{ sq: string; x: number; y: number } | null>(null);
-  const [tempLine, setTempLine] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
-  const dragSourceRef = useRef<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  // Snaps to whichever square the finger is currently over (not the raw
+  // pixel position), and is rendered with the same ArrowsSvg used for
+  // finalized arrows — so the preview already looks like a real arrow and
+  // jumps square-to-square instead of following the finger continuously.
+  const [tempArrow, setTempArrow] = useState<{ from: string; to: string } | null>(null);
   const arrowStartRef = useRef<string | null>(null);
+
+  const legalTargets = useMemo(() => (selected ? legalMoves(state.pieces, selected) : []), [state, selected]);
 
   const styleSet = boardStyles[state.style] ?? boardStyles[0];
 
@@ -41,17 +45,57 @@ export const BoardEditor = forwardRef<BoardEditorHandle, Props>(function BoardEd
     if (historyRef.current.length > 30) historyRef.current.shift();
   }
 
-  function measureGrid(cb: () => void) {
+  function measureGrid(cb?: () => void) {
     gridRef.current?.measureInWindow((x, y) => {
       gridOrigin.current = { x, y };
-      cb();
+      cb?.();
     });
   }
+
+  // Measure the grid's on-screen position as soon as it's laid out, instead
+  // of only lazily on the first touch — otherwise a fast finger movement
+  // right at the start of a drag could fire a few move events before that
+  // first (async) measurement resolves, silently dropping the earliest
+  // preview updates.
+  useEffect(() => {
+    measureGrid();
+  }, []);
 
   function squareFromPage(pageX: number, pageY: number): string | null {
     const file = Math.floor((pageX - gridOrigin.current.x) / CELL);
     const rank = Math.floor((pageY - gridOrigin.current.y) / CELL);
     return squareFromIndex(file, rank);
+  }
+
+  // Tap-to-select, tap-to-move: no dragging, no turn order — tapping a
+  // piece shows where it can legally go (per that piece's own movement
+  // pattern only; check/castling/en-passant/promotion don't apply here,
+  // this is a position-setup tool, not a game), and tapping a highlighted
+  // square moves it there.
+  function handleSquareTap(sq: string) {
+    if (!selected) {
+      if (state.pieces[sq]) setSelected(sq);
+      return;
+    }
+    if (sq === selected) {
+      setSelected(null);
+      return;
+    }
+    if (legalMoves(state.pieces, selected).includes(sq)) {
+      const source = selected;
+      pushHistory();
+      setState((prev) => {
+        const piece = prev.pieces[source];
+        if (!piece) return prev;
+        const nextPieces = { ...prev.pieces };
+        nextPieces[sq] = piece;
+        delete nextPieces[source];
+        return { ...prev, pieces: nextPieces };
+      });
+      setSelected(null);
+      return;
+    }
+    setSelected(state.pieces[sq] ? sq : null);
   }
 
   const panResponder = useMemo<PanResponderInstance>(() => {
@@ -64,63 +108,35 @@ export const BoardEditor = forwardRef<BoardEditorHandle, Props>(function BoardEd
           const sq = squareFromPage(pageX, pageY);
           if (!sq) return;
           if (mode === 'move') {
-            const piece = state.pieces[sq];
-            if (!piece) return;
-            dragSourceRef.current = sq;
-            setDragGhost({ sq, x: pageX - gridOrigin.current.x, y: pageY - gridOrigin.current.y });
+            handleSquareTap(sq);
           } else {
             arrowStartRef.current = sq;
-            const idx = allSquares().indexOf(sq);
-            const file = idx % 8;
-            const rank = Math.floor(idx / 8);
-            const cx = file * CELL + CELL / 2;
-            const cy = rank * CELL + CELL / 2;
-            setTempLine({ x1: cx, y1: cy, x2: pageX - gridOrigin.current.x, y2: pageY - gridOrigin.current.y });
+            setTempArrow(null);
           }
         });
       },
       onPanResponderMove: (evt) => {
+        if (mode !== 'arrow' || !arrowStartRef.current) return;
         const { pageX, pageY } = evt.nativeEvent;
-        const localX = pageX - gridOrigin.current.x;
-        const localY = pageY - gridOrigin.current.y;
-        if (mode === 'move' && dragSourceRef.current) {
-          setDragGhost({ sq: dragSourceRef.current, x: localX, y: localY });
-        } else if (mode === 'arrow' && arrowStartRef.current) {
-          setTempLine((prev) => (prev ? { ...prev, x2: localX, y2: localY } : prev));
-        }
+        const hoverSq = squareFromPage(pageX, pageY);
+        const start = arrowStartRef.current;
+        setTempArrow(hoverSq && hoverSq !== start ? { from: start, to: hoverSq } : null);
       },
       onPanResponderRelease: (evt) => {
+        if (mode !== 'arrow' || !arrowStartRef.current) return;
         const { pageX, pageY } = evt.nativeEvent;
-        if (mode === 'move' && dragSourceRef.current) {
-          const targetSq = squareFromPage(pageX, pageY);
-          const source = dragSourceRef.current;
-          if (targetSq && targetSq !== source) {
-            pushHistory();
-            setState((prev) => {
-              const piece = prev.pieces[source];
-              if (!piece) return prev;
-              const nextPieces = { ...prev.pieces };
-              nextPieces[targetSq] = piece;
-              delete nextPieces[source];
-              return { ...prev, pieces: nextPieces };
-            });
-          }
-          dragSourceRef.current = null;
-          setDragGhost(null);
-        } else if (mode === 'arrow' && arrowStartRef.current) {
-          const endSq = squareFromPage(pageX, pageY);
-          const start = arrowStartRef.current;
-          if (endSq && endSq !== start) {
-            pushHistory();
-            setState((prev) => ({ ...prev, arrows: [...prev.arrows, { from: start, to: endSq, color: arrowColor }] }));
-          }
-          arrowStartRef.current = null;
-          setTempLine(null);
+        const endSq = squareFromPage(pageX, pageY);
+        const start = arrowStartRef.current;
+        if (endSq && endSq !== start) {
+          pushHistory();
+          setState((prev) => ({ ...prev, arrows: [...prev.arrows, { from: start, to: endSq, color: arrowColor }] }));
         }
+        arrowStartRef.current = null;
+        setTempArrow(null);
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, arrowColor, state]);
+  }, [mode, arrowColor, state, selected]);
 
   function handleStyleChange(idx: number) {
     pushHistory();
@@ -130,6 +146,7 @@ export const BoardEditor = forwardRef<BoardEditorHandle, Props>(function BoardEd
   function handleUndo() {
     const prev = historyRef.current.pop();
     if (prev) setState(prev);
+    setSelected(null);
   }
 
   function handleClearArrows() {
@@ -142,6 +159,7 @@ export const BoardEditor = forwardRef<BoardEditorHandle, Props>(function BoardEd
     pushHistory();
     const fresh = newBoardState(state.style);
     setState((prev) => ({ ...prev, pieces: fresh.pieces, arrows: [] }));
+    setSelected(null);
   }
 
   return (
@@ -179,6 +197,7 @@ export const BoardEditor = forwardRef<BoardEditorHandle, Props>(function BoardEd
               onPress={() => {
                 setArrowColor(color);
                 setMode('arrow');
+                setSelected(null);
               }}
               hitSlop={9}
               style={[
@@ -205,6 +224,7 @@ export const BoardEditor = forwardRef<BoardEditorHandle, Props>(function BoardEd
 
       <View
         ref={gridRef}
+        onLayout={() => measureGrid()}
         style={[styles.board, { width: BOARD_SIZE, height: BOARD_SIZE }]}
         {...panResponder.panHandlers}
       >
@@ -213,7 +233,9 @@ export const BoardEditor = forwardRef<BoardEditorHandle, Props>(function BoardEd
             const file = i % 8;
             const rank = Math.floor(i / 8);
             const isLight = (file + rank) % 2 === 0;
-            const piece = dragSourceRef.current === sq ? undefined : state.pieces[sq];
+            const piece = state.pieces[sq];
+            const isSelected = sq === selected;
+            const isTarget = legalTargets.includes(sq);
             return (
               <View
                 key={sq}
@@ -226,33 +248,20 @@ export const BoardEditor = forwardRef<BoardEditorHandle, Props>(function BoardEd
                 }}
               >
                 {piece && <PieceGlyph code={piece} cell={CELL} />}
+                {isSelected && (
+                  <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.selectedHighlight]} />
+                )}
+                {isTarget && !piece && <View pointerEvents="none" style={styles.moveDot} />}
+                {isTarget && piece && <View pointerEvents="none" style={styles.captureRing} />}
               </View>
             );
           })}
         </View>
         <View style={StyleSheet.absoluteFill} pointerEvents="none">
-          <ArrowsSvg arrows={state.arrows} size={BOARD_SIZE} />
-          {tempLine && (
-            <Svg width={BOARD_SIZE} height={BOARD_SIZE} style={StyleSheet.absoluteFill}>
-              <Line
-                x1={tempLine.x1}
-                y1={tempLine.y1}
-                x2={tempLine.x2}
-                y2={tempLine.y2}
-                stroke={arrowColors[arrowColor]}
-                strokeWidth={3}
-                strokeLinecap="round"
-                opacity={0.9}
-              />
-            </Svg>
-          )}
-          {dragGhost && (
-            <View style={{ position: 'absolute', left: dragGhost.x - CELL / 2, top: dragGhost.y - CELL / 2 }}>
-              {state.pieces[dragGhost.sq] && (
-                <PieceGlyph code={state.pieces[dragGhost.sq]!} cell={CELL} />
-              )}
-            </View>
-          )}
+          <ArrowsSvg
+            arrows={tempArrow ? [...state.arrows, { ...tempArrow, color: arrowColor }] : state.arrows}
+            size={BOARD_SIZE}
+          />
         </View>
       </View>
 
@@ -302,6 +311,22 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     marginTop: 4
+  },
+  selectedHighlight: { backgroundColor: 'rgba(21,128,61,0.35)' },
+  moveDot: {
+    position: 'absolute',
+    width: CELL * 0.28,
+    height: CELL * 0.28,
+    borderRadius: (CELL * 0.28) / 2,
+    backgroundColor: 'rgba(21,128,61,0.55)'
+  },
+  captureRing: {
+    position: 'absolute',
+    width: CELL - 6,
+    height: CELL - 6,
+    borderRadius: (CELL - 6) / 2,
+    borderWidth: 3,
+    borderColor: 'rgba(220,38,38,0.85)'
   },
   resetBtn: {
     marginTop: 14,

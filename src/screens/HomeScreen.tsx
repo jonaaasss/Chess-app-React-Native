@@ -11,15 +11,9 @@ const SHUFFLE_TOOLTIP =
 
 const BADGE_SIZE = 68;
 
-// Real chess pieces are physically light or dark objects, not an outline
-// convention — so each badge is colored to make its own piece's true fill
-// pop (a dark badge behind the light white-king art, a light badge behind
-// the dark black-king art), rather than relying on a text glyph whose
-// outline/solid rendering isn't guaranteed consistent across Android fonts
-// (the actual bug reported: ♔/♚ were reading as swapped on-device).
-const GROUPS: { id: GroupId; label: string; piece: PieceCode; badgeBg: string }[] = [
-  { id: 'white', label: 'White', piece: 'wK', badgeBg: '#12161f' },
-  { id: 'black', label: 'Black', piece: 'bK', badgeBg: '#dde2ea' }
+const GROUPS: { id: GroupId; label: string; piece: PieceCode }[] = [
+  { id: 'white', label: 'White', piece: 'wK' },
+  { id: 'black', label: 'Black', piece: 'bK' }
 ];
 
 export function HomeScreen({ onOpenGroup }: { onOpenGroup: (group: GroupId) => void }) {
@@ -75,7 +69,7 @@ export function HomeScreen({ onOpenGroup }: { onOpenGroup: (group: GroupId) => v
             onPress={() => onOpenGroup(g.id)}
             style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
           >
-            <View style={[styles.badge, { backgroundColor: g.badgeBg }]}>
+            <View style={styles.badge}>
               <PieceGlyph code={g.piece} cell={BADGE_SIZE * 0.92} />
             </View>
             <View style={{ flex: 1 }}>
@@ -124,7 +118,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md
   },
   tile: {
-    backgroundColor: colors.tileWhiteBg,
+    backgroundColor: colors.surface,
     borderRadius: radius.xl + 4,
     borderWidth: 1.5,
     borderColor: colors.border,
@@ -140,6 +134,7 @@ const styles = StyleSheet.create({
     width: 68,
     height: 68,
     borderRadius: 34,
+    backgroundColor: colors.pieceBadgeBg,
     alignItems: 'center',
     justifyContent: 'center'
   },

@@ -1,8 +1,102 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, TextInput, Pressable, useWindowDimensions } from 'react-native';
 import { addRepertoire, deleteRepertoire, getRepertoireStats, getRepertoires, renameRepertoire } from '../storage';
-import { confirmDialog, promptDialog, simpleMenu } from '../overlay';
+import { confirmDialog, promptDialog, anchoredMenu } from '../overlay';
 import type { GroupId, Repertoire } from '../types';
-import { Screen, TopBar, EmptyState, ListRow, BigButton } from '../components/Common';
+import { Screen, TopBar, BigButton, rowStyles } from '../components/Common';
+import { PieceGlyph } from '../components/ChessBoard';
+import { colors, spacing, type } from '../theme';
+
+// Same pattern as OpeningsScreen's row: the "⋮" opens a small plain-text
+// popover pinned right under it instead of a full-screen menu, and
+// "Rename" edits the name in place instead of opening a dialog.
+function RepertoireRow({
+  title,
+  subtitle,
+  onPress,
+  onRename,
+  onDelete
+}: {
+  title: string;
+  subtitle: string;
+  onPress: () => void;
+  onRename: (newName: string) => void;
+  onDelete: () => void;
+}) {
+  const menuRef = useRef<View>(null);
+  const inputRef = useRef<TextInput>(null);
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(title);
+
+  useEffect(() => {
+    if (!editing) return;
+    const t = setTimeout(() => inputRef.current?.focus(), 50);
+    return () => clearTimeout(t);
+  }, [editing]);
+
+  function startEdit() {
+    setValue(title);
+    setEditing(true);
+  }
+
+  function commitEdit() {
+    setEditing(false);
+    const trimmed = value.trim();
+    if (trimmed && trimmed !== title) onRename(trimmed);
+  }
+
+  function openMenu() {
+    menuRef.current?.measureInWindow(async (x, y, width, height) => {
+      const action = await anchoredMenu(['Rename', 'Delete'], { x, y, width, height });
+      if (action === 'Rename') startEdit();
+      else if (action === 'Delete') onDelete();
+    });
+  }
+
+  return (
+    <View style={rowStyles.row}>
+      {editing ? (
+        <View style={rowStyles.main}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <TextInput
+              ref={inputRef}
+              style={[rowStyles.title, rowTitleInputStyle]}
+              value={value}
+              onChangeText={setValue}
+              onSubmitEditing={commitEdit}
+              onBlur={commitEdit}
+              returnKeyType="done"
+            />
+            <Text style={rowStyles.subtitle} numberOfLines={1}>
+              {subtitle}
+            </Text>
+          </View>
+        </View>
+      ) : (
+        <Pressable onPress={onPress} style={({ pressed }) => [rowStyles.main, pressed && { opacity: 0.7 }]}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={rowStyles.title} numberOfLines={1}>
+              {title}
+            </Text>
+            <Text style={rowStyles.subtitle} numberOfLines={1}>
+              {subtitle}
+            </Text>
+          </View>
+        </Pressable>
+      )}
+      <Pressable
+        ref={menuRef}
+        onPress={openMenu}
+        hitSlop={4}
+        style={({ pressed }) => [rowStyles.menuBtn, pressed && { opacity: 0.7 }]}
+      >
+        <Text style={{ color: colors.textSecondary, fontSize: 18 }}>⋮</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const rowTitleInputStyle = { padding: 0, borderBottomWidth: 1, borderBottomColor: colors.accent };
 
 interface RepRow {
   rep: Repertoire;
@@ -20,6 +114,8 @@ export function RepertoiresScreen({
   onOpenRepertoire: (repertoireId: string) => void;
 }) {
   const [rows, setRows] = useState<RepRow[]>([]);
+  const { width } = useWindowDimensions();
+  const emptyPieceSize = Math.min(width * 0.55, 240);
 
   const load = useCallback(async () => {
     const reps = await getRepertoires(group);
@@ -35,23 +131,6 @@ export function RepertoiresScreen({
     load();
   }, [load]);
 
-  async function handleMenu(rep: Repertoire) {
-    const action = await simpleMenu(['Rename', 'Delete'], 'Edit Repertoire');
-    if (action === 'Rename') {
-      const name = await promptDialog('Rename repertoire', rep.name);
-      if (name) {
-        await renameRepertoire(rep.id, name);
-        load();
-      }
-    } else if (action === 'Delete') {
-      const ok = await confirmDialog(`Delete "${rep.name}" and all its openings/cards?`);
-      if (ok) {
-        await deleteRepertoire(rep.id);
-        load();
-      }
-    }
-  }
-
   async function handleAdd() {
     const name = await promptDialog('New repertoire', '', 'e.g. Blitz repertoire');
     if (name) {
@@ -60,23 +139,48 @@ export function RepertoiresScreen({
     }
   }
 
+  async function handleRenameRepertoire(rep: Repertoire, name: string) {
+    await renameRepertoire(rep.id, name);
+    load();
+  }
+
+  async function handleDeleteRepertoire(rep: Repertoire) {
+    const ok = await confirmDialog(`Delete "${rep.name}" and all its openings/cards?`);
+    if (ok) {
+      await deleteRepertoire(rep.id);
+      load();
+    }
+  }
+
   return (
     <Screen>
-      <TopBar title={group === 'white' ? 'White' : 'Black'} onBack={onBack} onAdd={handleAdd} />
-
-      {rows.length === 0 && <EmptyState text="No repertoires yet. Add one to get started." />}
-
-      {rows.map(({ rep, openings, cards }) => (
-        <ListRow
-          key={rep.id}
-          title={rep.name}
-          subtitle={`${openings} opening${openings === 1 ? '' : 's'} · ${cards} card${cards === 1 ? '' : 's'}`}
-          onPress={() => onOpenRepertoire(rep.id)}
-          onMenu={() => handleMenu(rep)}
-        />
-      ))}
+      <TopBar title={group === 'white' ? 'White' : 'Black'} onBack={onBack} />
 
       <BigButton title="+ Add repertoire" onPress={handleAdd} />
+      <View style={{ height: spacing.lg }} />
+
+      {rows.length === 0 ? (
+        <View style={emptyStyles.wrap}>
+          <PieceGlyph code={group === 'white' ? 'wQ' : 'bQ'} cell={emptyPieceSize} />
+          <Text style={emptyStyles.text}>No repertoires yet. Add one to get started.</Text>
+        </View>
+      ) : (
+        rows.map(({ rep, openings, cards }) => (
+          <RepertoireRow
+            key={rep.id}
+            title={rep.name}
+            subtitle={`${openings} opening${openings === 1 ? '' : 's'} · ${cards} card${cards === 1 ? '' : 's'}`}
+            onPress={() => onOpenRepertoire(rep.id)}
+            onRename={(name) => handleRenameRepertoire(rep, name)}
+            onDelete={() => handleDeleteRepertoire(rep)}
+          />
+        ))
+      )}
     </Screen>
   );
 }
+
+const emptyStyles = {
+  wrap: { flex: 1, alignItems: 'center' as const, justifyContent: 'center' as const, paddingVertical: spacing.xxl },
+  text: { color: colors.textSecondary, ...type.body, textAlign: 'center' as const, marginTop: spacing.lg }
+};

@@ -38,10 +38,11 @@ export const colors = {
   evalRight: '#15803d',
   evalWrong: '#dc2626',
 
-  // Both tiles share one neutral surface — the badge (light king vs. dark
-  // king) and label are the only differentiators, not a colored background.
-  tileWhiteBg: '#171c26',
-  tileBlackBg: '#171c26',
+  // The cburnett king art always outlines in black (white king: white fill
+  // + black outline; black king: black fill + white detail lines), so a
+  // single mid-tone badge — lighter than the app's near-black surfaces,
+  // darker than white — reads both pieces clearly instead of favoring one.
+  pieceBadgeBg: '#454c5c',
 
   // Deprecated aliases kept during migration; prefer the names above.
   panel: '#192134',

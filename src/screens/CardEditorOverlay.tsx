@@ -65,15 +65,11 @@ function CardEditorOverlay({
     close({ changed: changedRef.current, deleted: false });
   }
 
-  function handleAddBoard() {
+  async function handleAddBoard() {
     const fresh = newBoardState(0);
-    patchFace({ board: fresh }, true);
-  }
-
-  function handleResetBoard() {
-    if (!face.board) return;
-    const fresh = newBoardState(face.board.style);
-    patchFace({ board: fresh }, true);
+    const updated = await openBoardEditorFullscreen(fresh);
+    if (!updated) return;
+    patchFace({ board: updated }, true);
   }
 
   function handleRemoveBoard() {
@@ -151,20 +147,17 @@ function CardEditorOverlay({
           </Pressable>
         ) : (
           <View>
-            <View style={styles.boardIconRow}>
-              <Pressable onPress={handleAddBoard} style={styles.iconBtn}>
-                <Text style={styles.iconBtnText}>+</Text>
+            <View style={{ alignSelf: 'center' }}>
+              <ChessBoardView board={face.board} size={280} />
+            </View>
+            <View style={styles.boardActionsRow}>
+              <Pressable onPress={handleEditBoard} style={styles.boardActionBtn}>
+                <Text style={styles.boardActionText}>Edit board</Text>
               </Pressable>
-              <Pressable onPress={handleResetBoard} style={styles.iconBtn}>
-                <Text style={styles.iconBtnText}>↻</Text>
-              </Pressable>
-              <Pressable onPress={handleRemoveBoard} style={styles.iconBtn}>
-                <Text style={styles.iconBtnText}>✖</Text>
+              <Pressable onPress={handleRemoveBoard} style={styles.boardActionBtn}>
+                <Text style={[styles.boardActionText, styles.boardActionDanger]}>Remove board</Text>
               </Pressable>
             </View>
-            <Pressable onPress={handleEditBoard} style={{ alignSelf: 'center' }}>
-              <ChessBoardView board={face.board} size={280} />
-            </Pressable>
             {side === 'front' && (
               <Text style={styles.hint}>Editing this board also resets the back board to match.</Text>
             )}
@@ -227,9 +220,18 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start'
   },
   addBoardText: { color: colors.textDim, fontSize: 14 },
-  boardIconRow: { flexDirection: 'row', gap: 16, marginBottom: 10 },
-  iconBtn: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
-  iconBtnText: { color: colors.textDim, fontSize: 20 },
+  boardActionsRow: { flexDirection: 'row', gap: 10, marginTop: 12, justifyContent: 'center' },
+  boardActionBtn: {
+    minHeight: 44,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  boardActionText: { color: colors.text, fontSize: 14, fontWeight: '600' },
+  boardActionDanger: { color: colors.danger },
   hint: { color: colors.textDim, fontSize: 12, marginTop: 8, textAlign: 'center' },
   blockBtn: { width: '100%', borderRadius: 10, paddingVertical: 13, alignItems: 'center', marginTop: 12 },
   secondaryBtn: { backgroundColor: colors.panel2, borderWidth: 1, borderColor: colors.border },
