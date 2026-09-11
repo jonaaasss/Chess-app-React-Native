@@ -1,14 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { cloneBoardState, newBoardState } from '../chess';
 import { deleteCard, getCard, saveCard } from '../storage';
 import { confirmDialog, showOverlay } from '../overlay';
-import type { Card, Side } from '../types';
+import type { Card, CardMode, Side } from '../types';
 import { colors, type } from '../theme';
-import { ChessBoardView } from '../components/ChessBoard';
-import { openBoardEditorFullscreen } from './BoardEditorOverlay';
 import { openMoveDuplicateDialog } from './MoveDuplicateOverlay';
+import { BoardsGrid } from './BoardsGrid';
 
 export interface CardEditorResult {
   changed: boolean;
@@ -44,15 +42,8 @@ function CardEditorOverlay({
 
   const face = card[side];
 
-  function patchFace(patch: Partial<Card['front']>, syncToBack: boolean) {
-    setCard((prev) => {
-      if (!prev) return prev;
-      const next: Card = { ...prev, [side]: { ...prev[side], ...patch } };
-      if (side === 'front' && syncToBack && patch.board !== undefined) {
-        next.back = { ...next.back, board: patch.board ? cloneBoardState(patch.board) : next.back.board };
-      }
-      return next;
-    });
+  function patchText(text: string) {
+    setCard((prev) => (prev ? { ...prev, [side]: { ...prev[side], text } } : prev));
   }
 
   async function handleSave() {
@@ -65,22 +56,26 @@ function CardEditorOverlay({
     close({ changed: changedRef.current, deleted: false });
   }
 
-  async function handleAddBoard() {
-    const fresh = newBoardState(0);
-    const updated = await openBoardEditorFullscreen(fresh);
-    if (!updated) return;
-    patchFace({ board: updated }, true);
-  }
-
-  function handleRemoveBoard() {
-    patchFace({ board: null }, false);
-  }
-
-  async function handleEditBoard() {
-    if (!face.board) return;
-    const updated = await openBoardEditorFullscreen(face.board);
-    if (!updated) return;
-    patchFace({ board: updated }, true);
+  // Both modes share `card.boards`; only the editor each board opens and
+  // whether `recording` is used differ. Switching to Others discards the
+  // recorded lines (with a warning) but keeps every board's position,
+  // arrows and circles.
+  async function handleSetMode(next: CardMode) {
+    if (!card || next === card.mode) return;
+    if (next === 'others') {
+      const hasRecording = card.boards.some((b) => b.recording.length > 0);
+      if (hasRecording) {
+        const ok = await confirmDialog(
+          "Switching to Others deletes all recorded moves/notation on this card's boards. Each board's position, arrows, and circles are kept. Continue?"
+        );
+        if (!ok) return;
+      }
+      setCard((prev) =>
+        prev ? { ...prev, mode: 'others', boards: prev.boards.map((b) => ({ ...b, recording: [] })) } : prev
+      );
+      return;
+    }
+    setCard((prev) => (prev ? { ...prev, mode: next } : prev));
   }
 
   async function handleMoveDuplicate() {
@@ -134,35 +129,32 @@ function CardEditorOverlay({
         <TextInput
           style={styles.textArea}
           value={face.text}
-          onChangeText={(t) => patchFace({ text: t }, false)}
+          onChangeText={patchText}
           multiline
           placeholder="Type the card text..."
           placeholderTextColor={colors.textDim}
         />
 
-        <Text style={styles.fieldLabel}>Board (optional)</Text>
-        {!face.board ? (
-          <Pressable onPress={handleAddBoard} style={styles.addBoardBtn}>
-            <Text style={styles.addBoardText}>+ Add board</Text>
-          </Pressable>
-        ) : (
-          <View>
-            <View style={{ alignSelf: 'center' }}>
-              <ChessBoardView board={face.board} size={280} />
-            </View>
-            <View style={styles.boardActionsRow}>
-              <Pressable onPress={handleEditBoard} style={styles.boardActionBtn}>
-                <Text style={styles.boardActionText}>Edit board</Text>
-              </Pressable>
-              <Pressable onPress={handleRemoveBoard} style={styles.boardActionBtn}>
-                <Text style={[styles.boardActionText, styles.boardActionDanger]}>Remove board</Text>
-              </Pressable>
-            </View>
-            {side === 'front' && (
-              <Text style={styles.hint}>Editing this board also resets the back board to match.</Text>
-            )}
+        <View style={styles.modeHeaderRow}>
+          <Text style={[styles.fieldLabel, { marginTop: 0, marginBottom: 0 }]}>Boards</Text>
+          <View style={styles.modeToggle}>
+            <Pressable
+              onPress={() => handleSetMode('reactions')}
+              style={[styles.modeBtn, card.mode === 'reactions' && styles.modeBtnActive]}
+            >
+              <Text style={[styles.modeBtnText, card.mode === 'reactions' && styles.modeBtnTextActive]}>Reactions</Text>
+            </Pressable>
+            <Pressable onPress={() => handleSetMode('others')} style={[styles.modeBtn, card.mode === 'others' && styles.modeBtnActive]}>
+              <Text style={[styles.modeBtnText, card.mode === 'others' && styles.modeBtnTextActive]}>Others</Text>
+            </Pressable>
           </View>
-        )}
+        </View>
+
+        <BoardsGrid
+          mode={card.mode}
+          boards={card.boards}
+          onChange={(boards) => setCard((prev) => (prev ? { ...prev, boards } : prev))}
+        />
 
         <Pressable onPress={handleMoveDuplicate} style={[styles.blockBtn, styles.secondaryBtn]}>
           <Text style={[styles.blockBtnText, styles.secondaryBtnText]}>Move / duplicate card</Text>
@@ -209,30 +201,12 @@ const styles = StyleSheet.create({
     minHeight: 110,
     textAlignVertical: 'top'
   },
-  addBoardBtn: {
-    backgroundColor: colors.panel2,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderStyle: 'dashed',
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    alignSelf: 'flex-start'
-  },
-  addBoardText: { color: colors.textDim, fontSize: 14 },
-  boardActionsRow: { flexDirection: 'row', gap: 10, marginTop: 12, justifyContent: 'center' },
-  boardActionBtn: {
-    minHeight: 44,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  boardActionText: { color: colors.text, fontSize: 14, fontWeight: '600' },
-  boardActionDanger: { color: colors.danger },
-  hint: { color: colors.textDim, fontSize: 12, marginTop: 8, textAlign: 'center' },
+  modeHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, marginBottom: 6 },
+  modeToggle: { flexDirection: 'row', backgroundColor: colors.panel2, borderRadius: 8, padding: 2, borderWidth: 1, borderColor: colors.border },
+  modeBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6 },
+  modeBtnActive: { backgroundColor: colors.accent },
+  modeBtnText: { color: colors.textDim, fontSize: 13, fontWeight: '600' },
+  modeBtnTextActive: { color: colors.onPrimary },
   blockBtn: { width: '100%', borderRadius: 10, paddingVertical: 13, alignItems: 'center', marginTop: 12 },
   secondaryBtn: { backgroundColor: colors.panel2, borderWidth: 1, borderColor: colors.border },
   secondaryBtnText: { color: colors.text },

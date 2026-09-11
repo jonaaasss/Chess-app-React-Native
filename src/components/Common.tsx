@@ -45,6 +45,22 @@ export function BackCircleButton({ onPress }: { onPress: () => void }) {
   );
 }
 
+// Same treatment for the edit pencil — used by TopBar's onEdit/onRename, and
+// anywhere else (e.g. the Study session footer) that needs the identical
+// circular pencil button rather than a plain glyph.
+export function EditCircleButton({ onPress }: { onPress: () => void }) {
+  return (
+    <IconButton
+      onPress={onPress}
+      icon={
+        <View style={styles.backCircle}>
+          <EditPencilIcon size={21} color={colors.textPrimary} />
+        </View>
+      }
+    />
+  );
+}
+
 export function Screen({ children, scroll = true }: { children: React.ReactNode; scroll?: boolean }) {
   const Container = scroll ? ScrollView : View;
   return (

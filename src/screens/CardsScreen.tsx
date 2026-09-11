@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
+  TextInput,
   Pressable,
   PanResponder,
   PanResponderInstance,
@@ -15,10 +16,11 @@ import {
   getCards,
   getOpening,
   getRepertoire,
+  renameCard,
   renameOpening,
   reorderCards
 } from '../storage';
-import { confirmDialog, anchoredMenu } from '../overlay';
+import { confirmDialog, promptDialog, anchoredMenu } from '../overlay';
 import type { Card, Opening, Repertoire } from '../types';
 import { Screen, TopBar, Breadcrumb, BigButton } from '../components/Common';
 import { PieceGlyph } from '../components/ChessBoard';
@@ -35,8 +37,8 @@ function cardPreviewText(card: Card): string {
 
 const DEFAULT_ROW_HEIGHT = 60;
 
-// Same "⋮" treatment as the opening/repertoire rows: a small plain-text
-// popover pinned right under the button instead of a full-screen menu.
+// Same "⋮" treatment as the opening/repertoire rows: a plain-text popover
+// pinned under the button, and "Rename" edits the name in place.
 function CardRow({
   card,
   idx,
@@ -44,6 +46,7 @@ function CardRow({
   responder,
   onLayout,
   onOpen,
+  onRename,
   onDelete
 }: {
   card: Card;
@@ -52,14 +55,37 @@ function CardRow({
   responder: PanResponderInstance;
   onLayout?: (e: LayoutChangeEvent) => void;
   onOpen: () => void;
+  onRename: (newName: string) => void;
   onDelete: () => void;
 }) {
   const menuRef = useRef<View>(null);
+  const inputRef = useRef<TextInput>(null);
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(card.name);
+  const label = card.name || cardPreviewText(card);
+
+  useEffect(() => {
+    if (!editing) return;
+    const t = setTimeout(() => inputRef.current?.focus(), 50);
+    return () => clearTimeout(t);
+  }, [editing]);
+
+  function startEdit() {
+    setValue(card.name);
+    setEditing(true);
+  }
+
+  function commitEdit() {
+    setEditing(false);
+    const trimmed = value.trim();
+    if (trimmed && trimmed !== card.name) onRename(trimmed);
+  }
 
   function openMenu() {
     menuRef.current?.measureInWindow(async (x, y, width, height) => {
-      const action = await anchoredMenu(['Delete'], { x, y, width, height });
-      if (action === 'Delete') onDelete();
+      const action = await anchoredMenu(['Rename', 'Delete'], { x, y, width, height });
+      if (action === 'Rename') startEdit();
+      else if (action === 'Delete') onDelete();
     });
   }
 
@@ -68,11 +94,25 @@ function CardRow({
       <View {...responder.panHandlers} style={styles.dragHandle}>
         <Text style={{ color: colors.textDim, fontSize: 18 }}>≡</Text>
       </View>
-      <Pressable onPress={onOpen} style={styles.main}>
-        <Text style={styles.mainText} numberOfLines={1}>
-          {idx + 1}. {cardPreviewText(card)}
-        </Text>
-      </Pressable>
+      {editing ? (
+        <View style={styles.main}>
+          <TextInput
+            ref={inputRef}
+            style={[styles.mainText, styles.mainInput]}
+            value={value}
+            onChangeText={setValue}
+            onSubmitEditing={commitEdit}
+            onBlur={commitEdit}
+            returnKeyType="done"
+          />
+        </View>
+      ) : (
+        <Pressable onPress={onOpen} style={styles.main}>
+          <Text style={styles.mainText} numberOfLines={1}>
+            {idx + 1}. {label}
+          </Text>
+        </Pressable>
+      )}
       <Pressable ref={menuRef} onPress={openMenu} style={styles.menuBtn}>
         <Text style={{ color: colors.textDim, fontSize: 18 }}>⋮</Text>
       </Pressable>
@@ -131,7 +171,9 @@ export function CardsScreen({
   }
 
   async function handleAddCard() {
-    const card = await addCard(openingId);
+    const name = await promptDialog('New card', '', 'e.g. Italian — main line');
+    if (!name) return;
+    const card = await addCard(openingId, name);
     await openCardEditor(card.id);
     load();
   }
@@ -139,6 +181,11 @@ export function CardsScreen({
   async function handleOpenCard(card: Card) {
     const result = await openCardEditor(card.id);
     if (result.changed) load();
+  }
+
+  async function handleRenameCard(card: Card, name: string) {
+    await renameCard(card.id, name);
+    load();
   }
 
   async function handleDeleteCard(card: Card) {
@@ -213,6 +260,7 @@ export function CardsScreen({
               responder={makeResponder(card.id)}
               onLayout={idx === 0 ? handleRowLayout : undefined}
               onOpen={() => handleOpenCard(card)}
+              onRename={(name) => handleRenameCard(card, name)}
               onDelete={() => handleDeleteCard(card)}
             />
           ))}
@@ -247,5 +295,6 @@ const styles = StyleSheet.create({
   dragHandle: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   main: { flex: 1, paddingVertical: 14, justifyContent: 'center', minHeight: 44 },
   mainText: { color: colors.text, fontSize: 15, fontWeight: '500' },
+  mainInput: { padding: 0, borderBottomWidth: 1, borderBottomColor: colors.accent },
   menuBtn: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }
 });

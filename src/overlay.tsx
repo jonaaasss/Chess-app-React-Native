@@ -14,7 +14,7 @@ function CloseIcon({ size, color }: { size: number; color: string }) {
   );
 }
 
-function CloseCircleButton({ onPress }: { onPress: () => void }) {
+export function CloseCircleButton({ onPress }: { onPress: () => void }) {
   return (
     <Pressable onPress={onPress} hitSlop={12} style={closeStyles.circle}>
       <CloseIcon size={13} color="#ffffff" />

@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { cloneBoardState } from './chess';
+import { boardStateToReactionBoard, cloneReactionBoard } from './chess';
 import type { Card, GroupId, Opening, Repertoire } from './types';
 
 const STORAGE_KEY = 'chess-flashcards-data';
@@ -17,10 +17,38 @@ function emptyStore(): Store {
 
 let store: Store | null = null;
 
+// Backfills fields added after cards were first persisted, so data saved
+// before "Reactions" mode existed keeps loading and behaving exactly as
+// "Others" mode (no board-editing behavior changes for existing cards).
+function migrate(s: Store): void {
+  for (const card of s.cards) {
+    const legacy = card as unknown as {
+      mode?: string;
+      name?: string;
+      reactionBoards?: Card['boards'];
+      boards?: Card['boards'];
+      front?: { board?: import('./types').BoardState | null };
+    };
+    if (!card.mode) card.mode = 'others';
+    if (card.name === undefined) card.name = '';
+    if (!card.boards) {
+      if (legacy.reactionBoards && legacy.reactionBoards.length > 0) {
+        card.boards = legacy.reactionBoards;
+      } else if (legacy.front?.board) {
+        card.boards = [boardStateToReactionBoard(legacy.front.board, uid(), 0)];
+      } else {
+        card.boards = [];
+      }
+    }
+    delete legacy.reactionBoards;
+  }
+}
+
 async function load(): Promise<Store> {
   if (store) return store;
   const raw = await AsyncStorage.getItem(STORAGE_KEY);
   store = raw ? (JSON.parse(raw) as Store) : emptyStore();
+  migrate(store);
   return store;
 }
 
@@ -29,7 +57,7 @@ async function persist(): Promise<void> {
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(store));
 }
 
-function uid(): string {
+export function uid(): string {
   // React Native has no built-in Web Crypto by default, so we generate
   // a random v4-shaped id manually instead of relying on crypto.randomUUID.
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -140,19 +168,30 @@ export async function getCard(id: string): Promise<Card | undefined> {
   return s.cards.find((c) => c.id === id);
 }
 
-export async function addCard(openingId: string): Promise<Card> {
+export async function addCard(openingId: string, name = ''): Promise<Card> {
   const s = await load();
   const existing = await getCards(openingId);
   const card: Card = {
     id: uid(),
     openingId,
     order: existing.length,
+    name,
+    mode: 'others',
     front: { text: '', board: null },
-    back: { text: '', board: null }
+    back: { text: '', board: null },
+    boards: []
   };
   s.cards.push(card);
   await persist();
   return card;
+}
+
+export async function renameCard(id: string, name: string): Promise<void> {
+  const s = await load();
+  const c = s.cards.find((x) => x.id === id);
+  if (!c) return;
+  c.name = name;
+  await persist();
 }
 
 export async function saveCard(card: Card): Promise<void> {
@@ -198,8 +237,11 @@ export async function moveOrDuplicateCard(
       id: uid(),
       openingId: targetOpeningId,
       order: targetCards.length,
-      front: { text: card.front.text, board: card.front.board ? cloneBoardState(card.front.board) : null },
-      back: { text: card.back.text, board: card.back.board ? cloneBoardState(card.back.board) : null }
+      name: card.name,
+      mode: card.mode,
+      front: { text: card.front.text, board: null },
+      back: { text: card.back.text, board: null },
+      boards: card.boards.map((rb) => cloneReactionBoard(rb, uid()))
     };
     s.cards.push(newCard);
   }

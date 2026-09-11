@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
-import Svg, { Defs, Marker, Path, Line } from 'react-native-svg';
+import Svg, { Defs, Marker, Path, Line, Circle as SvgCircle } from 'react-native-svg';
 import { allSquares, squareIndex } from '../chess';
-import type { Arrow, ArrowColor, BoardState, PieceCode } from '../types';
+import type { Arrow, ArrowColor, BoardState, Circle, PieceCode } from '../types';
 import { arrowColors, boardStyles, colors } from '../theme';
 import { PieceArt } from './pieceArt';
 
@@ -10,7 +10,7 @@ const ARROW_KEYS = Object.keys(arrowColors) as ArrowColor[];
 
 export function ArrowsSvg({ arrows, size }: { arrows: Arrow[]; size: number }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 8 8">
+    <Svg width={size} height={size} viewBox="0 0 8 8" style={StyleSheet.absoluteFill}>
       <Defs>
         {ARROW_KEYS.map((color) => (
           <Marker
@@ -50,6 +50,28 @@ export function ArrowsSvg({ arrows, size }: { arrows: Arrow[]; size: number }) {
             strokeLinecap="round"
             opacity={0.9}
             markerEnd={`url(#arrowhead-${arrow.color})`}
+          />
+        );
+      })}
+    </Svg>
+  );
+}
+
+export function CirclesSvg({ circles, size }: { circles: Circle[]; size: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 8 8" style={StyleSheet.absoluteFill}>
+      {circles.map((c, i) => {
+        const { file, rank } = squareIndex(c.square);
+        return (
+          <SvgCircle
+            key={i}
+            cx={file + 0.5}
+            cy={rank + 0.5}
+            r={0.42}
+            stroke={arrowColors[c.color]}
+            strokeWidth={0.09}
+            fill="none"
+            opacity={0.9}
           />
         );
       })}
@@ -97,6 +119,7 @@ export function ChessBoardView({ board, size }: { board: BoardState; size: numbe
       </View>
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
         <ArrowsSvg arrows={board.arrows} size={size} />
+        {board.circles && board.circles.length > 0 && <CirclesSvg circles={board.circles} size={size} />}
       </View>
     </View>
   );

@@ -1,13 +1,32 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { getCard, getCards, getOpening, getSetting } from '../storage';
+import { getCard, getCards, getOpening, getRepertoire, getSetting } from '../storage';
 import { showOverlay } from '../overlay';
 import type { Card } from '../types';
 import { colors, radius, type } from '../theme';
 import { ChessBoardView } from '../components/ChessBoard';
-import { BackCircleButton } from '../components/Common';
+import { BackCircleButton, EditCircleButton } from '../components/Common';
 import { openCardEditor } from './CardEditorOverlay';
+import { ReactionStudy } from './ReactionStudy';
+
+// "Others" cards: front and back show the same set of boards (they're
+// kept in sync by the editor). Reactions cards use ReactionStudy instead.
+function OthersBoardsView({ card }: { card: Card }) {
+  if (card.boards.length === 0) return null;
+  const sorted = [...card.boards].sort((a, b) => a.order - b.order);
+  return (
+    <View style={{ gap: 16, alignItems: 'center' }}>
+      {sorted.map((b) => (
+        <ChessBoardView
+          key={b.id}
+          board={{ pieces: b.pieces, style: b.style, arrows: b.arrows, circles: b.circles }}
+          size={230}
+        />
+      ))}
+    </View>
+  );
+}
 
 interface QueueItem {
   cardId: string;
@@ -47,6 +66,7 @@ function StudySessionOverlay({
   const [flipped, setFlipped] = useState(false);
   const [card, setCard] = useState<Card | null>(null);
   const [openingName, setOpeningName] = useState('');
+  const [yourColor, setYourColor] = useState<'w' | 'b'>('w');
   const [done, setDone] = useState(false);
   const wrongThisRoundRef = useRef<QueueItem[]>([]);
 
@@ -64,6 +84,8 @@ function StudySessionOverlay({
       setCard(c);
       const opening = await getOpening(item.openingId);
       setOpeningName(opening?.name ?? '');
+      const rep = opening ? await getRepertoire(opening.repertoireId) : undefined;
+      setYourColor(rep?.group === 'black' ? 'b' : 'w');
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item?.cardId, item?.openingId, index, roundNumber]);
@@ -177,33 +199,49 @@ function StudySessionOverlay({
           <View style={[styles.progressFill, { width: `${((index + 1) / total) * 100}%` }]} />
         </View>
 
-        <Pressable onPress={() => setFlipped((f) => !f)} style={styles.studyCard}>
-          <Text style={styles.studyCardText}>{face.text}</Text>
-          {face.board && <ChessBoardView board={face.board} size={260} />}
-        </Pressable>
-        <Text style={styles.hint}>Tap card to flip</Text>
+        {card.mode === 'reactions' ? (
+          <View style={styles.studyCard}>
+            {card.front.text ? <Text style={styles.studyCardText}>{card.front.text}</Text> : null}
+            <ReactionStudy
+              key={`${roundNumber}-${index}`}
+              card={card}
+              yourColor={yourColor}
+              onResult={(correct) => advance(correct ? null : item)}
+            />
+          </View>
+        ) : (
+          <>
+            <Pressable onPress={() => setFlipped((f) => !f)} style={styles.studyCard}>
+              {face.text ? <Text style={styles.studyCardText}>{face.text}</Text> : null}
+              {card.boards.length > 0 ? (
+                <OthersBoardsView card={card} />
+              ) : (
+                face.board && <ChessBoardView board={face.board} size={260} />
+              )}
+            </Pressable>
+            <Text style={styles.hint}>Tap card to flip</Text>
 
-        <View style={styles.evalRow}>
-          <Pressable
-            disabled={!flipped}
-            onPress={() => advance(item)}
-            style={[styles.evalBtn, { backgroundColor: colors.evalWrong, opacity: flipped ? 1 : 0.4 }]}
-          >
-            <Text style={styles.evalBtnText}>✕ Wrong</Text>
-          </Pressable>
-          <Pressable
-            disabled={!flipped}
-            onPress={() => advance(null)}
-            style={[styles.evalBtn, { backgroundColor: colors.evalRight, opacity: flipped ? 1 : 0.4 }]}
-          >
-            <Text style={styles.evalBtnText}>✓ Right</Text>
-          </Pressable>
-        </View>
+            <View style={styles.evalRow}>
+              <Pressable
+                disabled={!flipped}
+                onPress={() => advance(item)}
+                style={[styles.evalBtn, { backgroundColor: colors.evalWrong, opacity: flipped ? 1 : 0.4 }]}
+              >
+                <Text style={styles.evalBtnText}>✕ Wrong</Text>
+              </Pressable>
+              <Pressable
+                disabled={!flipped}
+                onPress={() => advance(null)}
+                style={[styles.evalBtn, { backgroundColor: colors.evalRight, opacity: flipped ? 1 : 0.4 }]}
+              >
+                <Text style={styles.evalBtnText}>✓ Right</Text>
+              </Pressable>
+            </View>
+          </>
+        )}
 
         <View style={styles.footerRow}>
-          <Pressable onPress={handleEditCard} style={styles.footerBtn}>
-            <Text style={styles.footerIcon}>✎</Text>
-          </Pressable>
+          <EditCircleButton onPress={handleEditCard} />
           <Text style={styles.footerCount}>
             {index + 1} / {total}
           </Text>

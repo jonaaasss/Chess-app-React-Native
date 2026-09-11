@@ -1,4 +1,4 @@
-import type { BoardState, PieceCode } from './types';
+import type { BoardState, MoveNode, PieceCode, ReactionBoard } from './types';
 
 export const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 export const RANKS = ['8', '7', '6', '5', '4', '3', '2', '1'];
@@ -37,7 +37,110 @@ export function cloneBoardState(board: BoardState): BoardState {
   return {
     pieces: { ...board.pieces },
     style: board.style,
-    arrows: board.arrows.map((a) => ({ ...a }))
+    arrows: board.arrows.map((a) => ({ ...a })),
+    circles: board.circles?.map((c) => ({ ...c }))
+  };
+}
+
+// Walks a recorded tree's "main line" (recording[0], then children[0] each
+// step) to its final node — the position reached by playing the line as it
+// was originally recorded. Returns null for an empty recording.
+export function mainLineLeaf(recording: MoveNode[]): MoveNode | null {
+  if (recording.length === 0) return null;
+  let node = recording[0];
+  while (node.children.length > 0) node = node.children[0];
+  return node;
+}
+
+export function mainLineNodes(recording: MoveNode[]): MoveNode[] {
+  if (recording.length === 0) return [];
+  const nodes: MoveNode[] = [];
+  let node: MoveNode | undefined = recording[0];
+  while (node) {
+    nodes.push(node);
+    node = node.children[0];
+  }
+  return nodes;
+}
+
+export function mainLineSans(recording: MoveNode[]): string[] {
+  if (recording.length === 0) return [];
+  const sans: string[] = [];
+  let node: MoveNode | undefined = recording[0];
+  while (node) {
+    sans.push(node.san);
+    node = node.children[0];
+  }
+  return sans;
+}
+
+export function cloneMoveNode(node: MoveNode): MoveNode {
+  return {
+    ...node,
+    piecesAfter: { ...node.piecesAfter },
+    castlingAfter: { ...node.castlingAfter },
+    addedArrows: node.addedArrows.map((a) => ({ ...a })),
+    addedCircles: node.addedCircles.map((c) => ({ ...c })),
+    removedArrows: node.removedArrows.map((a) => ({ ...a })),
+    removedCircles: node.removedCircles.map((c) => ({ ...c })),
+    children: node.children.map(cloneMoveNode)
+  };
+}
+
+export function newReactionBoard(id: string, order: number, style = 0): ReactionBoard {
+  return {
+    id,
+    order,
+    pieces: startingPosition(),
+    turn: 'w',
+    castling: { wK: true, wQ: true, bK: true, bQ: true },
+    enPassant: null,
+    style,
+    arrows: [],
+    circles: [],
+    recording: []
+  };
+}
+
+// Wraps a plain BoardState (from the "Others" editor or legacy card data)
+// into a full board entry. Game-state fields default to a fresh standard
+// game since Others positions aren't tracked move-by-move.
+export function boardStateToReactionBoard(bs: BoardState, id: string, order: number): ReactionBoard {
+  return {
+    id,
+    order,
+    pieces: { ...bs.pieces },
+    turn: 'w',
+    castling: { wK: true, wQ: true, bK: true, bQ: true },
+    enPassant: null,
+    style: bs.style,
+    arrows: bs.arrows.map((a) => ({ ...a })),
+    circles: (bs.circles ?? []).map((c) => ({ ...c })),
+    recording: []
+  };
+}
+
+export function reactionBoardToBoardState(rb: ReactionBoard): BoardState {
+  return {
+    pieces: { ...rb.pieces },
+    style: rb.style,
+    arrows: rb.arrows.map((a) => ({ ...a })),
+    circles: rb.circles.map((c) => ({ ...c }))
+  };
+}
+
+export function cloneReactionBoard(board: ReactionBoard, id: string): ReactionBoard {
+  return {
+    id,
+    order: board.order,
+    pieces: { ...board.pieces },
+    turn: board.turn,
+    castling: { ...board.castling },
+    enPassant: board.enPassant,
+    style: board.style,
+    arrows: board.arrows.map((a) => ({ ...a })),
+    circles: board.circles.map((c) => ({ ...c })),
+    recording: board.recording.map(cloneMoveNode)
   };
 }
 
