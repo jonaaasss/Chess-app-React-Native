@@ -90,7 +90,10 @@ function MoveDuplicateOverlay({ card, close }: { card: Card; close: (result: Res
       setCurrentRepertoire(rep);
       setSelectedGroup(rep.group);
       setSelectedRepertoire(rep);
-      const reps = await getRepertoires(rep.group);
+      // The example repertoire isn't a valid move/duplicate destination —
+      // dumping a personal card into the demo content would defeat the
+      // point of being able to restore it to its original state.
+      const reps = (await getRepertoires(rep.group)).filter((r) => !r.isExample);
       setRepertoires(reps);
       const ops = await getOpenings(rep.id);
       setOpenings(ops);
@@ -105,7 +108,7 @@ function MoveDuplicateOverlay({ card, close }: { card: Card; close: (result: Res
     const group: GroupId = label === 'White' ? 'white' : 'black';
     if (group === selectedGroup) return;
     setSelectedGroup(group);
-    const reps = await getRepertoires(group);
+    const reps = (await getRepertoires(group)).filter((r) => !r.isExample);
     setRepertoires(reps);
     const rep = reps[0] ?? null;
     setSelectedRepertoire(rep);

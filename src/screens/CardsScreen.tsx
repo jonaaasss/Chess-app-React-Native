@@ -21,7 +21,7 @@ import {
   reorderCards
 } from '../storage';
 import { confirmDialog, promptDialog, anchoredMenu } from '../overlay';
-import type { Card, Opening, Repertoire } from '../types';
+import type { Card, Opening, PieceCode, Repertoire } from '../types';
 import { Screen, TopBar, Breadcrumb, BigButton } from '../components/Common';
 import { PieceGlyph } from '../components/ChessBoard';
 import { colors, radius, spacing, type } from '../theme';
@@ -29,10 +29,13 @@ import { openCardEditor } from './CardEditorOverlay';
 import { startStudySession } from './StudySessionOverlay';
 
 function cardPreviewText(card: Card): string {
-  const t = card.front.text.trim();
+  const firstBoard = [...card.boards].sort((a, b) => a.order - b.order)[0];
+  // Plan's single description lives on the back (see descriptionFace in
+  // CardEditorOverlay) — everything else uses the front.
+  const face = card.mode === 'plan' ? firstBoard?.back : firstBoard?.front;
+  const t = face?.text.trim();
   if (t) return t.split('\n')[0].slice(0, 60);
-  if (card.front.board) return '(board only)';
-  return '(empty card)';
+  return '(board only)';
 }
 
 const DEFAULT_ROW_HEIGHT = 60;
@@ -42,6 +45,7 @@ const DEFAULT_ROW_HEIGHT = 60;
 function CardRow({
   card,
   idx,
+  piece,
   isDragging,
   responder,
   onLayout,
@@ -51,6 +55,7 @@ function CardRow({
 }: {
   card: Card;
   idx: number;
+  piece: PieceCode;
   isDragging: boolean;
   responder: PanResponderInstance;
   onLayout?: (e: LayoutChangeEvent) => void;
@@ -96,6 +101,9 @@ function CardRow({
       </View>
       {editing ? (
         <View style={styles.main}>
+          <View style={styles.iconBadge}>
+            <PieceGlyph code={piece} cell={22} />
+          </View>
           <TextInput
             ref={inputRef}
             style={[styles.mainText, styles.mainInput]}
@@ -108,6 +116,9 @@ function CardRow({
         </View>
       ) : (
         <Pressable onPress={onOpen} style={styles.main}>
+          <View style={styles.iconBadge}>
+            <PieceGlyph code={piece} cell={22} />
+          </View>
           <Text style={styles.mainText} numberOfLines={1}>
             {idx + 1}. {label}
           </Text>
@@ -236,9 +247,11 @@ export function CardsScreen({
 
   if (!opening || !rep) return <Screen>{null}</Screen>;
 
+  const cardPiece: PieceCode = rep.group === 'white' ? 'wN' : 'bN';
+
   return (
     <Screen>
-      <Breadcrumb text={`${rep.group === 'white' ? 'White' : 'Black'} › ${rep.name} › ${opening.name}`} />
+      <Breadcrumb text={`${rep.group === 'white' ? 'White' : 'Black'} › ${rep.name} › ${opening.name}`} piece={cardPiece} />
       <TopBar title={opening.name} onBack={onBack} onRename={handleRenameOpening} />
 
       <BigButton title="+ Add card" onPress={handleAddCard} />
@@ -246,7 +259,7 @@ export function CardsScreen({
 
       {cards.length === 0 ? (
         <View style={emptyStyles.wrap}>
-          <PieceGlyph code={rep.group === 'white' ? 'wN' : 'bN'} cell={emptyPieceSize} />
+          <PieceGlyph code={cardPiece} cell={emptyPieceSize} />
           <Text style={emptyStyles.text}>No cards yet. Add one to get started.</Text>
         </View>
       ) : (
@@ -256,6 +269,7 @@ export function CardsScreen({
               key={card.id}
               card={card}
               idx={idx}
+              piece={cardPiece}
               isDragging={draggingId === card.id}
               responder={makeResponder(card.id)}
               onLayout={idx === 0 ? handleRowLayout : undefined}
@@ -293,8 +307,16 @@ const styles = StyleSheet.create({
   },
   rowDragging: { opacity: 0.85, borderColor: colors.accent },
   dragHandle: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
-  main: { flex: 1, paddingVertical: 14, justifyContent: 'center', minHeight: 44 },
-  mainText: { color: colors.text, fontSize: 15, fontWeight: '500' },
+  main: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 14, minHeight: 44 },
+  iconBadge: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.sm,
+    backgroundColor: colors.panel2,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  mainText: { color: colors.text, fontSize: 15, fontWeight: '500', flex: 1 },
   mainInput: { padding: 0, borderBottomWidth: 1, borderBottomColor: colors.accent },
   menuBtn: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }
 });

@@ -1,9 +1,16 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, TextInput, Pressable, useWindowDimensions } from 'react-native';
-import { addRepertoire, deleteRepertoire, getRepertoireStats, getRepertoires, renameRepertoire } from '../storage';
+import {
+  addRepertoire,
+  deleteRepertoire,
+  getRepertoireStats,
+  getVisibleRepertoires,
+  renameRepertoire,
+  restoreExampleRepertoire
+} from '../storage';
 import { confirmDialog, promptDialog, anchoredMenu } from '../overlay';
-import type { GroupId, Repertoire } from '../types';
-import { Screen, TopBar, BigButton, rowStyles } from '../components/Common';
+import type { GroupId, PieceCode, Repertoire } from '../types';
+import { Screen, TopBar, BigButton, Breadcrumb, rowStyles } from '../components/Common';
 import { PieceGlyph } from '../components/ChessBoard';
 import { colors, spacing, type } from '../theme';
 
@@ -13,15 +20,21 @@ import { colors, spacing, type } from '../theme';
 function RepertoireRow({
   title,
   subtitle,
+  piece,
+  isExample,
   onPress,
   onRename,
-  onDelete
+  onDelete,
+  onRestore
 }: {
   title: string;
   subtitle: string;
+  piece: PieceCode;
+  isExample?: boolean;
   onPress: () => void;
   onRename: (newName: string) => void;
   onDelete: () => void;
+  onRestore: () => void;
 }) {
   const menuRef = useRef<View>(null);
   const inputRef = useRef<TextInput>(null);
@@ -45,11 +58,15 @@ function RepertoireRow({
     if (trimmed && trimmed !== title) onRename(trimmed);
   }
 
+  // The example repertoire is fully editable, but it's shown/hidden as a
+  // pair via the Home screen toggle rather than deleted here — "Restore
+  // original content" takes Delete's place instead.
   function openMenu() {
+    const secondOption = isExample ? 'Restore original content' : 'Delete';
     menuRef.current?.measureInWindow(async (x, y, width, height) => {
-      const action = await anchoredMenu(['Rename', 'Delete'], { x, y, width, height });
+      const action = await anchoredMenu(['Rename', secondOption], { x, y, width, height });
       if (action === 'Rename') startEdit();
-      else if (action === 'Delete') onDelete();
+      else if (action === secondOption) (isExample ? onRestore : onDelete)();
     });
   }
 
@@ -57,6 +74,9 @@ function RepertoireRow({
     <View style={rowStyles.row}>
       {editing ? (
         <View style={rowStyles.main}>
+          <View style={rowStyles.iconBadge}>
+            <PieceGlyph code={piece} cell={26} />
+          </View>
           <View style={{ flex: 1, minWidth: 0 }}>
             <TextInput
               ref={inputRef}
@@ -74,6 +94,9 @@ function RepertoireRow({
         </View>
       ) : (
         <Pressable onPress={onPress} style={({ pressed }) => [rowStyles.main, pressed && { opacity: 0.7 }]}>
+          <View style={rowStyles.iconBadge}>
+            <PieceGlyph code={piece} cell={26} />
+          </View>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={rowStyles.title} numberOfLines={1}>
               {title}
@@ -118,7 +141,7 @@ export function RepertoiresScreen({
   const emptyPieceSize = Math.min(width * 0.55, 240);
 
   const load = useCallback(async () => {
-    const reps = await getRepertoires(group);
+    const reps = await getVisibleRepertoires(group);
     const rowsData: RepRow[] = [];
     for (const rep of reps) {
       const stats = await getRepertoireStats(rep.id);
@@ -152,8 +175,19 @@ export function RepertoiresScreen({
     }
   }
 
+  async function handleRestoreExample(rep: Repertoire) {
+    const ok = await confirmDialog(`Restore "${rep.name}" to its original content? Your changes to it will be lost.`);
+    if (ok) {
+      await restoreExampleRepertoire(rep.id);
+      load();
+    }
+  }
+
+  const groupPiece: PieceCode = group === 'white' ? 'wQ' : 'bQ';
+
   return (
     <Screen>
+      <Breadcrumb text={group === 'white' ? 'White' : 'Black'} piece={groupPiece} />
       <TopBar title={group === 'white' ? 'White' : 'Black'} onBack={onBack} />
 
       <BigButton title="+ Add repertoire" onPress={handleAdd} />
@@ -170,9 +204,12 @@ export function RepertoiresScreen({
             key={rep.id}
             title={rep.name}
             subtitle={`${openings} opening${openings === 1 ? '' : 's'} · ${cards} card${cards === 1 ? '' : 's'}`}
+            piece={groupPiece}
+            isExample={rep.isExample}
             onPress={() => onOpenRepertoire(rep.id)}
             onRename={(name) => handleRenameRepertoire(rep, name)}
             onDelete={() => handleDeleteRepertoire(rep)}
+            onRestore={() => handleRestoreExample(rep)}
           />
         ))
       )}

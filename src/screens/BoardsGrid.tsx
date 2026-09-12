@@ -1,13 +1,12 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { newReactionBoard, cloneReactionBoard, reactionBoardToBoardState } from '../chess';
+import { newReactionBoard, cloneReactionBoard } from '../chess';
 import { uid } from '../storage';
 import { ChessBoardView } from '../components/ChessBoard';
 import { CloseCircleButton } from '../overlay';
 import type { CardMode, ReactionBoard } from '../types';
 import { colors, radius, spacing } from '../theme';
 import { openReactionBoardEditor } from './ReactionBoardEditorOverlay';
-import { openBoardEditorFullscreen } from './BoardEditorOverlay';
 
 const MAX_BOARDS = 6;
 const PREVIEW_SIZE = 148;
@@ -19,10 +18,14 @@ const PREVIEW_SIZE = 148;
 export function BoardsGrid({
   mode,
   boards,
+  yourColor,
+  boardStyle,
   onChange
 }: {
   mode: CardMode;
   boards: ReactionBoard[];
+  yourColor: 'w' | 'b';
+  boardStyle: number;
   onChange: (boards: ReactionBoard[]) => void;
 }) {
   const sorted = [...boards].sort((a, b) => a.order - b.order);
@@ -42,34 +45,39 @@ export function BoardsGrid({
   }
 
   function handleDelete(board: ReactionBoard) {
+    // A card always needs at least one board — study text and position now
+    // live on the board itself, so there's nowhere left for a boardless
+    // card to keep anything.
+    if (boards.length <= 1) return;
     onChange(renumber(boards.filter((b) => b.id !== board.id)));
   }
 
   async function handleOpen(board: ReactionBoard) {
-    if (mode === 'reactions') {
-      const updated = await openReactionBoardEditor(board);
-      if (!updated) return;
-      onChange(boards.map((b) => (b.id === board.id ? updated : b)));
-      return;
-    }
-    const updated = await openBoardEditorFullscreen(reactionBoardToBoardState(board));
+    // All three modes share the same editor (forced move order, circles,
+    // numbered arrows) — "Others"/"Plan" just never get offered the Play
+    // button, so `recording` stays empty for them.
+    const updated = await openReactionBoardEditor(board, mode, yourColor, boardStyle);
     if (!updated) return;
-    onChange(
-      boards.map((b) =>
-        b.id === board.id
-          ? { ...b, pieces: updated.pieces, style: updated.style, arrows: updated.arrows, circles: updated.circles ?? [] }
-          : b
-      )
-    );
+    onChange(boards.map((b) => (b.id === board.id ? updated : b)));
   }
 
   return (
     <View>
       <View style={styles.grid}>
-        {sorted.map((board) => (
+        {sorted.map((board) => {
+          // The grid preview is a management view, not Study — it always
+          // shows the full position with its arrows, never hides anything:
+          // Reactions' own fields, Others' front, or Plan's single face
+          // (`back`, where its position/arrows actually live).
+          const previewFace = mode === 'plan' ? board.back : board.front;
+          const previewBoard =
+            mode === 'reactions'
+              ? { pieces: board.pieces, style: boardStyle, arrows: board.arrows, circles: board.circles }
+              : { pieces: previewFace.pieces, style: boardStyle, arrows: previewFace.arrows, circles: previewFace.circles };
+          return (
           <View key={board.id} style={styles.tile}>
             <Pressable onPress={() => handleOpen(board)}>
-              <ChessBoardView board={board} size={PREVIEW_SIZE} />
+              <ChessBoardView board={previewBoard} size={PREVIEW_SIZE} flipped={yourColor === 'b'} />
             </Pressable>
             <View style={styles.tileActions}>
               <Pressable
@@ -81,12 +89,15 @@ export function BoardsGrid({
                   ⧉ Duplicate
                 </Text>
               </Pressable>
-              <View style={styles.deleteBtn}>
-                <CloseCircleButton onPress={() => handleDelete(board)} />
-              </View>
+              {boards.length > 1 && (
+                <View style={styles.deleteBtn}>
+                  <CloseCircleButton onPress={() => handleDelete(board)} />
+                </View>
+              )}
             </View>
           </View>
-        ))}
+          );
+        })}
       </View>
 
       {boards.length < MAX_BOARDS && (
@@ -96,7 +107,14 @@ export function BoardsGrid({
       )}
 
       {mode === 'others' && (
-        <Text style={styles.reminder}>Editing this board also resets the back board to match.</Text>
+        <Text style={styles.reminder}>
+          Front and back are edited separately now — flip inside the board editor, or use "Apply to Back" to copy one onto the other.
+        </Text>
+      )}
+      {mode === 'plan' && (
+        <Text style={styles.reminder}>
+          Each board needs at least one arrow — it's hidden in Study and you'll draw it yourself.
+        </Text>
       )}
     </View>
   );

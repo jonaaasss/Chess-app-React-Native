@@ -1,14 +1,14 @@
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import Svg, { Defs, Marker, Path, Line, Circle as SvgCircle } from 'react-native-svg';
-import { allSquares, squareIndex } from '../chess';
+import { allSquares, flipIndex, squareIndex } from '../chess';
 import type { Arrow, ArrowColor, BoardState, Circle, PieceCode } from '../types';
 import { arrowColors, boardStyles, colors } from '../theme';
 import { PieceArt } from './pieceArt';
 
 const ARROW_KEYS = Object.keys(arrowColors) as ArrowColor[];
 
-export function ArrowsSvg({ arrows, size }: { arrows: Arrow[]; size: number }) {
+export function ArrowsSvg({ arrows, size, flipped = false }: { arrows: Arrow[]; size: number; flipped?: boolean }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 8 8" style={StyleSheet.absoluteFill}>
       <Defs>
@@ -27,8 +27,10 @@ export function ArrowsSvg({ arrows, size }: { arrows: Arrow[]; size: number }) {
         ))}
       </Defs>
       {arrows.map((arrow, i) => {
-        const from = squareIndex(arrow.from);
-        const to = squareIndex(arrow.to);
+        const fromRaw = squareIndex(arrow.from);
+        const toRaw = squareIndex(arrow.to);
+        const from = { file: flipIndex(fromRaw.file, flipped), rank: flipIndex(fromRaw.rank, flipped) };
+        const to = { file: flipIndex(toRaw.file, flipped), rank: flipIndex(toRaw.rank, flipped) };
         const x1 = from.file + 0.5;
         const y1 = from.rank + 0.5;
         let x2 = to.file + 0.5;
@@ -57,11 +59,118 @@ export function ArrowsSvg({ arrows, size }: { arrows: Arrow[]; size: number }) {
   );
 }
 
-export function CirclesSvg({ circles, size }: { circles: Circle[]; size: number }) {
+export interface NumberedArrow {
+  id: string;
+  from: string;
+  to: string;
+  color: string; // resolved hex/rgba, not an ArrowColor key — callers may use non-palette colors (e.g. Study's green/red)
+  number?: number; // omit to draw the arrow without a badge
+}
+
+// Same thin-line arrow look as the board editor's plain ArrowsSvg — used
+// wherever an arrow needs a number badge attached (the editor's own
+// same-color arrow numbering, and Study's variant callouts). Shared so the
+// two look identical.
+export function NumberedArrowsSvg({ arrows, size, flipped = false }: { arrows: NumberedArrow[]; size: number; flipped?: boolean }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 8 8" style={StyleSheet.absoluteFill}>
+      <Defs>
+        {arrows.map((a) => (
+          <Marker key={a.id} id={`numbered-head-${a.id}`} markerWidth={3} markerHeight={3} refX={1.4} refY={1.5} orient="auto">
+            <Path d="M0,0 L3,1.5 L0,3 Z" fill={a.color} />
+          </Marker>
+        ))}
+      </Defs>
+      {arrows.map((a) => {
+        const fromRaw = squareIndex(a.from);
+        const toRaw = squareIndex(a.to);
+        const from = { file: flipIndex(fromRaw.file, flipped), rank: flipIndex(fromRaw.rank, flipped) };
+        const to = { file: flipIndex(toRaw.file, flipped), rank: flipIndex(toRaw.rank, flipped) };
+        const x1 = from.file + 0.5;
+        const y1 = from.rank + 0.5;
+        let x2 = to.file + 0.5;
+        let y2 = to.rank + 0.5;
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const len = Math.hypot(dx, dy) || 1;
+        x2 -= (dx / len) * 0.35;
+        y2 -= (dy / len) * 0.35;
+        return (
+          <Line
+            key={a.id}
+            x1={x1}
+            y1={y1}
+            x2={x2}
+            y2={y2}
+            stroke={a.color}
+            strokeWidth={0.16}
+            strokeLinecap="round"
+            opacity={0.9}
+            markerEnd={`url(#numbered-head-${a.id})`}
+          />
+        );
+      })}
+    </Svg>
+  );
+}
+
+// The number badges for NumberedArrowsSvg, pushed to the side of each
+// arrow (alternating left/right) rather than sitting on its midpoint —
+// short or near-parallel arrows would otherwise stack their badges.
+export function NumberedArrowBadges({ arrows, size, flipped = false }: { arrows: NumberedArrow[]; size: number; flipped?: boolean }) {
+  const cell = size / 8;
+  function centerPx(square: string) {
+    const raw = squareIndex(square);
+    const file = flipIndex(raw.file, flipped);
+    const rank = flipIndex(raw.rank, flipped);
+    return { x: file * cell + cell / 2, y: rank * cell + cell / 2 };
+  }
+  return (
+    <>
+      {arrows.map((a, i) => {
+        if (a.number === undefined) return null;
+        const from = centerPx(a.from);
+        const to = centerPx(a.to);
+        const dx = to.x - from.x;
+        const dy = to.y - from.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const px = from.x + dx * 0.7;
+        const py = from.y + dy * 0.7;
+        const nx = -dy / len;
+        const ny = dx / len;
+        const side = i % 2 === 0 ? 1 : -1;
+        const offset = 10;
+        const bx = px + nx * offset * side;
+        const by = py + ny * offset * side;
+        return (
+          <View key={a.id} style={[badgeStyles.badge, { left: bx - 9, top: by - 9, backgroundColor: a.color }]}>
+            <Text style={badgeStyles.text}>{a.number}</Text>
+          </View>
+        );
+      })}
+    </>
+  );
+}
+
+const badgeStyles = StyleSheet.create({
+  badge: {
+    position: 'absolute',
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  text: { color: '#fff', fontSize: 10, fontWeight: '700' }
+});
+
+export function CirclesSvg({ circles, size, flipped = false }: { circles: Circle[]; size: number; flipped?: boolean }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 8 8" style={StyleSheet.absoluteFill}>
       {circles.map((c, i) => {
-        const { file, rank } = squareIndex(c.square);
+        const raw = squareIndex(c.square);
+        const file = flipIndex(raw.file, flipped);
+        const rank = flipIndex(raw.rank, flipped);
         return (
           <SvgCircle
             key={i}
@@ -89,9 +198,9 @@ export function PieceGlyph({ code, cell }: { code: PieceCode; cell: number }) {
   );
 }
 
-export function ChessBoardView({ board, size }: { board: BoardState; size: number }) {
+export function ChessBoardView({ board, size, flipped = false }: { board: BoardState; size: number; flipped?: boolean }) {
   const cell = size / 8;
-  const squares = allSquares();
+  const squares = flipped ? [...allSquares()].reverse() : allSquares();
   const styleSet = boardStyles[board.style] ?? boardStyles[0];
   return (
     <View style={[styles.wrap, { width: size, height: size, borderColor: colors.border }]}>
@@ -118,8 +227,10 @@ export function ChessBoardView({ board, size }: { board: BoardState; size: numbe
         })}
       </View>
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
-        <ArrowsSvg arrows={board.arrows} size={size} />
-        {board.circles && board.circles.length > 0 && <CirclesSvg circles={board.circles} size={size} />}
+        <ArrowsSvg arrows={board.arrows} size={size} flipped={flipped} />
+        {board.circles && board.circles.length > 0 && (
+          <CirclesSvg circles={board.circles} size={size} flipped={flipped} />
+        )}
       </View>
     </View>
   );

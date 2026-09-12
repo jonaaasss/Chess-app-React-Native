@@ -1,6 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { boardStateToReactionBoard, cloneReactionBoard } from './chess';
+import { boardStateToReactionBoard, cloneBoardFace, cloneReactionBoard, newReactionBoard } from './chess';
+import { buildExampleContent } from './exampleContent';
 import type { Card, GroupId, Opening, Repertoire } from './types';
+
+const EXAMPLE_HIDDEN_KEY = 'exampleRepertoireHidden';
+const SHOW_MULTIPLE_REPERTOIRES_KEY = 'showMultipleRepertoires';
+const BOARD_STYLE_KEY = 'boardStyle';
 
 const STORAGE_KEY = 'chess-flashcards-data';
 
@@ -27,7 +32,8 @@ function migrate(s: Store): void {
       name?: string;
       reactionBoards?: Card['boards'];
       boards?: Card['boards'];
-      front?: { board?: import('./types').BoardState | null };
+      front?: { text?: string; board?: import('./types').BoardState | null };
+      back?: { text?: string };
     };
     if (!card.mode) card.mode = 'others';
     if (card.name === undefined) card.name = '';
@@ -41,6 +47,61 @@ function migrate(s: Store): void {
       }
     }
     delete legacy.reactionBoards;
+
+    // Backfills boards saved before the front/back split — both sides
+    // start out identical to whatever the single board used to be, so
+    // nothing about existing Others/Plan boards visibly changes on load.
+    for (const board of card.boards) {
+      const legacyBoard = board as unknown as { front?: unknown; back?: unknown };
+      if (!legacyBoard.front || !legacyBoard.back) {
+        const face = {
+          pieces: { ...board.pieces },
+          turn: board.turn,
+          castling: { ...board.castling },
+          enPassant: board.enPassant,
+          arrows: board.arrows.map((a) => ({ ...a })),
+          circles: board.circles.map((c) => ({ ...c })),
+          text: '',
+          moves: []
+        };
+        board.front = cloneBoardFace(face);
+        board.back = cloneBoardFace(face);
+      }
+    }
+
+    // Backfills faces saved before `text`/`moves` existed on BoardFace.
+    for (const board of card.boards) {
+      for (const face of [board.front, board.back]) {
+        const legacyFace = face as unknown as { text?: string; moves?: unknown };
+        if (legacyFace.text === undefined) legacyFace.text = '';
+        if (!legacyFace.moves) legacyFace.moves = [];
+      }
+    }
+
+    // Text used to live on the card itself (one front/back pair for the
+    // whole card) — it now lives per-board. Reactions/Others keep using the
+    // old front→front, back→back mapping; a Plan card only shows a single
+    // description (on the board's `back`), so its old front and back text
+    // are merged there rather than half of it silently becoming invisible.
+    // A card always has at least one board going forward, so one is
+    // created here if this old card had none.
+    if (legacy.front || legacy.back) {
+      if (card.boards.length === 0) {
+        card.boards = [newReactionBoard(uid(), 0)];
+      }
+      const first = card.boards[0];
+      if (card.mode === 'plan') {
+        const planText = legacy.back?.text || legacy.front?.text || '';
+        if (planText) first.back.text = planText;
+      } else {
+        if (legacy.front?.text) first.front.text = legacy.front.text;
+        if (legacy.back?.text) first.back.text = legacy.back.text;
+      }
+      delete legacy.front;
+      delete legacy.back;
+    } else if (card.boards.length === 0) {
+      card.boards = [newReactionBoard(uid(), 0)];
+    }
   }
 }
 
@@ -72,9 +133,20 @@ export async function ensureSeeded(): Promise<void> {
   const groups: GroupId[] = ['white', 'black'];
   let changed = false;
   for (const group of groups) {
-    const has = s.repertoires.some((r) => r.group === group);
-    if (!has) {
-      s.repertoires.push({ id: uid(), group, name: 'Main Repertoire', order: 0 });
+    const hasOwn = s.repertoires.some((r) => r.group === group && !r.isExample);
+    if (!hasOwn) {
+      const order = s.repertoires.filter((r) => r.group === group).length;
+      s.repertoires.push({ id: uid(), group, name: 'Main Repertoire', order, isExample: false });
+      changed = true;
+    }
+    const hasExample = s.repertoires.some((r) => r.group === group && r.isExample);
+    if (!hasExample) {
+      const order = s.repertoires.filter((r) => r.group === group).length;
+      const exampleId = uid();
+      s.repertoires.push({ id: exampleId, group, name: 'Example Repertoire', order, isExample: true });
+      const { openings, cards } = buildExampleContent(group, exampleId, uid);
+      s.openings.push(...openings);
+      s.cards.push(...cards);
       changed = true;
     }
   }
@@ -85,12 +157,50 @@ export async function ensureSeeded(): Promise<void> {
 
 export async function getRepertoires(group: GroupId): Promise<Repertoire[]> {
   const s = await load();
-  return s.repertoires.filter((r) => r.group === group).sort((a, b) => a.order - b.order);
+  // The example always sorts first, regardless of its stored `order` — a
+  // fixed, predictable landmark rather than something that could drift
+  // depending on when it happened to be seeded relative to the user's own.
+  return s.repertoires
+    .filter((r) => r.group === group)
+    .sort((a, b) => Number(!!b.isExample) - Number(!!a.isExample) || a.order - b.order);
 }
 
 export async function getRepertoire(id: string): Promise<Repertoire | undefined> {
   const s = await load();
   return s.repertoires.find((r) => r.id === id);
+}
+
+// The list a group's repertoires actually show as — excludes the example
+// when it's hidden. Fetching a specific repertoire by id (above) is
+// unaffected: hiding only changes what's listed, not what's reachable once
+// you already have its id.
+export async function getVisibleRepertoires(group: GroupId): Promise<Repertoire[]> {
+  const all = await getRepertoires(group);
+  const hidden = await getExampleRepertoireHidden();
+  return hidden ? all.filter((r) => !r.isExample) : all;
+}
+
+// Whether tapping into this group should skip straight to its one
+// repertoire's openings instead of showing the repertoire list — true
+// almost always, since most people never use more than one.
+export async function resolveGroupEntry(group: GroupId): Promise<{ skipToRepertoireId?: string }> {
+  const showMultiple = await getShowMultipleRepertoires();
+  if (showMultiple) return {};
+  const visible = await getVisibleRepertoires(group);
+  return visible.length === 1 ? { skipToRepertoireId: visible[0].id } : {};
+}
+
+export async function restoreExampleRepertoire(repertoireId: string): Promise<void> {
+  const s = await load();
+  const rep = s.repertoires.find((r) => r.id === repertoireId && r.isExample);
+  if (!rep) return;
+  const openingIds = s.openings.filter((o) => o.repertoireId === repertoireId).map((o) => o.id);
+  s.cards = s.cards.filter((c) => !openingIds.includes(c.openingId));
+  s.openings = s.openings.filter((o) => o.repertoireId !== repertoireId);
+  const { openings, cards } = buildExampleContent(rep.group, repertoireId, uid);
+  s.openings.push(...openings);
+  s.cards.push(...cards);
+  await persist();
 }
 
 export async function addRepertoire(group: GroupId, name: string): Promise<Repertoire> {
@@ -177,9 +287,7 @@ export async function addCard(openingId: string, name = ''): Promise<Card> {
     order: existing.length,
     name,
     mode: 'others',
-    front: { text: '', board: null },
-    back: { text: '', board: null },
-    boards: []
+    boards: [newReactionBoard(uid(), 0)]
   };
   s.cards.push(card);
   await persist();
@@ -239,8 +347,6 @@ export async function moveOrDuplicateCard(
       order: targetCards.length,
       name: card.name,
       mode: card.mode,
-      front: { text: card.front.text, board: null },
-      back: { text: card.back.text, board: null },
       boards: card.boards.map((rb) => cloneReactionBoard(rb, uid()))
     };
     s.cards.push(newCard);
@@ -251,7 +357,7 @@ export async function moveOrDuplicateCard(
 // ---------- Aggregate stats ----------
 
 export async function getGroupStats(group: GroupId): Promise<{ repertoires: number; openings: number; cards: number }> {
-  const reps = await getRepertoires(group);
+  const reps = await getVisibleRepertoires(group);
   let openingsCount = 0;
   let cardsCount = 0;
   for (const r of reps) {
@@ -286,4 +392,28 @@ export async function setSetting(key: string, value: unknown): Promise<void> {
   const s = await load();
   s.settings[key] = value;
   await persist();
+}
+
+export async function getExampleRepertoireHidden(): Promise<boolean> {
+  return getSetting<boolean>(EXAMPLE_HIDDEN_KEY, false);
+}
+
+export async function setExampleRepertoireHidden(hidden: boolean): Promise<void> {
+  await setSetting(EXAMPLE_HIDDEN_KEY, hidden);
+}
+
+export async function getShowMultipleRepertoires(): Promise<boolean> {
+  return getSetting<boolean>(SHOW_MULTIPLE_REPERTOIRES_KEY, false);
+}
+
+export async function getBoardStyle(): Promise<number> {
+  return getSetting<number>(BOARD_STYLE_KEY, 0);
+}
+
+export async function setBoardStyle(style: number): Promise<void> {
+  await setSetting(BOARD_STYLE_KEY, style);
+}
+
+export async function setShowMultipleRepertoires(show: boolean): Promise<void> {
+  await setSetting(SHOW_MULTIPLE_REPERTOIRES_KEY, show);
 }

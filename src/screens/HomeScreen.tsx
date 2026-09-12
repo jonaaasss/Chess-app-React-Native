@@ -1,13 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { getGroupStats, getSetting, setSetting } from '../storage';
+import { useFocusEffect } from '@react-navigation/native';
+import { getExampleRepertoireHidden, getGroupStats, setExampleRepertoireHidden } from '../storage';
 import type { GroupId, PieceCode } from '../types';
 import { colors, radius, spacing, type } from '../theme';
-import { Screen } from '../components/Common';
+import { Screen, SettingsCircleButton } from '../components/Common';
 import { PieceGlyph } from '../components/ChessBoard';
-
-const SHUFFLE_TOOLTIP =
-  'When enabled, the cards within each opening are shuffled during study — the order of openings in a full repertoire session is always randomized.';
 
 const BADGE_SIZE = 68;
 
@@ -16,49 +14,51 @@ const GROUPS: { id: GroupId; label: string; piece: PieceCode }[] = [
   { id: 'black', label: 'Black', piece: 'bK' }
 ];
 
-export function HomeScreen({ onOpenGroup }: { onOpenGroup: (group: GroupId) => void }) {
-  const [shuffleOn, setShuffleOn] = useState(false);
-  const [showTooltip, setShowTooltip] = useState(false);
+export function HomeScreen({
+  onOpenGroup,
+  onOpenSettings
+}: {
+  onOpenGroup: (group: GroupId) => void;
+  onOpenSettings: () => void;
+}) {
+  const [exampleHidden, setExampleHiddenState] = useState(false);
   const [stats, setStats] = useState<Record<GroupId, { repertoires: number; openings: number; cards: number }>>({
     white: { repertoires: 0, openings: 0, cards: 0 },
     black: { repertoires: 0, openings: 0, cards: 0 }
   });
 
-  async function load() {
-    const on = await getSetting<boolean>('shuffle', false);
-    setShuffleOn(on);
+  const load = useCallback(async () => {
+    setExampleHiddenState(await getExampleRepertoireHidden());
+    const white = await getGroupStats('white');
+    const black = await getGroupStats('black');
+    setStats({ white, black });
+  }, []);
+
+  // The native stack keeps this screen mounted while a repertoire/opening/
+  // card gets added deeper in the stack, so a mount-only load would leave
+  // these counts stale after navigating back — reload on every focus.
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
+
+  async function toggleExampleHidden() {
+    const next = !exampleHidden;
+    setExampleHiddenState(next);
+    await setExampleRepertoireHidden(next);
+    // The example counts toward each side's totals when shown, so the
+    // tile subtitles need to reflect the new state right away.
     const white = await getGroupStats('white');
     const black = await getGroupStats('black');
     setStats({ white, black });
   }
 
-  useEffect(() => {
-    load();
-  }, []);
-
-  async function toggleShuffle() {
-    const next = !shuffleOn;
-    setShuffleOn(next);
-    await setSetting('shuffle', next);
-  }
-
   return (
     <Screen>
-      <View style={styles.shuffleRow}>
-        <Text style={styles.shuffleLabel}>Shuffle</Text>
-        <Pressable onPress={() => setShowTooltip((v) => !v)} hitSlop={12} style={{ padding: 6 }}>
-          <Text style={{ color: colors.textDim, fontSize: 16 }}>ⓘ</Text>
-        </Pressable>
-        <Pressable onPress={toggleShuffle} hitSlop={10} style={[styles.toggle, shuffleOn && styles.toggleOn]}>
-          <View style={[styles.toggleThumb, shuffleOn && styles.toggleThumbOn]} />
-        </Pressable>
+      <View style={styles.topRow}>
+        <SettingsCircleButton onPress={onOpenSettings} />
       </View>
-
-      {showTooltip && (
-        <View style={styles.tooltip}>
-          <Text style={styles.tooltipText}>{SHUFFLE_TOOLTIP}</Text>
-        </View>
-      )}
 
       <Text style={styles.sectionLabel}>Choose a side</Text>
       {GROUPS.map((g) => {
@@ -85,32 +85,16 @@ export function HomeScreen({ onOpenGroup }: { onOpenGroup: (group: GroupId) => v
           </Pressable>
         );
       })}
+
+      <Pressable onPress={toggleExampleHidden} style={styles.exampleBtn}>
+        <Text style={styles.exampleBtnText}>{exampleHidden ? 'Show Example Repertoire' : 'Hide Example Repertoire'}</Text>
+      </Pressable>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  shuffleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 6,
-    marginBottom: 20
-  },
-  shuffleLabel: { color: colors.text, ...type.bodyStrong, fontSize: 16, flex: 1 },
-  toggle: { width: 46, height: 26, borderRadius: 13, backgroundColor: colors.border, justifyContent: 'center' },
-  toggleOn: { backgroundColor: colors.accent },
-  toggleThumb: { width: 20, height: 20, borderRadius: 10, backgroundColor: 'white', marginLeft: 3 },
-  toggleThumbOn: { marginLeft: 23 },
-  tooltip: {
-    backgroundColor: colors.panel2,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 16
-  },
-  tooltipText: { color: colors.textDim, ...type.caption },
+  topRow: { flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 8 },
   sectionLabel: {
     color: colors.textDim,
     ...type.micro,
@@ -148,5 +132,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center'
   },
-  tileChevron: { color: colors.text, fontSize: 18 }
+  tileChevron: { color: colors.text, fontSize: 18 },
+  exampleBtn: { alignItems: 'center', paddingVertical: 14, marginTop: spacing.md },
+  exampleBtnText: { color: colors.textDim, ...type.caption, textDecorationLine: 'underline' }
 });

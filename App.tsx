@@ -14,7 +14,7 @@ import {
   Inter_700Bold,
   Inter_800ExtraBold
 } from '@expo-google-fonts/inter';
-import { ensureSeeded } from './src/storage';
+import { ensureSeeded, resolveGroupEntry } from './src/storage';
 import type { GroupId } from './src/types';
 import { colors } from './src/theme';
 import { OverlayHost } from './src/overlay';
@@ -22,6 +22,7 @@ import { HomeScreen } from './src/screens/HomeScreen';
 import { RepertoiresScreen } from './src/screens/RepertoiresScreen';
 import { OpeningsScreen } from './src/screens/OpeningsScreen';
 import { CardsScreen } from './src/screens/CardsScreen';
+import { SettingsScreen } from './src/screens/SettingsScreen';
 
 // One param list shared by the native stack — each screen still receives
 // plain callback props (via the wrappers below) so the screen components
@@ -31,6 +32,7 @@ type RootStackParamList = {
   Repertoires: { group: GroupId };
   Openings: { repertoireId: string };
   Cards: { openingId: string };
+  Settings: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -39,7 +41,20 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 
 function HomeRoute({ navigation }: NativeStackScreenProps<RootStackParamList, 'Home'>) {
   return (
-    <HomeScreen onOpenGroup={(group) => navigation.navigate('Repertoires', { group })} />
+    <HomeScreen
+      onOpenGroup={async (group) => {
+        // Almost nobody uses more than one repertoire per side, so skip
+        // straight to the one they have unless there's genuinely a choice
+        // to make (2+ repertoires, or the user asked to always see the list).
+        const { skipToRepertoireId } = await resolveGroupEntry(group);
+        if (skipToRepertoireId) {
+          navigation.navigate('Openings', { repertoireId: skipToRepertoireId });
+        } else {
+          navigation.navigate('Repertoires', { group });
+        }
+      }}
+      onOpenSettings={() => navigation.navigate('Settings')}
+    />
   );
 }
 
@@ -65,6 +80,10 @@ function OpeningsRoute({ navigation, route }: NativeStackScreenProps<RootStackPa
 
 function CardsRoute({ navigation, route }: NativeStackScreenProps<RootStackParamList, 'Cards'>) {
   return <CardsScreen openingId={route.params.openingId} onBack={() => navigation.goBack()} />;
+}
+
+function SettingsRoute({ navigation }: NativeStackScreenProps<RootStackParamList, 'Settings'>) {
+  return <SettingsScreen onBack={() => navigation.goBack()} />;
 }
 
 export default function App() {
@@ -126,6 +145,7 @@ export default function App() {
               <Stack.Screen name="Repertoires" component={RepertoiresRoute} />
               <Stack.Screen name="Openings" component={OpeningsRoute} />
               <Stack.Screen name="Cards" component={CardsRoute} />
+              <Stack.Screen name="Settings" component={SettingsRoute} />
             </Stack.Navigator>
           </NavigationContainer>
         )}

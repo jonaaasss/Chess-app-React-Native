@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ScrollView, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { getCard, getCards, getOpening, getRepertoire, getSetting } from '../storage';
+import { getBoardStyle, getCard, getCards, getOpening, getRepertoire, getSetting } from '../storage';
 import { showOverlay } from '../overlay';
 import type { Card } from '../types';
 import { colors, radius, type } from '../theme';
@@ -9,21 +9,39 @@ import { ChessBoardView } from '../components/ChessBoard';
 import { BackCircleButton, EditCircleButton } from '../components/Common';
 import { openCardEditor } from './CardEditorOverlay';
 import { ReactionStudy } from './ReactionStudy';
+import { PlanStudy } from './PlanStudy';
 
-// "Others" cards: front and back show the same set of boards (they're
-// kept in sync by the editor). Reactions cards use ReactionStudy instead.
-function OthersBoardsView({ card }: { card: Card }) {
-  if (card.boards.length === 0) return null;
+// "Others" cards: each board has its own independent front and back, text
+// included — flipping the card flips which face of every board is shown,
+// text and all. Reactions cards use ReactionStudy instead, Plan cards use
+// PlanStudy (both show their own per-board text internally).
+function OthersBoardsView({
+  card,
+  showBack,
+  yourColor,
+  boardStyle
+}: {
+  card: Card;
+  showBack: boolean;
+  yourColor: 'w' | 'b';
+  boardStyle: number;
+}) {
   const sorted = [...card.boards].sort((a, b) => a.order - b.order);
   return (
     <View style={{ gap: 16, alignItems: 'center' }}>
-      {sorted.map((b) => (
-        <ChessBoardView
-          key={b.id}
-          board={{ pieces: b.pieces, style: b.style, arrows: b.arrows, circles: b.circles }}
-          size={230}
-        />
-      ))}
+      {sorted.map((b) => {
+        const face = showBack ? b.back : b.front;
+        return (
+          <View key={b.id} style={{ alignItems: 'center', gap: 10 }}>
+            {face.text ? <Text style={styles.studyCardText}>{face.text}</Text> : null}
+            <ChessBoardView
+              board={{ pieces: face.pieces, style: boardStyle, arrows: face.arrows, circles: face.circles }}
+              size={230}
+              flipped={yourColor === 'b'}
+            />
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -67,10 +85,30 @@ function StudySessionOverlay({
   const [card, setCard] = useState<Card | null>(null);
   const [openingName, setOpeningName] = useState('');
   const [yourColor, setYourColor] = useState<'w' | 'b'>('w');
+  const [boardStyle, setBoardStyle] = useState(0);
   const [done, setDone] = useState(false);
+  const [roundBanner, setRoundBanner] = useState(0); // the round number a banner is currently announcing, 0 = none
   const wrongThisRoundRef = useRef<QueueItem[]>([]);
+  const bannerAnim = useRef(new Animated.Value(0)).current;
+  const seenRoundRef = useRef(1);
 
   const item = queue[index];
+
+  // A new round means "retrying what you got wrong" — flash a clear,
+  // impossible-to-miss banner when it starts, not just a small label.
+  useEffect(() => {
+    if (roundNumber === seenRoundRef.current) return;
+    seenRoundRef.current = roundNumber;
+    if (roundNumber === 1) return;
+    setRoundBanner(roundNumber);
+    bannerAnim.setValue(0);
+    Animated.sequence([
+      Animated.timing(bannerAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+      Animated.delay(1400),
+      Animated.timing(bannerAnim, { toValue: 0, duration: 300, useNativeDriver: true })
+    ]).start(() => setRoundBanner(0));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roundNumber]);
 
   useEffect(() => {
     if (!item) return;
@@ -86,6 +124,7 @@ function StudySessionOverlay({
       setOpeningName(opening?.name ?? '');
       const rep = opening ? await getRepertoire(opening.repertoireId) : undefined;
       setYourColor(rep?.group === 'black' ? 'b' : 'w');
+      setBoardStyle(await getBoardStyle());
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item?.cardId, item?.openingId, index, roundNumber]);
@@ -176,10 +215,20 @@ function StudySessionOverlay({
   }
 
   const total = queue.length;
-  const face = flipped ? card.back : card.front;
 
   return (
     <SafeAreaView style={styles.overlay}>
+      {roundBanner > 0 && (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.roundBanner,
+            { opacity: bannerAnim, transform: [{ translateY: bannerAnim.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }
+          ]}
+        >
+          <Text style={styles.roundBannerText}>Round {roundBanner} — retrying your mistakes</Text>
+        </Animated.View>
+      )}
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.topBar}>
           <BackCircleButton onPress={close} />
@@ -190,7 +239,9 @@ function StudySessionOverlay({
         </View>
 
         <View style={styles.progressHeaderRow}>
-          <Text style={styles.roundLabel}>Round {roundNumber}</Text>
+          <View style={[styles.roundBadge, roundNumber > 1 && styles.roundBadgeRetry]}>
+            <Text style={[styles.roundLabel, roundNumber > 1 && styles.roundLabelRetry]}>Round {roundNumber}</Text>
+          </View>
           <Text style={styles.progressCount}>
             {index + 1} / {total}
           </Text>
@@ -201,23 +252,28 @@ function StudySessionOverlay({
 
         {card.mode === 'reactions' ? (
           <View style={styles.studyCard}>
-            {card.front.text ? <Text style={styles.studyCardText}>{card.front.text}</Text> : null}
             <ReactionStudy
               key={`${roundNumber}-${index}`}
               card={card}
               yourColor={yourColor}
+              boardStyle={boardStyle}
+              onResult={(correct) => advance(correct ? null : item)}
+            />
+          </View>
+        ) : card.mode === 'plan' ? (
+          <View style={styles.studyCard}>
+            <PlanStudy
+              key={`${roundNumber}-${index}`}
+              card={card}
+              yourColor={yourColor}
+              boardStyle={boardStyle}
               onResult={(correct) => advance(correct ? null : item)}
             />
           </View>
         ) : (
           <>
             <Pressable onPress={() => setFlipped((f) => !f)} style={styles.studyCard}>
-              {face.text ? <Text style={styles.studyCardText}>{face.text}</Text> : null}
-              {card.boards.length > 0 ? (
-                <OthersBoardsView card={card} />
-              ) : (
-                face.board && <ChessBoardView board={face.board} size={260} />
-              )}
+              <OthersBoardsView card={card} showBack={flipped} yourColor={yourColor} boardStyle={boardStyle} />
             </Pressable>
             <Text style={styles.hint}>Tap card to flip</Text>
 
@@ -289,8 +345,23 @@ const styles = StyleSheet.create({
   topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
   topBarBtn: { color: colors.textDim, fontSize: 18 },
   title: { color: colors.text, ...type.h2, flex: 1, textAlign: 'center' },
-  progressHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
-  roundLabel: { color: colors.textDim, fontSize: 13, fontWeight: '600' },
+  progressHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+  roundBadge: { paddingVertical: 3, paddingHorizontal: 10, borderRadius: radius.pill, backgroundColor: colors.panel2 },
+  roundBadgeRetry: { backgroundColor: colors.gold },
+  roundLabel: { color: colors.textDim, fontSize: 13, fontWeight: '700' },
+  roundLabelRetry: { color: colors.onGold },
+  roundBanner: {
+    position: 'absolute',
+    bottom: 24,
+    left: 16,
+    right: 16,
+    zIndex: 10,
+    backgroundColor: colors.gold,
+    borderRadius: radius.pill,
+    paddingVertical: 10,
+    alignItems: 'center'
+  },
+  roundBannerText: { color: colors.onGold, fontSize: 14, fontWeight: '700' },
   progressCount: { color: colors.textDim, fontSize: 13 },
   progressTrack: { height: 6, backgroundColor: colors.panel2, borderRadius: 3, overflow: 'hidden', marginBottom: 16 },
   progressFill: { height: '100%', backgroundColor: colors.accent },

@@ -117,6 +117,19 @@ function ConfirmDialog({ message, close }: { message: string; close: (result: bo
   );
 }
 
+// Purely informational — one OK button, no cancel path — for blocking a
+// action until the user acknowledges why (e.g. a missing required arrow).
+function AlertDialog({ message, close }: { message: string; close: (result: void) => void }) {
+  return (
+    <Backdrop>
+      <Text style={styles.message}>{message}</Text>
+      <View style={styles.row}>
+        <DialogButton title="OK" variant="primary" onPress={() => close()} />
+      </View>
+    </Backdrop>
+  );
+}
+
 function PromptDialog({
   title,
   initial,
@@ -213,6 +226,10 @@ const menuStyles = StyleSheet.create({
 
 export function confirmDialog(message: string): Promise<boolean> {
   return showOverlay<boolean>((close) => <ConfirmDialog message={message} close={close} />);
+}
+
+export function alertDialog(message: string): Promise<void> {
+  return showOverlay<void>((close) => <AlertDialog message={message} close={close} />);
 }
 
 export function promptDialog(title: string, initial = '', placeholder = ''): Promise<string | null> {

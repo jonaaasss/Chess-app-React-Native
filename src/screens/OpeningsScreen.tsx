@@ -9,8 +9,8 @@ import {
   renameOpening,
   renameRepertoire
 } from '../storage';
-import { confirmDialog, promptDialog, simpleMenu, anchoredMenu } from '../overlay';
-import type { Opening, Repertoire } from '../types';
+import { confirmDialog, promptDialog, anchoredMenu } from '../overlay';
+import type { Opening, PieceCode, Repertoire } from '../types';
 import { Screen, TopBar, Breadcrumb, BigButton, rowStyles } from '../components/Common';
 import { PieceGlyph } from '../components/ChessBoard';
 import { colors, spacing, type } from '../theme';
@@ -24,12 +24,14 @@ import { startStudySession } from './StudySessionOverlay';
 function OpeningRow({
   title,
   subtitle,
+  piece,
   onPress,
   onRename,
   onDelete
 }: {
   title: string;
   subtitle: string;
+  piece: PieceCode;
   onPress: () => void;
   onRename: (newName: string) => void;
   onDelete: () => void;
@@ -68,6 +70,9 @@ function OpeningRow({
     <View style={rowStyles.row}>
       {editing ? (
         <View style={rowStyles.main}>
+          <View style={rowStyles.iconBadge}>
+            <PieceGlyph code={piece} cell={26} />
+          </View>
           <View style={{ flex: 1, minWidth: 0 }}>
             <TextInput
               ref={inputRef}
@@ -85,6 +90,9 @@ function OpeningRow({
         </View>
       ) : (
         <Pressable onPress={onPress} style={({ pressed }) => [rowStyles.main, pressed && { opacity: 0.7 }]}>
+          <View style={rowStyles.iconBadge}>
+            <PieceGlyph code={piece} cell={26} />
+          </View>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={rowStyles.title} numberOfLines={1}>
               {title}
@@ -155,21 +163,14 @@ export function OpeningsScreen({
     load();
   }
 
+  // Studying a single opening is already one tap away (open it, then
+  // "Study this opening"), so this button just studies the whole
+  // repertoire directly instead of asking to choose between the two.
   async function handleStudy() {
     const openings = await getOpenings(repertoireId);
     if (openings.length === 0) return;
-    const choice = await simpleMenu(['Full repertoire (random order)', 'Choose one opening'], 'Study this repertoire');
-    if (choice === 'Full repertoire (random order)') {
-      await startStudySession(openings.map((o) => o.id), { shuffleOpenings: true });
-      load();
-    } else if (choice === 'Choose one opening') {
-      const name = await simpleMenu(openings.map((o) => o.name));
-      const picked = openings.find((o) => o.name === name);
-      if (picked) {
-        await startStudySession([picked.id], { shuffleOpenings: false });
-        load();
-      }
-    }
+    await startStudySession(openings.map((o) => o.id), { shuffleOpenings: true });
+    load();
   }
 
   async function handleAddOpening() {
@@ -195,9 +196,11 @@ export function OpeningsScreen({
 
   if (!rep) return <Screen>{null}</Screen>;
 
+  const openingPiece: PieceCode = rep.group === 'white' ? 'wR' : 'bR';
+
   return (
     <Screen>
-      <Breadcrumb text={`${rep.group === 'white' ? 'White' : 'Black'} › ${rep.name}`} />
+      <Breadcrumb text={`${rep.group === 'white' ? 'White' : 'Black'} › ${rep.name}`} piece={openingPiece} />
       <TopBar title={rep.name} onBack={onBack} onRename={handleRenameRepertoire} />
 
       <BigButton title="+ Add opening" onPress={handleAddOpening} />
@@ -219,6 +222,7 @@ export function OpeningsScreen({
               key={opening.id}
               title={opening.name}
               subtitle={`${cards} card${cards === 1 ? '' : 's'}`}
+              piece={openingPiece}
               onPress={() => onOpenOpening(opening.id)}
               onRename={(name) => handleRenameOpening(opening, name)}
               onDelete={() => handleDeleteOpening(opening)}
