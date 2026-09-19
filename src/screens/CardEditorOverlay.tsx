@@ -7,6 +7,7 @@ import type { BoardFace, Card, CardMode, ReactionBoard } from '../types';
 import { colors, type } from '../theme';
 import { openMoveDuplicateDialog } from './MoveDuplicateOverlay';
 import { BoardsGrid } from './BoardsGrid';
+import { TutorialLayer, useTutorial, useTutorialTarget } from '../tutorial';
 
 export interface CardEditorResult {
   changed: boolean;
@@ -112,6 +113,13 @@ function CardEditorOverlay({
   // once here and threaded down to every board preview/editor.
   const [boardStyle, setBoardStyle] = useState(0);
   const changedRef = useRef(false);
+  const tutorial = useTutorial();
+  const saveRef = useTutorialTarget('cardEditor.save');
+  const modeRefs = {
+    reactions: useTutorialTarget('cardEditor.mode.reactions'),
+    plan: useTutorialTarget('cardEditor.mode.plan'),
+    others: useTutorialTarget('cardEditor.mode.others')
+  };
 
   useEffect(() => {
     (async () => {
@@ -136,6 +144,7 @@ function CardEditorOverlay({
   async function handleSave() {
     if (!card) return;
     await saveCard(card);
+    tutorial.event('cardSaved');
     close({ changed: true, deleted: false });
   }
 
@@ -146,7 +155,13 @@ function CardEditorOverlay({
   // All three modes share `card.boards`; migrateBoardForMode reconciles the
   // Reactions-only fields against the Others/Plan front/back split.
   async function handleSetMode(next: CardMode) {
-    if (!card || next === card.mode) return;
+    if (!card) return;
+    if (next === card.mode) {
+      // Already on this mode: nothing to change, but a tutorial step waiting
+      // for exactly this choice shouldn't be left hanging.
+      tutorial.event(`mode:${next}`);
+      return;
+    }
     const hasRecording = card.mode === 'reactions' && next !== 'reactions' && card.boards.some((b) => b.recording.length > 0);
     if (hasRecording) {
       const modeName = next === 'others' ? 'Others' : 'Plan';
@@ -158,6 +173,7 @@ function CardEditorOverlay({
     setCard((prev) =>
       prev ? { ...prev, mode: next, boards: prev.boards.map((b) => migrateBoardForMode(b, prev.mode, next)) } : prev
     );
+    tutorial.event(`mode:${next}`);
   }
 
   async function handleMoveDuplicate() {
@@ -188,7 +204,7 @@ function CardEditorOverlay({
             <Text style={styles.topBarBtn}>Cancel</Text>
           </Pressable>
           <Text style={styles.title}>Edit card</Text>
-          <Pressable onPress={handleSave}>
+          <Pressable ref={saveRef} collapsable={false} onPress={handleSave}>
             <Text style={[styles.topBarBtn, styles.saveBtn]}>Save</Text>
           </Pressable>
         </View>
@@ -197,15 +213,17 @@ function CardEditorOverlay({
           <Text style={[styles.fieldLabel, { marginTop: 0, marginBottom: 0 }]}>Boards</Text>
           <View style={styles.modeToggle}>
             <Pressable
+              ref={modeRefs.reactions}
+              collapsable={false}
               onPress={() => handleSetMode('reactions')}
               style={[styles.modeBtn, card.mode === 'reactions' && styles.modeBtnActive]}
             >
               <Text style={[styles.modeBtnText, card.mode === 'reactions' && styles.modeBtnTextActive]}>Reactions</Text>
             </Pressable>
-            <Pressable onPress={() => handleSetMode('plan')} style={[styles.modeBtn, card.mode === 'plan' && styles.modeBtnActive]}>
+            <Pressable ref={modeRefs.plan} collapsable={false} onPress={() => handleSetMode('plan')} style={[styles.modeBtn, card.mode === 'plan' && styles.modeBtnActive]}>
               <Text style={[styles.modeBtnText, card.mode === 'plan' && styles.modeBtnTextActive]}>Plan</Text>
             </Pressable>
-            <Pressable onPress={() => handleSetMode('others')} style={[styles.modeBtn, card.mode === 'others' && styles.modeBtnActive]}>
+            <Pressable ref={modeRefs.others} collapsable={false} onPress={() => handleSetMode('others')} style={[styles.modeBtn, card.mode === 'others' && styles.modeBtnActive]}>
               <Text style={[styles.modeBtnText, card.mode === 'others' && styles.modeBtnTextActive]}>Others</Text>
             </Pressable>
           </View>
@@ -226,6 +244,7 @@ function CardEditorOverlay({
           <Text style={styles.blockBtnText}>Delete card</Text>
         </Pressable>
       </ScrollView>
+      <TutorialLayer surface="cardEditor" />
     </SafeAreaView>
   );
 }

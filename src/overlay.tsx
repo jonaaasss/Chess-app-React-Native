@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Modal, View, Text, TextInput, StyleSheet, Pressable, Dimensions } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { colors, radius, spacing, type } from './theme';
+import { TutorialLayer, useTutorial, useTutorialTarget } from './tutorial';
+import type { TutorialSurface } from './tutorialContent';
 
 function CloseIcon({ size, color }: { size: number; color: string }) {
   return (
@@ -73,10 +75,14 @@ export function showOverlay<T>(render: (close: (result: T) => void) => React.Rea
   });
 }
 
-function Backdrop({ children }: { children: React.ReactNode }) {
+// `tutorialSurface` lets a dialog host the make-your-own-cards tutorial's popup
+// layer (dialogs are separate native windows, so a popup on the screen behind
+// can't reach over them).
+function Backdrop({ children, tutorialSurface }: { children: React.ReactNode; tutorialSurface?: TutorialSurface }) {
   return (
     <View style={styles.backdrop}>
       <View style={styles.box}>{children}</View>
+      {tutorialSurface && <TutorialLayer surface={tutorialSurface} />}
     </View>
   );
 }
@@ -84,14 +90,19 @@ function Backdrop({ children }: { children: React.ReactNode }) {
 export function DialogButton({
   title,
   onPress,
-  variant = 'secondary'
+  variant = 'secondary',
+  targetId
 }: {
   title: string;
   onPress: () => void;
   variant?: 'primary' | 'secondary' | 'danger';
+  targetId?: string;
 }) {
+  const targetRef = useTutorialTarget(targetId);
   return (
     <Pressable
+      ref={targetRef}
+      collapsable={false}
       onPress={onPress}
       style={({ pressed }) => [
         styles.btn,
@@ -143,12 +154,21 @@ function PromptDialog({
 }) {
   const [value, setValue] = useState(initial);
   const inputRef = useRef<TextInput>(null);
+  const tutorial = useTutorial();
   useEffect(() => {
     const t = setTimeout(() => inputRef.current?.focus(), 50);
     return () => clearTimeout(t);
   }, []);
+  function save() {
+    tutorial.event('promptSave');
+    close(value.trim() || null);
+  }
+  function cancel() {
+    tutorial.event('promptCancel');
+    close(null);
+  }
   return (
-    <Backdrop>
+    <Backdrop tutorialSurface="prompt">
       <Text style={styles.title}>{title}</Text>
       <TextInput
         ref={inputRef}
@@ -157,11 +177,11 @@ function PromptDialog({
         onChangeText={setValue}
         placeholder={placeholder}
         placeholderTextColor={colors.textDim}
-        onSubmitEditing={() => close(value.trim() || null)}
+        onSubmitEditing={save}
       />
       <View style={styles.row}>
-        <DialogButton title="Cancel" variant="secondary" onPress={() => close(null)} />
-        <DialogButton title="Save" variant="primary" onPress={() => close(value.trim() || null)} />
+        <DialogButton title="Cancel" variant="secondary" onPress={cancel} />
+        <DialogButton title="Save" variant="primary" onPress={save} targetId="prompt.save" />
       </View>
     </Backdrop>
   );

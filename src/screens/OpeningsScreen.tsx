@@ -12,6 +12,7 @@ import {
 import { confirmDialog, promptDialog, anchoredMenu } from '../overlay';
 import type { Opening, PieceCode, Repertoire } from '../types';
 import { Screen, TopBar, Breadcrumb, BigButton, PieceBadge, rowStyles } from '../components/Common';
+import { useTutorial, useTutorialTarget } from '../tutorial';
 import { colors, spacing, type } from '../theme';
 import { startStudySession } from './StudySessionOverlay';
 
@@ -24,6 +25,7 @@ function OpeningRow({
   title,
   subtitle,
   piece,
+  targetId,
   onPress,
   onRename,
   onDelete
@@ -31,11 +33,13 @@ function OpeningRow({
   title: string;
   subtitle: string;
   piece: PieceCode;
+  targetId?: string;
   onPress: () => void;
   onRename: (newName: string) => void;
   onDelete: () => void;
 }) {
   const menuRef = useRef<View>(null);
+  const rowRef = useTutorialTarget(targetId);
   const inputRef = useRef<TextInput>(null);
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(title);
@@ -66,7 +70,7 @@ function OpeningRow({
   }
 
   return (
-    <View style={rowStyles.row}>
+    <View ref={rowRef} collapsable={false} style={rowStyles.row}>
       {editing ? (
         <View style={rowStyles.main}>
           <PieceBadge code={piece} size={52} />
@@ -128,6 +132,7 @@ export function OpeningsScreen({
 }) {
   const [rep, setRep] = useState<Repertoire | null>(null);
   const [rows, setRows] = useState<OpeningRowData[]>([]);
+  const tutorial = useTutorial();
   const { width } = useWindowDimensions();
   const emptyPieceSize = Math.min(width * 0.55, 240);
 
@@ -169,9 +174,13 @@ export function OpeningsScreen({
   }
 
   async function handleAddOpening() {
-    const name = await promptDialog('New opening', '', 'e.g. Italian');
+    // While the tutorial is on this button, the name comes pre-filled.
+    const prefill = tutorial.step?.id === 'openings.add' ? tutorial.step.promptPrefill : undefined;
+    tutorial.event('addPressed');
+    const name = await promptDialog('New opening', prefill ?? '', 'e.g. Italian');
     if (name) {
-      await addOpening(repertoireId, name);
+      const created = await addOpening(repertoireId, name);
+      tutorial.remember({ openingId: created.id });
       load();
     }
   }
@@ -194,11 +203,11 @@ export function OpeningsScreen({
   const openingPiece: PieceCode = rep.group === 'white' ? 'wR' : 'bR';
 
   return (
-    <Screen>
+    <Screen surface="openings">
       <Breadcrumb text={`${rep.group === 'white' ? 'White' : 'Black'} › ${rep.name}`} piece={openingPiece} />
       <TopBar title={rep.name} onBack={onBack} onRename={handleRenameRepertoire} />
 
-      <BigButton title="+ Add opening" onPress={handleAddOpening} />
+      <BigButton title="+ Add opening" onPress={handleAddOpening} targetId="openings.add" />
       <View style={{ height: spacing.lg }} />
 
       {rows.length === 0 ? (
@@ -218,7 +227,11 @@ export function OpeningsScreen({
               title={opening.name}
               subtitle={`${cards} card${cards === 1 ? '' : 's'}`}
               piece={openingPiece}
-              onPress={() => onOpenOpening(opening.id)}
+              targetId={opening.id === tutorial.memory.openingId ? 'openings.new' : undefined}
+              onPress={() => {
+                tutorial.event('openOpening');
+                onOpenOpening(opening.id);
+              }}
               onRename={(name) => handleRenameOpening(opening, name)}
               onDelete={() => handleDeleteOpening(opening)}
             />

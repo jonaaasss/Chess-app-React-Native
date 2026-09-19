@@ -1,11 +1,19 @@
 import React, { useCallback, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getExampleRepertoireHidden, getGroupStats, setExampleRepertoireHidden } from '../storage';
+import {
+  getExampleRepertoireHidden,
+  getGroupStats,
+  getShowFirstOpeningGuide,
+  setExampleRepertoireHidden,
+  setShowFirstOpeningGuide
+} from '../storage';
 import type { GroupId, PieceCode } from '../types';
 import { colors, radius, spacing, type } from '../theme';
-import { Screen, SettingsCircleButton } from '../components/Common';
+import { BigButton, Screen, SettingsCircleButton } from '../components/Common';
 import { PieceGlyph } from '../components/ChessBoard';
+import { startGuideSession } from './StudySessionOverlay';
+import { useTutorial, useTutorialTarget } from '../tutorial';
 
 const BADGE_SIZE = 68;
 
@@ -21,7 +29,10 @@ export function HomeScreen({
   onOpenGroup: (group: GroupId) => void;
   onOpenSettings: () => void;
 }) {
+  const tutorial = useTutorial();
+  const whiteTileRef = useTutorialTarget('home.white');
   const [exampleHidden, setExampleHiddenState] = useState(false);
+  const [showGuide, setShowGuide] = useState(true);
   const [stats, setStats] = useState<Record<GroupId, { repertoires: number; openings: number; cards: number }>>({
     white: { repertoires: 0, openings: 0, cards: 0 },
     black: { repertoires: 0, openings: 0, cards: 0 }
@@ -29,6 +40,9 @@ export function HomeScreen({
 
   const load = useCallback(async () => {
     setExampleHiddenState(await getExampleRepertoireHidden());
+    // Reloaded on focus too, so turning the button back on in Settings shows
+    // it as soon as you return here.
+    setShowGuide(await getShowFirstOpeningGuide());
     const white = await getGroupStats('white');
     const black = await getGroupStats('black');
     setStats({ white, black });
@@ -54,8 +68,13 @@ export function HomeScreen({
     setStats({ white, black });
   }
 
+  async function hideGuide() {
+    setShowGuide(false);
+    await setShowFirstOpeningGuide(false);
+  }
+
   return (
-    <Screen>
+    <Screen surface="home">
       <View style={styles.topRow}>
         <SettingsCircleButton onPress={onOpenSettings} />
       </View>
@@ -66,7 +85,12 @@ export function HomeScreen({
         return (
           <Pressable
             key={g.id}
-            onPress={() => onOpenGroup(g.id)}
+            ref={g.id === 'white' ? whiteTileRef : undefined}
+            collapsable={false}
+            onPress={() => {
+              tutorial.event('openGroup');
+              onOpenGroup(g.id);
+            }}
             style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
           >
             <View style={styles.badge}>
@@ -89,6 +113,19 @@ export function HomeScreen({
       <Pressable onPress={toggleExampleHidden} style={styles.exampleBtn}>
         <Text style={styles.exampleBtnText}>{exampleHidden ? 'Show Example Repertoire' : 'Hide Example Repertoire'}</Text>
       </Pressable>
+
+      {showGuide && (
+        <>
+          {/* Pushes the guide CTA to the bottom of the screen, matching the
+              Study CTA on the cards screen. */}
+          <View style={{ flex: 1, minHeight: spacing.lg }} />
+          <BigButton title="▶ Study Your First Opening" onPress={startGuideSession} variant="gold" />
+          <BigButton title="▶ Make Your First Card" onPress={() => tutorial.start()} variant="gold" />
+          <Pressable onPress={hideGuide} style={styles.exampleBtn}>
+            <Text style={styles.exampleBtnText}>Hide these buttons (turn them back on in Settings)</Text>
+          </Pressable>
+        </>
+      )}
     </Screen>
   );
 }

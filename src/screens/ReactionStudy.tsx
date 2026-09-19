@@ -7,6 +7,8 @@ import type { Arrow, Card, Circle, MoveNode, PieceCode, ReactionBoard } from '..
 import { boardStyles, colors, radius } from '../theme';
 import { ArrowsSvg, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, type NumberedArrow } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts, PIECE_ANIM_DURATION_MS } from '../components/PieceAnimation';
+import type { GuideTargets } from '../components/GuideCoach';
+import type { CoachEvent } from '../guideContent';
 
 // Opponent auto-play, board-to-board transitions, and the variant
 // walkthrough all wait long enough for the slide animation to fully
@@ -110,13 +112,23 @@ export function ReactionStudy({
   yourColor,
   boardStyle,
   onResult,
-  boardRef
+  boardRef,
+  paused,
+  guideTargets,
+  onGuideEvent
 }: {
   card: Card;
   yourColor: 'w' | 'b';
   boardStyle: number;
   onResult: (correct: boolean) => void;
   boardRef?: React.MutableRefObject<ReactionBoard | null>;
+  // Guide coach hooks (all optional): `paused` freezes the automatic parts
+  // (opponent auto-play, variant walkthrough) while a popup is up;
+  // `guideTargets` are where the popups' spotlights go; `onGuideEvent`
+  // reports the moments/presses the popups wait on.
+  paused?: boolean;
+  guideTargets?: GuideTargets;
+  onGuideEvent?: (event: CoachEvent) => void;
 }) {
   const boards = useMemo(() => [...card.boards].sort((a, b) => a.order - b.order), [card]);
   const [boardIdx, setBoardIdx] = useState(0);
@@ -303,6 +315,23 @@ export function ReactionStudy({
   // until you step back to the live position (or it catches back up to you).
   const isReviewing = !inVariant && viewPly !== ply;
 
+  // Guide coach: the two moments its popups can wait on.
+  const yourTurnNow =
+    activeIsYourTurn && !activeLineDone && !isReviewing && (!inVariant || variantStage === 'playing');
+  useEffect(() => {
+    if (yourTurnNow) onGuideEvent?.('yourTurn');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [yourTurnNow]);
+  useEffect(() => {
+    if (variantStage === 'intro') onGuideEvent?.('branchIntro');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variantStage]);
+  // The card is finished and its Continue button is on screen.
+  useEffect(() => {
+    if (allDone) onGuideEvent?.('allDone');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allDone]);
+
   const { arrows: visibleArrows, circles: visibleCircles } = useMemo(
     () => (board ? activeAnnotationsAt(board, line, inVariant ? branchPly : viewPly) : { arrows: [], circles: [] }),
     [board, line, viewPly, inVariant, branchPly]
@@ -336,14 +365,14 @@ export function ReactionStudy({
 
   // Auto-play the opponent's moves on the main line.
   useEffect(() => {
-    if (inVariant || activeLineDone || activeIsYourTurn) return;
+    if (inVariant || activeLineDone || activeIsYourTurn || paused) return;
     const t = setTimeout(() => {
       setPly((p) => p + 1);
       setSelected(null);
       setHintOn(false);
     }, AUTO_ADVANCE_DELAY_MS);
     return () => clearTimeout(t);
-  }, [inVariant, ply, activeIsYourTurn, activeLineDone]);
+  }, [inVariant, ply, activeIsYourTurn, activeLineDone, paused]);
 
   // Board finished → next board, or the whole card is done. Held off
   // entirely while reviewing (see `isReviewing`) — stepping back to look at
@@ -372,10 +401,10 @@ export function ReactionStudy({
   // `variantLine`/the playing effect below for how the sentinel's single
   // move gets committed instead of rewound).
   useEffect(() => {
-    if (variantStage !== 'intro') return;
+    if (variantStage !== 'intro' || paused) return;
     const t = setTimeout(() => setVariantStage('playing'), VARIANT_INTRO_MS);
     return () => clearTimeout(t);
-  }, [variantStage]);
+  }, [variantStage, paused]);
 
   // Variant playing: auto-play its opponent moves; when it ends, either
   // pause then rewind (a real, truly-alternate variant) or — for the
@@ -383,7 +412,7 @@ export function ReactionStudy({
   // straight into the real `ply` and exit variant mode, letting the normal
   // ply-based flow (with its own branch detection) resume from there.
   useEffect(() => {
-    if (variantStage !== 'playing') return;
+    if (variantStage !== 'playing' || paused) return;
     if (activeLineDone) {
       if (showingMainline) {
         const t = setTimeout(() => {
@@ -404,7 +433,7 @@ export function ReactionStudy({
       }, AUTO_ADVANCE_DELAY_MS);
       return () => clearTimeout(t);
     }
-  }, [variantStage, activeLineDone, activeIsYourTurn, showingMainline, branchPly, variantLine.length]);
+  }, [variantStage, activeLineDone, activeIsYourTurn, showingMainline, branchPly, variantLine.length, paused]);
 
   // Spin the rewind icon for as long as the whole rewinding stage lasts —
   // kept in its own effect, keyed only on variantStage, so the loop plays
@@ -500,6 +529,7 @@ export function ReactionStudy({
     setSelected(null);
     setHintOn(false);
     setMistakes((m) => m + 1);
+    onGuideEvent?.('solution');
   }
 
   // Prev/next let you step back through the main line to review an earlier
@@ -588,59 +618,61 @@ export function ReactionStudy({
         {statusText}
       </Text>
 
-      <View
-        ref={gridRef}
-        onLayout={() => measureGrid()}
-        style={[styles.board, { width: BOARD_SIZE, height: BOARD_SIZE }]}
-        {...panResponder.panHandlers}
-      >
-        <View style={{ width: BOARD_SIZE, height: BOARD_SIZE, flexDirection: 'row', flexWrap: 'wrap' }}>
-          {(flipped ? [...allSquares()].reverse() : allSquares()).map((sq, i) => {
-            const file = i % 8;
-            const rank = Math.floor(i / 8);
-            const isLight = (file + rank) % 2 === 0;
-            const piece = displayedPieces[sq];
-            const isSel = sq === selected;
-            const isTarget = legalTargets.includes(sq);
-            const isCapture = isTarget && (Boolean(piece) || (selected && activeState.pieces[selected]?.[1] === 'P' && sq === activeState.enPassant));
-            return (
-              <View
-                key={sq}
-                style={{ width: CELL, height: CELL, backgroundColor: isLight ? styleSet.light : styleSet.dark, alignItems: 'center', justifyContent: 'center' }}
-              >
-                {piece && !hiddenSquares.has(sq) && <PieceGlyph code={piece} cell={CELL} />}
-                {isSel && <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.selHighlight]} />}
-                {isTarget && !isCapture && <View pointerEvents="none" style={styles.moveDot} />}
-                {isCapture && <View pointerEvents="none" style={styles.captureRing} />}
-              </View>
-            );
-          })}
-        </View>
-        <View style={StyleSheet.absoluteFill} pointerEvents="none">
-          {showVariantArrows ? (
-            <>
-              <NumberedArrowsSvg arrows={variantArrows} size={BOARD_SIZE} flipped={flipped} />
-              <NumberedArrowBadges arrows={variantArrows} size={BOARD_SIZE} flipped={flipped} />
-            </>
-          ) : (
-            <>
-              <ArrowsSvg arrows={visibleArrows} size={BOARD_SIZE} flipped={flipped} />
-              <CirclesSvg circles={[...visibleCircles, ...hintCircles]} size={BOARD_SIZE} flipped={flipped} />
-            </>
-          )}
-          <PieceAnimationGhosts ghosts={ghosts} cell={CELL} />
-        </View>
-        {variantStage === 'rewinding' && (
-          <View style={[StyleSheet.absoluteFill, styles.rewindOverlay]} pointerEvents="none">
-            <Animated.View
-              style={{
-                transform: [{ rotate: rewindSpin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }) }]
-              }}
-            >
-              <RewindIcon size={72} color={colors.onPrimary} />
-            </Animated.View>
+      <View ref={guideTargets?.board} collapsable={false}>
+        <View
+          ref={gridRef}
+          onLayout={() => measureGrid()}
+          style={[styles.board, { width: BOARD_SIZE, height: BOARD_SIZE }]}
+          {...panResponder.panHandlers}
+        >
+          <View style={{ width: BOARD_SIZE, height: BOARD_SIZE, flexDirection: 'row', flexWrap: 'wrap' }}>
+            {(flipped ? [...allSquares()].reverse() : allSquares()).map((sq, i) => {
+              const file = i % 8;
+              const rank = Math.floor(i / 8);
+              const isLight = (file + rank) % 2 === 0;
+              const piece = displayedPieces[sq];
+              const isSel = sq === selected;
+              const isTarget = legalTargets.includes(sq);
+              const isCapture = isTarget && (Boolean(piece) || (selected && activeState.pieces[selected]?.[1] === 'P' && sq === activeState.enPassant));
+              return (
+                <View
+                  key={sq}
+                  style={{ width: CELL, height: CELL, backgroundColor: isLight ? styleSet.light : styleSet.dark, alignItems: 'center', justifyContent: 'center' }}
+                >
+                  {piece && !hiddenSquares.has(sq) && <PieceGlyph code={piece} cell={CELL} />}
+                  {isSel && <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.selHighlight]} />}
+                  {isTarget && !isCapture && <View pointerEvents="none" style={styles.moveDot} />}
+                  {isCapture && <View pointerEvents="none" style={styles.captureRing} />}
+                </View>
+              );
+            })}
           </View>
-        )}
+          <View style={StyleSheet.absoluteFill} pointerEvents="none">
+            {showVariantArrows ? (
+              <>
+                <NumberedArrowsSvg arrows={variantArrows} size={BOARD_SIZE} flipped={flipped} />
+                <NumberedArrowBadges arrows={variantArrows} size={BOARD_SIZE} flipped={flipped} />
+              </>
+            ) : (
+              <>
+                <ArrowsSvg arrows={visibleArrows} size={BOARD_SIZE} flipped={flipped} />
+                <CirclesSvg circles={[...visibleCircles, ...hintCircles]} size={BOARD_SIZE} flipped={flipped} />
+              </>
+            )}
+            <PieceAnimationGhosts ghosts={ghosts} cell={CELL} />
+          </View>
+          {variantStage === 'rewinding' && (
+            <View style={[StyleSheet.absoluteFill, styles.rewindOverlay]} pointerEvents="none">
+              <Animated.View
+                style={{
+                  transform: [{ rotate: rewindSpin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }) }]
+                }}
+              >
+                <RewindIcon size={72} color={colors.onPrimary} />
+              </Animated.View>
+            </View>
+          )}
+        </View>
       </View>
 
       {/* Step back/forward through the main line to review it — always
@@ -671,13 +703,20 @@ export function ReactionStudy({
         <>
           <View style={styles.actionRow}>
             <Pressable
-              onPress={() => setHintOn(true)}
+              ref={guideTargets?.hint}
+              collapsable={false}
+              onPress={() => {
+                setHintOn(true);
+                onGuideEvent?.('hint');
+              }}
               disabled={isReviewing || !activeIsYourTurn || activeLineDone || (inVariant && variantStage !== 'playing')}
               style={[styles.actionBtn, styles.hintBtn, (isReviewing || !activeIsYourTurn || activeLineDone) && styles.actionDisabled]}
             >
               <Text style={styles.hintText}>Hint</Text>
             </Pressable>
             <Pressable
+              ref={guideTargets?.solution}
+              collapsable={false}
               onPress={showSolution}
               disabled={isReviewing || !activeIsYourTurn || activeLineDone || (inVariant && variantStage !== 'playing')}
               style={[styles.actionBtn, styles.solutionBtn, (isReviewing || !activeIsYourTurn || activeLineDone) && styles.actionDisabled]}
@@ -688,7 +727,15 @@ export function ReactionStudy({
           <Text style={[styles.wrongText, !wrongMove && styles.wrongTextHidden]}>Wrong move. Try again.</Text>
         </>
       ) : (
-        <Pressable onPress={() => onResult(mistakes === 0)} style={styles.continueBtn}>
+        <Pressable
+          ref={guideTargets?.continue}
+          collapsable={false}
+          onPress={() => {
+            onGuideEvent?.('continue');
+            onResult(mistakes === 0);
+          }}
+          style={styles.continueBtn}
+        >
           <Text style={styles.continueText}>{mistakes === 0 ? '✓ Perfect — continue' : `Continue (${mistakes} slip${mistakes === 1 ? '' : 's'})`}</Text>
         </Pressable>
       )}

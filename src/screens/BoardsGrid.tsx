@@ -3,6 +3,8 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { newReactionBoard, cloneReactionBoard } from '../chess';
 import { uid } from '../storage';
 import { ChessBoardView } from '../components/ChessBoard';
+import { ModeTip } from '../components/ModeTip';
+import { useTutorial, useTutorialTarget } from '../tutorial';
 import { CloseCircleButton } from '../overlay';
 import type { CardMode, ReactionBoard } from '../types';
 import { colors, radius, spacing } from '../theme';
@@ -29,6 +31,8 @@ export function BoardsGrid({
   onChange: (boards: ReactionBoard[]) => void;
 }) {
   const sorted = [...boards].sort((a, b) => a.order - b.order);
+  const tutorial = useTutorial();
+  const firstBoardRef = useTutorialTarget('cardEditor.board');
 
   function renumber(list: ReactionBoard[]): ReactionBoard[] {
     return list.map((b, i) => ({ ...b, order: i }));
@@ -56,6 +60,7 @@ export function BoardsGrid({
     // All three modes share the same editor (forced move order, circles,
     // numbered arrows) — "Others"/"Plan" just never get offered the Play
     // button, so `recording` stays empty for them.
+    tutorial.event('openBoardEditor');
     const updated = await openReactionBoardEditor(board, mode, yourColor, boardStyle);
     if (!updated) return;
     onChange(boards.map((b) => (b.id === board.id ? updated : b)));
@@ -63,33 +68,10 @@ export function BoardsGrid({
 
   return (
     <View>
-      {mode === 'reactions' && (
-        <View style={styles.hint}>
-          <Text style={styles.hintIcon}>ⓘ</Text>
-          <Text style={styles.hintText}>
-            {'1) Set up your starting position.\n2) Press "Play" and play out the moves you want to study (you can practice multiple variations by going back to a move and playing a different move).\n3) While studying, the opponent\'s moves will be played automatically and you have to find the move you recorded.'}
-          </Text>
-        </View>
-      )}
-      {mode === 'others' && (
-        <View style={styles.hint}>
-          <Text style={styles.hintIcon}>ⓘ</Text>
-          <Text style={styles.hintText}>
-            {'1) Set up your position on the front side.\n2) Flip to back and make some moves and/or draw arrows.\n3) While studying, you will see the front side. Once you tap the card, it will flip to the back and you mark whether you were correct or not.'}
-          </Text>
-        </View>
-      )}
-      {mode === 'plan' && (
-        <View style={styles.hint}>
-          <Text style={styles.hintIcon}>ⓘ</Text>
-          <Text style={styles.hintText}>
-            {'1) Set up your position.\n2) Draw arrows which is the general plan in the position.\n3) While studying, you will find the exact position but without arrows which you will have to draw yourself.'}
-          </Text>
-        </View>
-      )}
+      <ModeTip mode={mode} />
 
       <View style={styles.grid}>
-        {sorted.map((board) => {
+        {sorted.map((board, tileIdx) => {
           // The grid preview is a management view, not Study — it always
           // shows the full position with its arrows, never hides anything:
           // Reactions' own fields, Others' front, or Plan's single face
@@ -101,7 +83,11 @@ export function BoardsGrid({
               : { pieces: previewFace.pieces, style: boardStyle, arrows: previewFace.arrows, circles: previewFace.circles };
           return (
           <View key={board.id} style={styles.tile}>
-            <Pressable onPress={() => handleOpen(board)}>
+            <Pressable
+              ref={tileIdx === 0 ? firstBoardRef : undefined}
+              collapsable={false}
+              onPress={() => handleOpen(board)}
+            >
               <ChessBoardView board={previewBoard} size={PREVIEW_SIZE} flipped={yourColor === 'b'} />
             </Pressable>
             <View style={styles.tileActions}>
@@ -130,7 +116,6 @@ export function BoardsGrid({
           <Text style={styles.addBoardText}>+ Add board</Text>
         </Pressable>
       )}
-
     </View>
   );
 }
@@ -161,20 +146,4 @@ const styles = StyleSheet.create({
     marginTop: 8
   },
   addBoardText: { color: colors.textDim, fontSize: 14 },
-  hint: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    backgroundColor: colors.panel2,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.accent,
-    borderRadius: radius.md,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    marginBottom: 12
-  },
-  hintIcon: { color: colors.accent, fontSize: 13, fontWeight: '700' },
-  hintText: { color: colors.text, fontSize: 12.5, fontWeight: '500', flex: 1, lineHeight: 17 }
 });

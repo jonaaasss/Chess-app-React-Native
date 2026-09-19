@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { boardStateToReactionBoard, cloneBoardFace, cloneReactionBoard, newReactionBoard } from './chess';
 import { buildExampleContent } from './exampleContent';
-import type { Card, GroupId, Opening, Repertoire } from './types';
+import type { Card, CardMode, GroupId, Opening, Repertoire } from './types';
 
 const EXAMPLE_HIDDEN_KEY = 'exampleRepertoireHidden';
 const SHOW_MULTIPLE_REPERTOIRES_KEY = 'showMultipleRepertoires';
@@ -392,6 +392,28 @@ export async function setSetting(key: string, value: unknown): Promise<void> {
   const s = await load();
   s.settings[key] = value;
   await persist();
+}
+
+// Whether the user closed the how-it-works tip in the board editor, kept
+// per mode (each mode's tip is different, so hiding one shouldn't hide the
+// rest). Remembered state only — deliberately not surfaced on the Settings
+// screen. Defaults to shown.
+export async function getBoardEditorTipHidden(mode: CardMode): Promise<boolean> {
+  return getSetting<boolean>(`boardEditorTipHidden.${mode}`, false);
+}
+
+export async function setBoardEditorTipHidden(mode: CardMode, hidden: boolean): Promise<void> {
+  await setSetting(`boardEditorTipHidden.${mode}`, hidden);
+}
+
+// The home screen's "Study Your First Opening" button; on by default, can be
+// hidden from the home screen itself and re-enabled in Settings.
+export async function getShowFirstOpeningGuide(): Promise<boolean> {
+  return getSetting<boolean>('showFirstOpeningGuide', true);
+}
+
+export async function setShowFirstOpeningGuide(show: boolean): Promise<void> {
+  await setSetting('showFirstOpeningGuide', show);
 }
 
 export async function getExampleRepertoireHidden(): Promise<boolean> {

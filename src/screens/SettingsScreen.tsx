@@ -7,7 +7,9 @@ import {
   getShowMultipleRepertoires,
   setShowMultipleRepertoires,
   getBoardStyle,
-  setBoardStyle
+  setBoardStyle,
+  getShowFirstOpeningGuide,
+  setShowFirstOpeningGuide
 } from '../storage';
 import { boardStyles, colors, type } from '../theme';
 import { Screen, TopBar } from '../components/Common';
@@ -17,6 +19,9 @@ const SHUFFLE_TOOLTIP =
 
 const MULTIPLE_REPERTOIRES_TOOLTIP =
   'Almost nobody needs more than one repertoire per side, so that list is skipped by default. Turn this on to always see it — useful once you actually have more than one.';
+
+const FIRST_OPENING_TOOLTIP =
+  'The two orange beginner buttons on the home screen: one walks you through two example cards (a Reactions card and a Plan card) of the Italian Game, the other guides you through making your own first card. You can hide them there once you no longer need them, and bring them back here.';
 
 function ToggleRow({
   label,
@@ -53,10 +58,12 @@ function ToggleRow({
 export function SettingsScreen({ onBack }: { onBack: () => void }) {
   const [shuffleOn, setShuffleOn] = useState(false);
   const [showMultiple, setShowMultiple] = useState(false);
+  const [showGuide, setShowGuide] = useState(true);
   const [boardStyle, setBoardStyleState] = useState(0);
 
   const load = useCallback(async () => {
     setShuffleOn(await getSetting<boolean>('shuffle', false));
+    setShowGuide(await getShowFirstOpeningGuide());
     setShowMultiple(await getShowMultipleRepertoires());
     setBoardStyleState(await getBoardStyle());
   }, []);
@@ -79,6 +86,12 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
     await setShowMultipleRepertoires(next);
   }
 
+  async function toggleShowGuide() {
+    const next = !showGuide;
+    setShowGuide(next);
+    await setShowFirstOpeningGuide(next);
+  }
+
   async function pickBoardStyle(idx: number) {
     setBoardStyleState(idx);
     await setBoardStyle(idx);
@@ -93,6 +106,12 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
         value={showMultiple}
         onToggle={toggleShowMultiple}
         tooltip={MULTIPLE_REPERTOIRES_TOOLTIP}
+      />
+      <ToggleRow
+        label="Show beginner guide buttons"
+        value={showGuide}
+        onToggle={toggleShowGuide}
+        tooltip={FIRST_OPENING_TOOLTIP}
       />
 
       <Text style={styles.label}>Board style</Text>

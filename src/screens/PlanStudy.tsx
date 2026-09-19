@@ -4,6 +4,8 @@ import { allSquares, flipIndex, squareFromIndex } from '../chess';
 import type { Arrow, ArrowColor, Card, ReactionBoard } from '../types';
 import { arrowColors, boardStyles, colors, radius } from '../theme';
 import { CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, type NumberedArrow } from '../components/ChessBoard';
+import type { GuideTargets } from '../components/GuideCoach';
+import type { CoachEvent } from '../guideContent';
 
 // A wrong arrow flashes briefly before it's removed — long enough to
 // register as "that's what I drew", short enough not to block retrying.
@@ -65,13 +67,21 @@ export function PlanStudy({
   yourColor,
   boardStyle,
   onResult,
-  boardRef
+  boardRef,
+  onEditBoard,
+  guideTargets,
+  onGuideEvent
 }: {
   card: Card;
   yourColor: 'w' | 'b';
   boardStyle: number;
   onResult: (correct: boolean) => void;
   boardRef?: React.MutableRefObject<ReactionBoard | null>;
+  onEditBoard?: () => void;
+  // Guide coach hooks (optional): where the popups' spotlights go, and the
+  // Show solution press a popup can wait on.
+  guideTargets?: GuideTargets;
+  onGuideEvent?: (event: CoachEvent) => void;
 }) {
   const boards = useMemo(() => [...card.boards].sort((a, b) => a.order - b.order), [card]);
   const [boardIdx, setBoardIdx] = useState(0);
@@ -83,6 +93,12 @@ export function PlanStudy({
   const [boardDone, setBoardDone] = useState(false);
   const [allDone, setAllDone] = useState(false);
   const [tempArrow, setTempArrow] = useState<{ from: string; to: string } | null>(null);
+
+  // Guide coach: the card is finished and its Continue button is on screen.
+  useEffect(() => {
+    if (allDone) onGuideEvent?.('allDone');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allDone]);
 
   const board: ReactionBoard | undefined = boards[boardIdx];
 
@@ -102,6 +118,9 @@ export function PlanStudy({
   // revealed only once the board is solved.
   const colorGroups = useMemo(() => (board ? buildColorGroups(board.back.arrows) : []), [board]);
   const arrowNumbers = useMemo(() => editorArrowNumbers(board ? board.back.arrows : []), [board]);
+  // Nothing to reproduce — the board can't be studied at all, which is a
+  // problem to fix in the editor, not a board to quietly count as solved.
+  const noArrows = colorGroups.length === 0;
 
   const gridRef = useRef<View>(null);
   const gridOrigin = useRef({ x: 0, y: 0 });
@@ -125,14 +144,16 @@ export function PlanStudy({
     return squareFromIndex(flipIndex(file, flipped), flipIndex(rank, flipped));
   }
 
-  // A new board resets the whole exercise — start at the first color group
-  // (or, defensively, treat a board with no arrows as already done).
+  // A new board resets the whole exercise — start at the first color group.
+  // A board with no arrows is never "done" (it used to be, which showed
+  // "Board complete!" for something that couldn't be studied); it shows a
+  // warning instead, and re-runs this once arrows are added in the editor.
   useEffect(() => {
     setGroupIdx(0);
     setRemaining(colorGroups[0]?.arrows ?? []);
     setDrawnArrows([]);
     setWrongArrow(null);
-    setBoardDone(colorGroups.length === 0);
+    setBoardDone(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [colorGroups]);
 
@@ -150,7 +171,7 @@ export function PlanStudy({
   }, [boardDone, boardIdx, boards.length]);
 
   function handleDrawnArrow(from: string, to: string) {
-    if (!board || boardDone || allDone || wrongArrow) return;
+    if (!board || boardDone || allDone || wrongArrow || noArrows) return;
     const matchIdx = remaining.findIndex((a) => a.from === from && a.to === to);
     if (matchIdx === -1) {
       setMistakes((m) => m + 1);
@@ -178,6 +199,7 @@ export function PlanStudy({
     if (!board || boardDone || allDone || wrongArrow || remaining.length === 0) return;
     setMistakes((m) => m + 1);
     handleDrawnArrow(remaining[0].from, remaining[0].to);
+    onGuideEvent?.('solution');
   }
 
   const panResponderRef = useRef<PanResponderInstance | null>(null);
@@ -248,44 +270,64 @@ export function PlanStudy({
   return (
     <View style={{ alignItems: 'center', gap: 10 }}>
       {board.back.text ? <Text style={styles.boardText}>{board.back.text}</Text> : null}
-      <Text style={[styles.status, { color: statusColor }]}>
-        {boards.length > 1 ? `Board ${boardIdx + 1} / ${boards.length} — ` : ''}
-        {statusText}
-      </Text>
-
-      <View
-        ref={gridRef}
-        onLayout={() => measureGrid()}
-        style={[styles.board, { width: BOARD_SIZE, height: BOARD_SIZE }]}
-        {...panResponder.panHandlers}
-      >
-        <View style={{ width: BOARD_SIZE, height: BOARD_SIZE, flexDirection: 'row', flexWrap: 'wrap' }}>
-          {(flipped ? [...allSquares()].reverse() : allSquares()).map((sq, i) => {
-            const file = i % 8;
-            const rank = Math.floor(i / 8);
-            const isLight = (file + rank) % 2 === 0;
-            const piece = board.back.pieces[sq];
-            return (
-              <View
-                key={sq}
-                style={{ width: CELL, height: CELL, backgroundColor: isLight ? styleSet.light : styleSet.dark, alignItems: 'center', justifyContent: 'center' }}
-              >
-                {piece && <PieceGlyph code={piece} cell={CELL} />}
-              </View>
-            );
-          })}
+      {noArrows ? (
+        <View style={styles.warning}>
+          <Text style={styles.warningTitle}>
+            {boards.length > 1 ? `Board ${boardIdx + 1} / ${boards.length}: ` : ''}No arrows to study
+          </Text>
+          <Text style={styles.warningText}>
+            {'This Plan board has no arrows yet, so there is nothing to draw.\nAdd at least one arrow in the board editor to study it.'}
+          </Text>
+          {onEditBoard && (
+            <Pressable onPress={onEditBoard} style={styles.warningBtn}>
+              <Text style={styles.warningBtnText}>Open board editor</Text>
+            </Pressable>
+          )}
         </View>
-        <View style={StyleSheet.absoluteFill} pointerEvents="none">
-          <NumberedArrowsSvg arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} />
-          <NumberedArrowBadges arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} />
-          {boardDone && board.back.circles.length > 0 && <CirclesSvg circles={board.back.circles} size={BOARD_SIZE} flipped={flipped} />}
+      ) : (
+        <Text style={[styles.status, { color: statusColor }]}>
+          {boards.length > 1 ? `Board ${boardIdx + 1} / ${boards.length} — ` : ''}
+          {statusText}
+        </Text>
+      )}
+
+      <View ref={guideTargets?.board} collapsable={false}>
+        <View
+          ref={gridRef}
+          onLayout={() => measureGrid()}
+          style={[styles.board, { width: BOARD_SIZE, height: BOARD_SIZE }]}
+          {...panResponder.panHandlers}
+        >
+          <View style={{ width: BOARD_SIZE, height: BOARD_SIZE, flexDirection: 'row', flexWrap: 'wrap' }}>
+            {(flipped ? [...allSquares()].reverse() : allSquares()).map((sq, i) => {
+              const file = i % 8;
+              const rank = Math.floor(i / 8);
+              const isLight = (file + rank) % 2 === 0;
+              const piece = board.back.pieces[sq];
+              return (
+                <View
+                  key={sq}
+                  style={{ width: CELL, height: CELL, backgroundColor: isLight ? styleSet.light : styleSet.dark, alignItems: 'center', justifyContent: 'center' }}
+                >
+                  {piece && <PieceGlyph code={piece} cell={CELL} />}
+                </View>
+              );
+            })}
+          </View>
+          <View style={StyleSheet.absoluteFill} pointerEvents="none">
+            <NumberedArrowsSvg arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} />
+            <NumberedArrowBadges arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} />
+            {boardDone && board.back.circles.length > 0 && <CirclesSvg circles={board.back.circles} size={BOARD_SIZE} flipped={flipped} />}
+          </View>
         </View>
       </View>
 
-      {!allDone ? (
+      {noArrows ? null : !allDone ? (
         <>
           <View style={styles.actionRow}>
             <Pressable
+              ref={guideTargets?.solution}
+              collapsable={false}
               onPress={showSolution}
               disabled={boardDone || Boolean(wrongArrow)}
               style={[styles.actionBtn, styles.solutionBtn, (boardDone || Boolean(wrongArrow)) && styles.actionDisabled]}
@@ -296,7 +338,15 @@ export function PlanStudy({
           <Text style={[styles.wrongText, !wrongArrow && styles.wrongTextHidden]}>Wrong arrow. Try again.</Text>
         </>
       ) : (
-        <Pressable onPress={() => onResult(mistakes === 0)} style={styles.continueBtn}>
+        <Pressable
+          ref={guideTargets?.continue}
+          collapsable={false}
+          onPress={() => {
+            onGuideEvent?.('continue');
+            onResult(mistakes === 0);
+          }}
+          style={styles.continueBtn}
+        >
           <Text style={styles.continueText}>{mistakes === 0 ? '✓ Perfect — continue' : `Continue (${mistakes} slip${mistakes === 1 ? '' : 's'})`}</Text>
         </Pressable>
       )}
@@ -308,6 +358,19 @@ const styles = StyleSheet.create({
   boardText: { color: colors.text, fontSize: 15, lineHeight: 22, textAlign: 'center', paddingHorizontal: 12 },
   status: { color: colors.textDim, fontSize: 13, fontWeight: '600' },
   board: { borderRadius: 6, overflow: 'hidden', borderWidth: 1, borderColor: colors.border },
+  warning: {
+    alignSelf: 'stretch',
+    backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.gold,
+    borderRadius: radius.md,
+    padding: 14,
+    gap: 8
+  },
+  warningTitle: { color: colors.gold, fontSize: 14, fontWeight: '700' },
+  warningText: { color: colors.text, fontSize: 13, lineHeight: 19 },
+  warningBtn: { alignSelf: 'flex-start', backgroundColor: colors.gold, borderRadius: radius.pill, paddingVertical: 8, paddingHorizontal: 16, marginTop: 2 },
+  warningBtnText: { color: colors.onGold, fontSize: 13, fontWeight: '700' },
   wrongText: { color: colors.danger, fontSize: 13, fontWeight: '700' },
   wrongTextHidden: { opacity: 0 },
   actionRow: { flexDirection: 'row', gap: 10 },

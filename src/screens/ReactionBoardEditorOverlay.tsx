@@ -9,7 +9,9 @@ import { arrowColors, boardStyles, colors, engineColors, radius, spacing, type }
 import { CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, type NumberedArrow } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts } from '../components/PieceAnimation';
 import { alertDialog, confirmDialog, showOverlay } from '../overlay';
-import { uid } from '../storage';
+import { getBoardEditorTipHidden, setBoardEditorTipHidden, uid } from '../storage';
+import { ModeTip } from '../components/ModeTip';
+import { TutorialLayer, useTutorial, useTutorialTarget } from '../tutorial';
 import { useStockfishEngine, type EngineLine } from '../engine/useStockfishEngine';
 
 const ENGINE_ANALYSIS_DEBOUNCE_MS = 350;
@@ -203,15 +205,18 @@ const MULTIPV_SLOTS = [1, 2, 3];
 function EngineMovesRow({
   lines,
   engineState,
-  onPlayMove
+  onPlayMove,
+  panelRef
 }: {
   lines: EngineLine[];
   engineState: GameState;
   onPlayMove: (line: EngineLine) => void;
+  // Lets the tutorial spotlight the panel.
+  panelRef?: React.RefObject<View | null>;
 }) {
   const movePrefix = engineState.turn === 'w' ? '1.' : '1...';
   return (
-    <View style={engineMovesStyles.panel}>
+    <View ref={panelRef} collapsable={false} style={engineMovesStyles.panel}>
       {MULTIPV_SLOTS.map((slot) => {
         const isBest = slot === 1;
         const rowStyle = [engineMovesStyles.row, isBest && engineMovesStyles.rowBest, slot !== MULTIPV_SLOTS.length && engineMovesStyles.rowDivider];
@@ -320,10 +325,62 @@ function ReactionBoardEditorOverlay({
   const [redoStack, setRedoStack] = useState<ReactionBoard[]>([]);
   const arrowStartRef = useRef<string | null>(null);
   const gridOrigin = useRef({ x: 0, y: 0 });
-  const gridRef = useRef<View>(null);
+  // The board is also the tutorial's spotlight target, hence this hook rather
+  // than a plain ref (it's still what measureGrid measures).
+  const gridRef = useTutorialTarget('boardEditor.board');
+  const playRef = useTutorialTarget('boardEditor.play');
+  const backRef = useTutorialTarget('boardEditor.back');
+  const notationRef = useTutorialTarget('boardEditor.notation');
+  const saveRef = useTutorialTarget('boardEditor.save');
+  const tipRef = useTutorialTarget('boardEditor.tip');
+  const swatchesRef = useTutorialTarget('boardEditor.swatches');
+  const swatchGreenRef = useTutorialTarget('boardEditor.swatch.green');
+  const swatchOrangeRef = useTutorialTarget('boardEditor.swatch.orange');
+  const engineMovesRef = useTutorialTarget('boardEditor.engineMoves');
+  const boardRowRef = useTutorialTarget('boardEditor.boardRow');
+  const descriptionRef = useTutorialTarget('boardEditor.description');
   const insets = useSafeAreaInsets();
 
+  // Make-your-first-card tutorial. While one of its board-editor steps is up
+  // the editor is "guided": the engine's suggestions (clickable, and they'd
+  // pull the user off the move being asked for) and the tip box are hidden,
+  // and a step that asks for one specific move accepts only that move.
+  const tutorial = useTutorial();
+  const guided = tutorial.step?.surface === 'boardEditor';
+  const expectMove = guided ? tutorial.step?.expectMove : undefined;
+  const expectArrow = guided ? tutorial.step?.expectArrow : undefined;
+  // Hidden while guided, except during the steps that point at them.
+  const hideEngine = guided && !tutorial.step?.showEngine;
+
+  // The how-it-works tip: shown by default, closable with its ✕ and
+  // reopenable via the ⓘ next to the title, remembered per mode. null until
+  // the saved flag has loaded, so a tip you've hidden never flashes open.
+  const [tipHidden, setTipHiddenState] = useState<boolean | null>(null);
+  useEffect(() => {
+    getBoardEditorTipHidden(mode).then(setTipHiddenState);
+  }, [mode]);
+  const tipOpen = tipHidden === false;
+  function setTipHidden(hidden: boolean) {
+    setTipHiddenState(hidden);
+    setBoardEditorTipHidden(mode, hidden);
+  }
+
   const activeFace: BoardFace = side === 'front' ? board.front : board.back;
+
+  // Whether a description has been typed (a tutorial step can require it).
+  const { setFlag } = tutorial;
+  useEffect(() => {
+    setFlag('description', activeFace.text.trim().length > 0);
+  }, [activeFace.text, setFlag]);
+  // A tutorial step that suggests a description writes it into the field when
+  // it starts — but never over something the user already typed.
+  const prefillDescription = guided ? tutorial.step?.prefillDescription : undefined;
+  useEffect(() => {
+    if (prefillDescription && !activeFace.text.trim()) {
+      setBoard((prev) => ({ ...prev, [side]: { ...prev[side], text: prefillDescription } }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefillDescription]);
 
   // Others/Plan only — how many of `activeFace.moves` are currently
   // "applied"/visible. Equal to `activeFace.moves.length` means you're at
@@ -400,7 +457,7 @@ function ReactionBoardEditorOverlay({
   // currently on screen — otherwise a slow-to-cancel previous search could
   // flash stale arrows/eval for a moment after a move.
   const engineLines = engine.analyzedFen === fen ? engine.lines : [];
-  const engineArrows: NumberedArrow[] = engineLines.map((line) => ({
+  const engineArrows: NumberedArrow[] = (hideEngine ? [] : engineLines).map((line) => ({
     id: `engine-${line.multipv}`,
     from: line.from,
     to: line.to,
@@ -493,6 +550,7 @@ function ReactionBoardEditorOverlay({
       });
       setHistoryIndex((i) => i + 1);
       setSelected(null);
+      tutorial.event('moved');
       return;
     }
 
@@ -508,6 +566,7 @@ function ReactionBoardEditorOverlay({
         circles: []
       }));
       setSelected(null);
+      tutorial.event('moved');
       return;
     }
 
@@ -516,6 +575,7 @@ function ReactionBoardEditorOverlay({
     if (existing) {
       setCursorId(existing.id);
       setSelected(null);
+      tutorial.event('moved');
       return;
     }
 
@@ -545,9 +605,21 @@ function ReactionBoardEditorOverlay({
     }));
     setCursorId(newNode.id);
     setSelected(null);
+    tutorial.event('moved');
   }
 
   function handleSquareTap(sq: string) {
+    // A tutorial step asking for one specific move: piece first, then its
+    // destination; every other tap is ignored (tapping the picked piece again
+    // just puts it back down).
+    if (expectMove) {
+      if (!selected) {
+        if (sq !== expectMove.from) return;
+      } else if (sq !== expectMove.to) {
+        if (sq === selected) setSelected(null);
+        return;
+      }
+    }
     if (!selected) {
       const piece = engineState.pieces[sq];
       if (piece && piece[0] === engineState.turn) setSelected(sq);
@@ -740,7 +812,14 @@ function ReactionBoardEditorOverlay({
         const { pageX, pageY } = evt.nativeEvent;
         const endSq = squareFromPage(pageX, pageY);
         const start = arrowStartRef.current;
-        if (endSq && endSq !== start) {
+        if (expectArrow) {
+          // A tutorial step asking for one specific arrow: exactly that drag
+          // draws it; anything else (other arrows, circles) is ignored.
+          if (endSq && start === expectArrow.from && endSq === expectArrow.to) {
+            addArrow({ from: start, to: endSq, color: expectArrow.color });
+            tutorial.event('arrowDrawn');
+          }
+        } else if (endSq && endSq !== start) {
           addArrow({ from: start, to: endSq, color: annotateColor });
         } else {
           toggleCircle(start);
@@ -750,7 +829,7 @@ function ReactionBoardEditorOverlay({
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tool, annotateColor, board, cursorId, selected, phase, side, historyIndex, atHead]);
+  }, [tool, annotateColor, board, cursorId, selected, phase, side, historyIndex, atHead, expectMove?.from, expectMove?.to, expectArrow?.from, expectArrow?.to, expectArrow?.color]);
 
   // ---------- Reset / undo / play / flip / apply-to-back ----------
 
@@ -796,6 +875,7 @@ function ReactionBoardEditorOverlay({
     setPhase('playing');
     setCursorId(null);
     setSelected(null);
+    tutorial.event('playPressed');
   }
 
   // Long-press a move in the notation to delete it and everything after it
@@ -816,12 +896,28 @@ function ReactionBoardEditorOverlay({
     setSelected(null);
   }
 
+  // Clears every recorded move and variation at once and drops back to
+  // setup, so the starting position (what the board was when you pressed
+  // Play, plus any arrows drawn before it) is kept and can be adjusted or
+  // played again — unlike Reset board, which also throws that away.
+  async function handleDeleteRecording() {
+    const ok = await confirmDialog(
+      'Delete the whole recording? All recorded moves and variations are removed. The starting position stays. This cannot be undone.'
+    );
+    if (!ok) return;
+    setBoard((prev) => ({ ...prev, recording: [] }));
+    setCursorId(null);
+    setPhase('setup');
+    setSelected(null);
+  }
+
   function handleBack() {
     setSelected(null);
     if (isReactions) {
       if (phase === 'playing') {
         if (path.length === 0) return;
         setCursorId(path.length >= 2 ? path[path.length - 2].id : null);
+        tutorial.event('backPressed');
         return;
       }
       if (undoStack.length === 0) return;
@@ -878,6 +974,7 @@ function ReactionBoardEditorOverlay({
   }
 
   async function handleCancel() {
+    tutorial.event('boardCancel');
     close(null);
   }
 
@@ -888,6 +985,7 @@ function ReactionBoardEditorOverlay({
       );
       return;
     }
+    tutorial.event('boardSaved');
     close(board);
   }
 
@@ -898,11 +996,26 @@ function ReactionBoardEditorOverlay({
           <Pressable onPress={handleCancel}>
             <Text style={styles.topBarBtn}>Cancel</Text>
           </Pressable>
-          <Text style={styles.title}>{mode === 'reactions' ? 'Reactions board' : 'Board editor'}</Text>
-          <Pressable onPress={handleSave}>
+          <View style={styles.titleGroup}>
+            <Text style={styles.title}>{mode === 'reactions' ? 'Reactions board' : 'Board editor'}</Text>
+            <Pressable onPress={() => setTipHidden(tipOpen)} hitSlop={10}>
+              <Text style={[styles.tipToggle, tipOpen && styles.tipToggleOpen]}>ⓘ</Text>
+            </Pressable>
+          </View>
+          <Pressable ref={saveRef} collapsable={false} onPress={handleSave}>
             <Text style={[styles.topBarBtn, styles.saveBtn]}>Save</Text>
           </Pressable>
         </View>
+
+        {guided && tutorial.step?.showTip ? (
+          // Shown for the tutorial's intro whatever the user's own hidden/shown
+          // setting is; it has nothing to close, that setting is left alone.
+          <View ref={tipRef} collapsable={false}>
+            <ModeTip mode={mode} />
+          </View>
+        ) : (
+          tipOpen && !guided && <ModeTip mode={mode} onClose={() => setTipHidden(true)} />
+        )}
 
         {engine.element}
 
@@ -925,18 +1038,22 @@ function ReactionBoardEditorOverlay({
             already resolves to the right face in every case without
             needing to branch on mode here). */}
         <Text style={styles.fieldLabel}>Description</Text>
-        <TextInput
-          style={styles.textArea}
-          value={activeFace.text}
-          onChangeText={(text) => setBoard((prev) => ({ ...prev, [side]: { ...prev[side], text } }))}
-          multiline
-          placeholder="Shown in Study..."
-          placeholderTextColor={colors.textDim}
-        />
+        <View ref={descriptionRef} collapsable={false}>
+          <TextInput
+            style={styles.textArea}
+            value={activeFace.text}
+            onChangeText={(text) => setBoard((prev) => ({ ...prev, [side]: { ...prev[side], text } }))}
+            multiline
+            placeholder="Shown in Study..."
+            placeholderTextColor={colors.textDim}
+          />
+        </View>
 
-        <EngineMovesRow lines={engineLines} engineState={engineState} onPlayMove={playEngineMove} />
+        {!hideEngine && (
+          <EngineMovesRow lines={engineLines} engineState={engineState} onPlayMove={playEngineMove} panelRef={engineMovesRef} />
+        )}
 
-        <View style={styles.boardRow}>
+        <View ref={boardRowRef} collapsable={false} style={styles.boardRow}>
         <View
           ref={gridRef}
           onLayout={() => measureGrid()}
@@ -976,7 +1093,7 @@ function ReactionBoardEditorOverlay({
             <PieceAnimationGhosts ghosts={ghosts} cell={CELL} />
           </View>
         </View>
-        <EngineEvalBar lines={engineLines} flipped={flipped} height={BOARD_SIZE} />
+        {!hideEngine && <EngineEvalBar lines={engineLines} flipped={flipped} height={BOARD_SIZE} />}
         </View>
 
         {pendingPromotion && (
@@ -991,7 +1108,7 @@ function ReactionBoardEditorOverlay({
         )}
 
         {mode === 'reactions' && phase === 'setup' && (
-          <Pressable onPress={handlePlay} style={styles.playBtn}>
+          <Pressable ref={playRef} collapsable={false} onPress={handlePlay} style={styles.playBtn}>
             <Text style={styles.playBtnText}>▶ Play</Text>
           </Pressable>
         )}
@@ -1001,14 +1118,17 @@ function ReactionBoardEditorOverlay({
             drawing, not one-time setup like board style (now global). */}
         <View style={styles.row}>
           <Text style={styles.label}>Arrow</Text>
-          <View style={styles.swatchRow}>
+          <View ref={swatchesRef} collapsable={false} style={styles.swatchRow}>
             {ARROW_KEYS.map((color) => (
               <Pressable
                 key={color}
+                ref={color === 'green' ? swatchGreenRef : color === 'orange' ? swatchOrangeRef : undefined}
+                collapsable={false}
                 onPress={() => {
                   setAnnotateColor(color);
                   setTool('annotate');
                   setSelected(null);
+                  tutorial.event(`colorPicked:${color}`);
                 }}
                 hitSlop={9}
                 style={[
@@ -1029,18 +1149,24 @@ function ReactionBoardEditorOverlay({
           <>
             <View style={styles.notationHeaderRow}>
               <Text style={styles.notationHeaderText}>Recording</Text>
-              <Pressable
-                onPress={() =>
-                  alertDialog(
-                    "Every move you play on the board is added to the notation below. Tap a move to jump back to that position — playing a different move from there starts a variation. Long-press a move to delete it and everything after it. Use ‹ / › (above) to step through the line one move at a time. Tap Save (top right) whenever you're done."
-                  )
-                }
-                hitSlop={10}
-                style={styles.infoBtn}
-              >
-                <Text style={styles.infoBtnText}>ⓘ</Text>
-              </Pressable>
+              <View style={styles.notationHeaderActions}>
+                <Pressable onPress={handleDeleteRecording} hitSlop={8}>
+                  <Text style={styles.deleteRecordingText}>Delete recording</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() =>
+                    alertDialog(
+                      "Every move you play on the board is added to the notation below. Tap a move to jump back to that position — playing a different move from there starts a variation. Long-press a move to delete it and everything after it, or use \"Delete recording\" to clear the whole recording and start over from the starting position. Use ‹ / › (above) to step through the line one move at a time. Tap Save (top right) whenever you're done."
+                    )
+                  }
+                  hitSlop={10}
+                  style={styles.infoBtn}
+                >
+                  <Text style={styles.infoBtnText}>?</Text>
+                </Pressable>
+              </View>
             </View>
+            <View ref={notationRef} collapsable={false}>
             <Notation
               recording={board.recording}
               cursorId={cursorId}
@@ -1051,6 +1177,7 @@ function ReactionBoardEditorOverlay({
               }}
               onDelete={handleDeleteMove}
             />
+            </View>
           </>
         )}
 
@@ -1076,7 +1203,7 @@ function ReactionBoardEditorOverlay({
         </Pressable>
         <View style={{ flex: 1 }} />
         <View style={styles.navGroup}>
-          <Pressable onPress={handleBack} disabled={!canBack} style={[styles.toolBtn, !canBack && styles.stepBtnDisabled]}>
+          <Pressable ref={backRef} collapsable={false} onPress={handleBack} disabled={!canBack} style={[styles.toolBtn, !canBack && styles.stepBtnDisabled]}>
             <Text style={styles.toolBtnText}>‹</Text>
           </Pressable>
           <Pressable onPress={handleForward} disabled={!canForward} style={[styles.toolBtn, !canForward && styles.stepBtnDisabled]}>
@@ -1084,6 +1211,7 @@ function ReactionBoardEditorOverlay({
           </Pressable>
         </View>
       </View>
+      <TutorialLayer surface="boardEditor" flipped={flipped} />
     </SafeAreaView>
   );
 }
@@ -1208,6 +1336,9 @@ const styles = StyleSheet.create({
   topBarBtn: { color: colors.textDim, ...type.body },
   saveBtn: { color: colors.accentHover, ...type.bodyStrong },
   title: { color: colors.text, ...type.h2 },
+  titleGroup: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  tipToggle: { color: colors.textDim, fontSize: 18, fontWeight: '700' },
+  tipToggleOpen: { color: colors.accent },
   sideLabelBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1258,6 +1389,8 @@ const styles = StyleSheet.create({
   playBtnText: { color: colors.onPrimary, fontSize: 15.5, fontWeight: '700' },
   notationHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, marginBottom: 2 },
   notationHeaderText: { color: colors.textDim, fontSize: 12.5, fontWeight: '600' },
+  notationHeaderActions: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  deleteRecordingText: { color: colors.danger, fontSize: 12.5, fontWeight: '700' },
   infoBtn: { width: 22, height: 22, borderRadius: 11, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
   infoBtnText: { color: colors.textDim, fontSize: 13, fontWeight: '700' },
   stepBtnDisabled: { opacity: 0.4 },

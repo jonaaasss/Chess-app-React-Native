@@ -18,6 +18,7 @@ import { ensureSeeded, resolveGroupEntry } from './src/storage';
 import type { GroupId } from './src/types';
 import { colors } from './src/theme';
 import { OverlayHost } from './src/overlay';
+import { TutorialProvider } from './src/tutorial';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { RepertoiresScreen } from './src/screens/RepertoiresScreen';
 import { OpeningsScreen } from './src/screens/OpeningsScreen';
@@ -109,6 +110,7 @@ export default function App() {
     <SafeAreaProvider>
       <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }} onLayout={onLayoutRootView}>
         <StatusBar style="light" />
+        <TutorialProvider>
         {!ready ? (
           <View style={{ flex: 1, backgroundColor: colors.bg }} />
         ) : (
@@ -150,6 +152,7 @@ export default function App() {
           </NavigationContainer>
         )}
         <OverlayHost />
+        </TutorialProvider>
       </GestureHandlerRootView>
     </SafeAreaProvider>
   );

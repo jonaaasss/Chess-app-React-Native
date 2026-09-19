@@ -1,10 +1,13 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import { colors, radius, spacing, type, touchTarget } from '../theme';
 import { PieceGlyph } from './ChessBoard';
 import type { PieceCode } from '../types';
+import { useFocusEffect } from '@react-navigation/native';
+import { TutorialLayer, useTutorial, useTutorialTarget } from '../tutorial';
+import type { TutorialSurface } from '../tutorialContent';
 
 // A drawn icon instead of a Unicode "←" glyph — text glyphs don't sit
 // centered within their own em-box consistently (the same lesson learned
@@ -90,13 +93,30 @@ export function SettingsCircleButton({ onPress }: { onPress: () => void }) {
   );
 }
 
-export function Screen({ children, scroll = true }: { children: React.ReactNode; scroll?: boolean }) {
+// `surface` opts a screen into the make-your-own-cards tutorial: it reports
+// itself whenever it comes into view and hosts the tutorial's popup layer.
+export function Screen({
+  children,
+  scroll = true,
+  surface
+}: {
+  children: React.ReactNode;
+  scroll?: boolean;
+  surface?: TutorialSurface;
+}) {
   const Container = scroll ? ScrollView : View;
+  const { reportSurface } = useTutorial();
+  useFocusEffect(
+    useCallback(() => {
+      if (surface) reportSurface(surface);
+    }, [surface, reportSurface])
+  );
   return (
     <SafeAreaView style={styles.safe}>
       <Container style={styles.screen} contentContainerStyle={scroll ? styles.screenContent : undefined}>
         {children}
       </Container>
+      {surface && <TutorialLayer surface={surface} />}
     </SafeAreaView>
   );
 }
@@ -143,10 +163,13 @@ export function TopBar({
   onBack,
   onEdit,
   onRename,
-  onAdd
+  onAdd,
+  backTargetId
 }: {
   title: string;
   onBack?: () => void;
+  // Registers the back arrow as a tutorial spotlight target.
+  backTargetId?: string;
   onEdit?: () => void;
   // When set, the pencil edits the title in place (a cursor appears right
   // in the title text) instead of opening a Rename/Delete menu — used where
@@ -157,6 +180,7 @@ export function TopBar({
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(title);
   const inputRef = useRef<TextInput>(null);
+  const backRef = useTutorialTarget(backTargetId);
 
   useEffect(() => {
     if (!editing) return;
@@ -177,7 +201,11 @@ export function TopBar({
 
   return (
     <View style={styles.topBar}>
-      {onBack && <BackCircleButton onPress={onBack} />}
+      {onBack && (
+        <View ref={backRef} collapsable={false}>
+          <BackCircleButton onPress={onBack} />
+        </View>
+      )}
       {editing ? (
         <TextInput
           ref={inputRef}
@@ -265,14 +293,20 @@ export function EmptyState({ text }: { text: string }) {
 export function BigButton({
   title,
   onPress,
-  variant = 'primary'
+  variant = 'primary',
+  targetId
 }: {
   title: string;
   onPress: () => void;
   variant?: 'primary' | 'gold' | 'secondary' | 'danger';
+  // Registers the button as a spotlight target for the tutorial.
+  targetId?: string;
 }) {
+  const targetRef = useTutorialTarget(targetId);
   return (
     <Pressable
+      ref={targetRef}
+      collapsable={false}
       onPress={onPress}
       style={({ pressed }) => [
         bigStyles.base,

@@ -7,6 +7,16 @@ import type { Card, ReactionBoard } from '../types';
 import { colors, radius, type } from '../theme';
 import { ChessBoardView } from '../components/ChessBoard';
 import { BackCircleButton, EditCircleButton } from '../components/Common';
+import {
+  GUIDE_CARDS,
+  GUIDE_COACH,
+  GUIDE_DONE_TEXT,
+  GUIDE_OPENING_NAME,
+  GUIDE_ROUNDS_STEP,
+  type CoachEvent
+} from '../guideContent';
+import { GuideCoach, type CoachChoice, type GuideTargets } from '../components/GuideCoach';
+import { useTutorial } from '../tutorial';
 import { openCardEditor } from './CardEditorOverlay';
 import { openReactionBoardEditor } from './ReactionBoardEditorOverlay';
 import { ReactionStudy } from './ReactionStudy';
@@ -50,6 +60,11 @@ function OthersBoardsView({
 interface QueueItem {
   cardId: string;
   openingId: string;
+  // Set for the beginner guide: the card is bundled with the app and studied
+  // straight from memory instead of being loaded from storage — read-only, so
+  // there's no Edit for it. It rides along on the item so a retry round
+  // (which re-queues the same items) keeps working.
+  guide?: { card: Card; openingName: string };
 }
 
 const CONFETTI_COLORS = [colors.accent, colors.evalWrong, '#F5B266', '#7EB8F2', '#f2f4f6'];
@@ -94,10 +109,30 @@ function StudySessionOverlay({
   // state: it's read imperatively on Edit and never needs to itself trigger
   // a re-render.
   const currentBoardRef = useRef<ReactionBoard | null>(null);
+  const scrollRef = useRef<ScrollView>(null);
   const [openingName, setOpeningName] = useState('');
   const [yourColor, setYourColor] = useState<'w' | 'b'>('w');
   const [boardStyle, setBoardStyle] = useState(0);
   const [done, setDone] = useState(false);
+  // Guide coach popups: how far through each card's steps the user is, and
+  // which study moments ("branchIntro", "yourTurn") have happened. Kept for
+  // the whole session so a retry round doesn't coach the same card again.
+  const tutorial = useTutorial();
+  const [coachProgress, setCoachProgress] = useState<Record<string, number>>({});
+  const [coachEvents, setCoachEvents] = useState<Set<string>>(new Set());
+  // The guide never replays mistakes in a round 2: it explains rounds (this
+  // flag) and then closes back to the home screen.
+  const [guideRoundsExplain, setGuideRoundsExplain] = useState(false);
+  const targetBoard = useRef<View>(null);
+  const targetHint = useRef<View>(null);
+  const targetSolution = useRef<View>(null);
+  const targetContinue = useRef<View>(null);
+  const guideTargets: GuideTargets = {
+    board: targetBoard,
+    hint: targetHint,
+    solution: targetSolution,
+    continue: targetContinue
+  };
   const [roundBanner, setRoundBanner] = useState(0); // the round number a banner is currently announcing, 0 = none
   const wrongThisRoundRef = useRef<QueueItem[]>([]);
   const bannerAnim = useRef(new Animated.Value(0)).current;
@@ -125,7 +160,18 @@ function StudySessionOverlay({
     if (!item) return;
     setFlipped(false);
     currentBoardRef.current = null;
+    // Each card starts from the top: the previous card's scroll offset would
+    // otherwise linger and then re-clamp once this (shorter) card lays out,
+    // moving everything after it had first been measured.
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
     (async () => {
+      if (item.guide) {
+        setCard(item.guide.card);
+        setOpeningName(item.guide.openingName);
+        setYourColor('w');
+        setBoardStyle(await getBoardStyle());
+        return;
+      }
       const c = await getCard(item.cardId);
       if (!c) {
         advance(null);
@@ -149,6 +195,10 @@ function StudySessionOverlay({
         setDone(true);
         return;
       }
+      if (queue[0]?.guide) {
+        setGuideRoundsExplain(true);
+        return;
+      }
       const nextQueue = shuffleCards ? shuffleArray(wrongThisRoundRef.current) : wrongThisRoundRef.current;
       wrongThisRoundRef.current = [];
       setRoundNumber((r) => r + 1);
@@ -168,7 +218,7 @@ function StudySessionOverlay({
   }
 
   async function handleEditCard() {
-    if (!card) return;
+    if (!card || item?.guide) return;
     // Reactions/Plan show one board at a time — jump straight into whatever
     // board is actually on screen right now instead of the card's board
     // list, which would otherwise make you go find and open it yourself.
@@ -222,7 +272,9 @@ function StudySessionOverlay({
             <Text style={{ fontSize: 40, color: colors.onPrimary }}>✓</Text>
           </View>
           <Text style={styles.doneTitle}>Done!</Text>
-          <Text style={styles.doneSub}>Great job — you completed the session.</Text>
+          <Text style={styles.doneSub}>
+            {queue[0]?.guide ? GUIDE_DONE_TEXT : 'Great job — you completed the session.'}
+          </Text>
           <View style={styles.doneActions}>
             <Pressable onPress={handleRestart} style={[styles.blockBtn, styles.primaryBtn]}>
               <Text style={[styles.blockBtnText, { color: colors.onPrimary }]}>Restart</Text>
@@ -242,6 +294,65 @@ function StudySessionOverlay({
 
   const total = queue.length;
 
+  function advanceCoach() {
+    // The study moment that started this step is used up, so the next time
+    // it happens (e.g. your next turn) it can start a later step instead of
+    // counting as already seen.
+    const finished = visibleCoachStep;
+    if (finished && finished.when !== 'next') {
+      const key = `${item.cardId}:${finished.when}`;
+      setCoachEvents((s) => {
+        const n = new Set(s);
+        n.delete(key);
+        return n;
+      });
+    }
+    setCoachProgress((p) => ({ ...p, [item.cardId]: (p[item.cardId] ?? 0) + 1 }));
+  }
+
+  // Study components report what just happened: moments that arm a waiting
+  // step, or a Hint / Show solution press that finishes a step waiting on it.
+  function handleGuideEvent(event: CoachEvent) {
+    if (!item?.guide) return;
+    if (event === 'branchIntro' || event === 'yourTurn' || event === 'allDone') {
+      const key = `${item.cardId}:${event}`;
+      setCoachEvents((s) => (s.has(key) ? s : new Set(s).add(key)));
+      return;
+    }
+    if (visibleCoachStep?.advance === event) advanceCoach();
+  }
+
+  // The step of the guide's coach popups that's showing right now, if any: the
+  // card's next unfinished step, once the study moment it waits for (if any)
+  // has happened.
+  const coachSteps = item?.guide ? GUIDE_COACH[item.cardId] : undefined;
+  const coachStep = coachSteps ? coachSteps[coachProgress[item.cardId] ?? 0] : undefined;
+  // The card on screen is the one that's actually up next. Right after a card
+  // ends there's a render where `item` has already moved on but `card` still
+  // holds the previous one; nothing card-specific (the study screen, its
+  // popups) should be shown or acted on for that render.
+  const cardReady = card.id === item?.cardId;
+  const visibleCoachStep =
+    cardReady && coachStep && (coachStep.when === 'next' || coachEvents.has(`${item.cardId}:${coachStep.when}`))
+      ? coachStep
+      : null;
+
+  // What the coach is showing: the rounds explanation once the guide is over,
+  // otherwise the card's current step.
+  const coachStepShown = guideRoundsExplain ? GUIDE_ROUNDS_STEP : visibleCoachStep;
+  const coachTargetRef =
+    coachStepShown && coachStepShown.target !== 'screen' ? guideTargets[coachStepShown.target] : undefined;
+  const roundsChoices: CoachChoice[] = [
+    { label: 'Go to Home', onPress: close },
+    {
+      label: 'Make my first card',
+      onPress: () => {
+        close();
+        tutorial.start();
+      }
+    }
+  ];
+
   return (
     <SafeAreaView style={styles.overlay}>
       {roundBanner > 0 && (
@@ -255,7 +366,7 @@ function StudySessionOverlay({
           <Text style={styles.roundBannerText}>Round {roundBanner} — retrying your mistakes</Text>
         </Animated.View>
       )}
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView ref={scrollRef} contentContainerStyle={styles.content}>
         <View style={styles.topBar}>
           <BackCircleButton onPress={close} />
           <Text style={styles.title} numberOfLines={1}>
@@ -276,7 +387,9 @@ function StudySessionOverlay({
           <View style={[styles.progressFill, { width: `${((index + 1) / total) * 100}%` }]} />
         </View>
 
-        {card.mode === 'reactions' ? (
+        {!cardReady ? (
+          <View style={styles.studyCard} />
+        ) : card.mode === 'reactions' ? (
           <View style={styles.studyCard}>
             <ReactionStudy
               key={`${roundNumber}-${index}`}
@@ -285,6 +398,9 @@ function StudySessionOverlay({
               boardStyle={boardStyle}
               onResult={(correct) => advance(correct ? null : item)}
               boardRef={currentBoardRef}
+              paused={Boolean(visibleCoachStep?.pause)}
+              guideTargets={item?.guide ? guideTargets : undefined}
+              onGuideEvent={item?.guide ? handleGuideEvent : undefined}
             />
           </View>
         ) : card.mode === 'plan' ? (
@@ -296,6 +412,9 @@ function StudySessionOverlay({
               boardStyle={boardStyle}
               onResult={(correct) => advance(correct ? null : item)}
               boardRef={currentBoardRef}
+              onEditBoard={item?.guide ? undefined : handleEditCard}
+              guideTargets={item?.guide ? guideTargets : undefined}
+              onGuideEvent={item?.guide ? handleGuideEvent : undefined}
             />
           </View>
         ) : (
@@ -325,7 +444,7 @@ function StudySessionOverlay({
         )}
 
         <View style={styles.footerRow}>
-          <EditCircleButton onPress={handleEditCard} />
+          {item?.guide ? <View style={{ width: 38 }} /> : <EditCircleButton onPress={handleEditCard} />}
           <Text style={styles.footerCount}>
             {index + 1} / {total}
           </Text>
@@ -334,8 +453,32 @@ function StudySessionOverlay({
           </Pressable>
         </View>
       </ScrollView>
+
+      {item?.guide && (
+        <GuideCoach
+          step={coachStepShown}
+          centered={!coachStepShown || coachStepShown.target === 'screen'}
+          resolveTarget={() => coachTargetRef}
+          flipped={yourColor === 'b'}
+          choices={guideRoundsExplain ? roundsChoices : undefined}
+          onNext={advanceCoach}
+        />
+      )}
     </SafeAreaView>
   );
+}
+
+// The home screen's "Study Your First Opening": the bundled Italian Game
+// guide cards, in their fixed order (never shuffled).
+export async function startGuideSession(): Promise<void> {
+  const round1: QueueItem[] = GUIDE_CARDS.map((c) => ({
+    cardId: c.id,
+    openingId: c.openingId,
+    guide: { card: c, openingName: GUIDE_OPENING_NAME }
+  }));
+  await showOverlay<void>((close) => (
+    <StudySessionOverlay round1={round1} shuffleCards={false} close={() => close(undefined)} />
+  ));
 }
 
 export async function startStudySession(

@@ -22,6 +22,7 @@ import { Screen, TopBar, Breadcrumb, BigButton, PieceBadge } from '../components
 import { colors, radius, spacing, type } from '../theme';
 import { openCardEditor } from './CardEditorOverlay';
 import { startStudySession } from './StudySessionOverlay';
+import { useTutorial } from '../tutorial';
 
 function cardPreviewText(card: Card): string {
   const firstBoard = [...card.boards].sort((a, b) => a.order - b.order)[0];
@@ -121,6 +122,7 @@ export function CardsScreen({
   const [opening, setOpening] = useState<Opening | null>(null);
   const [rep, setRep] = useState<Repertoire | null>(null);
   const [cards, setCards] = useState<Card[]>([]);
+  const tutorial = useTutorial();
   const { width } = useWindowDimensions();
   const emptyPieceSize = Math.min(width * 0.55, 240);
 
@@ -159,9 +161,13 @@ export function CardsScreen({
   }
 
   async function handleAddCard() {
-    const name = await promptDialog('New card', '', 'e.g. Italian — main line');
+    // While the tutorial is on this button, the name comes pre-filled.
+    const prefill = tutorial.step?.target === 'cards.add' ? tutorial.step.promptPrefill : undefined;
+    tutorial.event('addPressed');
+    const name = await promptDialog('New card', prefill ?? '', 'e.g. Italian — main line');
     if (!name) return;
     const card = await addCard(openingId, name);
+    tutorial.remember({ cardId: card.id });
     await openCardEditor(card.id);
     load();
   }
@@ -189,11 +195,11 @@ export function CardsScreen({
   const cardPiece: PieceCode = rep.group === 'white' ? 'wN' : 'bN';
 
   return (
-    <Screen>
+    <Screen surface="cards">
       <Breadcrumb text={`${rep.group === 'white' ? 'White' : 'Black'} › ${rep.name} › ${opening.name}`} piece={cardPiece} />
-      <TopBar title={opening.name} onBack={onBack} onRename={handleRenameOpening} />
+      <TopBar title={opening.name} onBack={onBack} onRename={handleRenameOpening} backTargetId="cards.back" />
 
-      <BigButton title="+ Add card" onPress={handleAddCard} />
+      <BigButton title="+ Add card" onPress={handleAddCard} targetId="cards.add" />
       <View style={{ height: spacing.lg }} />
 
       {cards.length === 0 ? (
@@ -221,7 +227,7 @@ export function CardsScreen({
         </>
       )}
 
-      {cards.length > 0 && <BigButton title="▶ Study this opening" onPress={handleStudy} variant="gold" />}
+      {cards.length > 0 && <BigButton title="▶ Study this opening" onPress={handleStudy} variant="gold" targetId="cards.study" />}
     </Screen>
   );
 }

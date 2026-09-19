@@ -12,6 +12,7 @@ import { confirmDialog, promptDialog, anchoredMenu } from '../overlay';
 import type { GroupId, PieceCode, Repertoire } from '../types';
 import { Screen, TopBar, BigButton, Breadcrumb, PieceBadge, rowStyles } from '../components/Common';
 import { colors, spacing, type } from '../theme';
+import { useTutorial, useTutorialTarget } from '../tutorial';
 
 // Same pattern as OpeningsScreen's row: the "⋮" opens a small plain-text
 // popover pinned right under it instead of a full-screen menu, and
@@ -21,6 +22,7 @@ function RepertoireRow({
   subtitle,
   piece,
   isExample,
+  targetId,
   onPress,
   onRename,
   onDelete,
@@ -30,12 +32,14 @@ function RepertoireRow({
   subtitle: string;
   piece: PieceCode;
   isExample?: boolean;
+  targetId?: string;
   onPress: () => void;
   onRename: (newName: string) => void;
   onDelete: () => void;
   onRestore: () => void;
 }) {
   const menuRef = useRef<View>(null);
+  const rowRef = useTutorialTarget(targetId);
   const inputRef = useRef<TextInput>(null);
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(title);
@@ -70,7 +74,7 @@ function RepertoireRow({
   }
 
   return (
-    <View style={rowStyles.row}>
+    <View ref={rowRef} collapsable={false} style={rowStyles.row}>
       {editing ? (
         <View style={rowStyles.main}>
           <PieceBadge code={piece} size={52} />
@@ -132,6 +136,7 @@ export function RepertoiresScreen({
   onOpenRepertoire: (repertoireId: string) => void;
 }) {
   const [rows, setRows] = useState<RepRow[]>([]);
+  const tutorial = useTutorial();
   const { width } = useWindowDimensions();
   const emptyPieceSize = Math.min(width * 0.55, 240);
 
@@ -179,9 +184,11 @@ export function RepertoiresScreen({
   }
 
   const groupPiece: PieceCode = group === 'white' ? 'wQ' : 'bQ';
+  // The tutorial points at the user's own repertoire, never the example one.
+  const ownFirstId = rows.find((r) => !r.rep.isExample)?.rep.id;
 
   return (
-    <Screen>
+    <Screen surface="repertoires">
       <Breadcrumb text={group === 'white' ? 'White' : 'Black'} piece={groupPiece} />
       <TopBar title={group === 'white' ? 'White' : 'Black'} onBack={onBack} />
 
@@ -201,7 +208,11 @@ export function RepertoiresScreen({
             subtitle={`${openings} opening${openings === 1 ? '' : 's'} · ${cards} card${cards === 1 ? '' : 's'}`}
             piece={groupPiece}
             isExample={rep.isExample}
-            onPress={() => onOpenRepertoire(rep.id)}
+            targetId={rep.id === ownFirstId ? 'repertoires.own' : undefined}
+            onPress={() => {
+              tutorial.event('openRepertoire');
+              onOpenRepertoire(rep.id);
+            }}
             onRename={(name) => handleRenameRepertoire(rep, name)}
             onDelete={() => handleDeleteRepertoire(rep)}
             onRestore={() => handleRestoreExample(rep)}
