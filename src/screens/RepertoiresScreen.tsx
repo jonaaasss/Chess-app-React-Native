@@ -10,8 +10,7 @@ import {
 } from '../storage';
 import { confirmDialog, promptDialog, anchoredMenu } from '../overlay';
 import type { GroupId, PieceCode, Repertoire } from '../types';
-import { Screen, TopBar, BigButton, Breadcrumb, rowStyles } from '../components/Common';
-import { PieceGlyph } from '../components/ChessBoard';
+import { Screen, TopBar, BigButton, Breadcrumb, PieceBadge, rowStyles } from '../components/Common';
 import { colors, spacing, type } from '../theme';
 
 // Same pattern as OpeningsScreen's row: the "⋮" opens a small plain-text
@@ -74,9 +73,7 @@ function RepertoireRow({
     <View style={rowStyles.row}>
       {editing ? (
         <View style={rowStyles.main}>
-          <View style={rowStyles.iconBadge}>
-            <PieceGlyph code={piece} cell={26} />
-          </View>
+          <PieceBadge code={piece} size={52} />
           <View style={{ flex: 1, minWidth: 0 }}>
             <TextInput
               ref={inputRef}
@@ -94,9 +91,7 @@ function RepertoireRow({
         </View>
       ) : (
         <Pressable onPress={onPress} style={({ pressed }) => [rowStyles.main, pressed && { opacity: 0.7 }]}>
-          <View style={rowStyles.iconBadge}>
-            <PieceGlyph code={piece} cell={26} />
-          </View>
+          <PieceBadge code={piece} size={52} />
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={rowStyles.title} numberOfLines={1}>
               {title}
@@ -195,7 +190,7 @@ export function RepertoiresScreen({
 
       {rows.length === 0 ? (
         <View style={emptyStyles.wrap}>
-          <PieceGlyph code={group === 'white' ? 'wQ' : 'bQ'} cell={emptyPieceSize} />
+          <PieceBadge code={group === 'white' ? 'wQ' : 'bQ'} size={emptyPieceSize} />
           <Text style={emptyStyles.text}>No repertoires yet. Add one to get started.</Text>
         </View>
       ) : (

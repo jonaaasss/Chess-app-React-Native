@@ -249,8 +249,8 @@ const styles = StyleSheet.create({
   modeBtnText: { color: colors.textDim, fontSize: 13, fontWeight: '600' },
   modeBtnTextActive: { color: colors.onPrimary },
   blockBtn: { width: '100%', borderRadius: 10, paddingVertical: 13, alignItems: 'center', marginTop: 12 },
-  secondaryBtn: { backgroundColor: colors.panel2, borderWidth: 1, borderColor: colors.border },
-  secondaryBtnText: { color: colors.text },
+  secondaryBtn: { backgroundColor: colors.gold },
+  secondaryBtnText: { color: colors.onGold },
   dangerBtn: { backgroundColor: colors.danger },
   blockBtnText: { color: 'white', fontSize: 15, fontWeight: '600' }
 });

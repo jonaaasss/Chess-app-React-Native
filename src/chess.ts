@@ -1,4 +1,4 @@
-import type { BoardFace, BoardState, MoveNode, PieceCode, ReactionBoard } from './types';
+import type { BoardFace, BoardState, CastlingRights, MoveNode, PieceCode, ReactionBoard } from './types';
 
 export const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 export const RANKS = ['8', '7', '6', '5', '4', '3', '2', '1'];
@@ -181,6 +181,42 @@ export function squareIndex(square: string): { file: number; rank: number } {
 export function squareFromIndex(file: number, rank: number): string | null {
   if (file < 0 || file > 7 || rank < 0 || rank > 7) return null;
   return FILES[file] + RANKS[rank];
+}
+
+// FEN's board field lists rank 8 first, file a-to-h within each rank — the
+// reverse of nothing in particular here since `pieces` is just square ->
+// piece, but worth noting since it's the one place rank order is fixed.
+// Move counters are hardcoded (0 halfmove, 1 fullmove) since nothing in
+// this app tracks them and the engine only needs a legal position to
+// search from, not a full game record.
+export function toFen(
+  pieces: Partial<Record<string, PieceCode>>,
+  turn: 'w' | 'b',
+  castling: CastlingRights,
+  enPassant: string | null
+): string {
+  const rows: string[] = [];
+  for (let rank = 8; rank >= 1; rank--) {
+    let row = '';
+    let empty = 0;
+    for (const file of FILES) {
+      const piece = pieces[file + rank];
+      if (!piece) {
+        empty += 1;
+        continue;
+      }
+      if (empty > 0) {
+        row += empty;
+        empty = 0;
+      }
+      row += piece[0] === 'w' ? piece[1] : piece[1].toLowerCase();
+    }
+    if (empty > 0) row += empty;
+    rows.push(row);
+  }
+  let castlingField = `${castling.wK ? 'K' : ''}${castling.wQ ? 'Q' : ''}${castling.bK ? 'k' : ''}${castling.bQ ? 'q' : ''}`;
+  if (!castlingField) castlingField = '-';
+  return `${rows.join('/')} ${turn} ${castlingField} ${enPassant ?? '-'} 0 1`;
 }
 
 // squareIndex/squareFromIndex stay in White's canonical orientation (used

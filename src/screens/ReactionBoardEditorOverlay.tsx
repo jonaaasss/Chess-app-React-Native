@@ -1,14 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, PanResponder, PanResponderInstance, ScrollView } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { allSquares, cloneBoardFace, flipIndex, squareFromIndex, startingPosition } from '../chess';
+import { View, Text, TextInput, Pressable, StyleSheet, PanResponder, PanResponderInstance, ScrollView, ActivityIndicator } from 'react-native';
+import Svg, { Path } from 'react-native-svg';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { allSquares, cloneBoardFace, flipIndex, squareFromIndex, startingPosition, toFen } from '../chess';
 import { legalMovesFrom, makeMove, isPromotionMove, type GameState } from '../chessEngine';
 import type { Arrow, ArrowColor, BoardFace, BoardMove, CardMode, Circle, MoveNode, PromotionPiece, ReactionBoard } from '../types';
-import { arrowColors, boardStyles, colors, radius, spacing, type } from '../theme';
+import { arrowColors, boardStyles, colors, engineColors, radius, spacing, type } from '../theme';
 import { CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, type NumberedArrow } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts } from '../components/PieceAnimation';
 import { alertDialog, confirmDialog, showOverlay } from '../overlay';
 import { uid } from '../storage';
+import { useStockfishEngine, type EngineLine } from '../engine/useStockfishEngine';
+
+const ENGINE_ANALYSIS_DEBOUNCE_MS = 350;
 
 const ARROW_KEYS = Object.keys(arrowColors) as ArrowColor[];
 const BOARD_SIZE = 320;
@@ -57,6 +61,23 @@ function sameCircle(a: Circle, b: Circle) {
   return a.square === b.square && a.color === b.color;
 }
 
+// Compared square-by-square (not JSON.stringify) since `pieces` objects
+// built by different code paths (allSquares' rank-major order vs.
+// startingPosition's file-major order) can hold identical contents under
+// different key insertion order.
+function isStartingFace(face: BoardFace): boolean {
+  const start = startingPosition();
+  return (
+    face.turn === 'w' &&
+    face.enPassant === null &&
+    face.castling.wK &&
+    face.castling.wQ &&
+    face.castling.bK &&
+    face.castling.bQ &&
+    allSquares().every((sq) => (face.pieces[sq] ?? null) === (start[sq] ?? null))
+  );
+}
+
 // Same thick-arrow-with-side-offset-badge treatment used by Study's variant
 // callouts, so the editor's own arrows look identical. Only same-colored
 // arrows are numbered against each other (2+ of a color) — a lone arrow of
@@ -91,6 +112,165 @@ function activeAnnotations(board: ReactionBoard, path: MoveNode[]): { arrows: Ar
   }
   return { arrows, circles };
 }
+
+// ---------- Engine analysis (eval bar + top moves) ----------
+
+function evalLabel(line: EngineLine): string {
+  if (line.mate !== null) return `M${Math.abs(line.mate)}`;
+  if (line.cp !== null) return `${line.cp > 0 ? '+' : ''}${(line.cp / 100).toFixed(1)}`;
+  return '';
+}
+
+// A vertical bar next to the board showing the best line's evaluation from
+// White's perspective — filled white/dark proportionally on a logistic
+// curve (not linear), so small edges near equal still read as "close" and
+// big ones saturate instead of needing an unbounded scale. Flips which end
+// is White's when the board itself is flipped, so it always agrees with
+// whichever side is visually on top. The track itself is pinned to exactly
+// `height` — matching the board's own height, top-to-top and bottom-to-
+// bottom — so the track's true middle lands exactly on the board's middle.
+// The number floats above that box (absolutely positioned, so it doesn't
+// add to its height) rather than sharing space inside it.
+function EngineEvalBar({ lines, flipped, height }: { lines: EngineLine[]; flipped: boolean; height: number }) {
+  const best = lines.find((l) => l.multipv === 1);
+  let whiteShare = 0.5;
+  if (best) {
+    if (best.mate !== null) whiteShare = best.mate > 0 ? 1 : 0;
+    else if (best.cp !== null) whiteShare = 1 / (1 + Math.exp(-best.cp / 300));
+  }
+  return (
+    <View style={[evalBarStyles.wrap, { height }]}>
+      <Text style={evalBarStyles.label}>{best ? evalLabel(best) : '—'}</Text>
+      <View style={[evalBarStyles.track, { height, justifyContent: flipped ? 'flex-start' : 'flex-end' }]}>
+        <View style={{ width: '100%', height: `${whiteShare * 100}%`, backgroundColor: '#e7e9ee' }} />
+        {/* Marks the 0.0/even point at the bar's actual midpoint — always
+            here regardless of `flipped`, since that only changes which end
+            is White's, not where "even" sits. */}
+        <View style={evalBarStyles.centerLine} pointerEvents="none" />
+      </View>
+    </View>
+  );
+}
+
+const evalBarStyles = StyleSheet.create({
+  wrap: { alignItems: 'center', marginLeft: 10 },
+  label: {
+    position: 'absolute',
+    top: -20,
+    left: -20,
+    right: -20,
+    textAlign: 'center',
+    color: colors.textDim,
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  track: {
+    width: 22,
+    borderRadius: 4,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: '#2b2f36'
+  },
+  centerLine: { position: 'absolute', left: 0, right: 0, top: '50%', height: 1, backgroundColor: 'rgba(148,163,184,0.9)' }
+});
+
+// Same circular-arrow glyph as Study's RewindIcon (just smaller) — signals
+// the Front/Back label is tappable (flips the board) rather than just a
+// static status indicator. Drawn as a path rather than a Unicode glyph per
+// this app's convention for icons that need to look intentional.
+function FlipIcon({ size, color }: { size: number; color: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path
+        d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"
+        fill={color}
+      />
+    </Svg>
+  );
+}
+
+const MULTIPV_SLOTS = [1, 2, 3];
+
+// Top-3 engine moves shown above the board, one per line ("+0.2 1.e4"),
+// deliberately no continuation (that's what the arrows on the board are
+// for). Always renders all 3 slots in the exact same row layout — a slot
+// without a line yet (engine not ready, position not analyzed, or just that
+// particular multipv hasn't come back) shows an inline "Loading…" spinner
+// in place of the move/eval text rather than swapping to a different panel
+// shape, so the panel never resizes or jumps as results arrive. Tap a
+// resolved line to play it on the board directly.
+function EngineMovesRow({
+  lines,
+  engineState,
+  onPlayMove
+}: {
+  lines: EngineLine[];
+  engineState: GameState;
+  onPlayMove: (line: EngineLine) => void;
+}) {
+  const movePrefix = engineState.turn === 'w' ? '1.' : '1...';
+  return (
+    <View style={engineMovesStyles.panel}>
+      {MULTIPV_SLOTS.map((slot) => {
+        const isBest = slot === 1;
+        const rowStyle = [engineMovesStyles.row, isBest && engineMovesStyles.rowBest, slot !== MULTIPV_SLOTS.length && engineMovesStyles.rowDivider];
+        const line = lines.find((l) => l.multipv === slot);
+        if (!line) {
+          return (
+            <View key={slot} style={rowStyle}>
+              <Text style={[engineMovesStyles.rank, isBest && engineMovesStyles.rankBest]}>{slot}</Text>
+              <View style={engineMovesStyles.loadingInline}>
+                <ActivityIndicator size="small" color={colors.textDim} />
+                <Text style={engineMovesStyles.loadingText}>Loading…</Text>
+              </View>
+            </View>
+          );
+        }
+        let san = `${line.from}${line.to}`;
+        try {
+          san = makeMove(engineState, line.from, line.to, line.promotion).san;
+        } catch {
+          // A line from a search that hasn't caught up to the latest
+          // position yet — show the raw squares rather than crash.
+        }
+        return (
+          <Pressable key={slot} onPress={() => onPlayMove(line)} style={rowStyle}>
+            <Text style={[engineMovesStyles.rank, isBest && engineMovesStyles.rankBest]}>{slot}</Text>
+            <Text style={[engineMovesStyles.move, isBest && engineMovesStyles.moveBest]}>
+              {movePrefix}
+              {san}
+            </Text>
+            <Text style={[engineMovesStyles.eval, isBest && engineMovesStyles.evalBest]}>{evalLabel(line)}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+const engineMovesStyles = StyleSheet.create({
+  panel: {
+    marginTop: 16,
+    marginBottom: 10,
+    backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    overflow: 'hidden'
+  },
+  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 7, paddingHorizontal: 12, gap: 10 },
+  loadingInline: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 8 },
+  loadingText: { color: colors.textDim, fontSize: 13, fontWeight: '600' },
+  rowDivider: { borderBottomWidth: 1, borderBottomColor: colors.border },
+  rowBest: { backgroundColor: 'rgba(59,130,246,0.14)' },
+  rank: { color: colors.textDim, fontSize: 11, fontWeight: '700', width: 12, textAlign: 'center' },
+  rankBest: { color: engineColors.best },
+  move: { color: colors.text, fontSize: 14, fontWeight: '600', flex: 1 },
+  moveBest: { color: engineColors.best, fontWeight: '700' },
+  eval: { color: colors.textDim, fontSize: 13, fontWeight: '600' },
+  evalBest: { color: engineColors.best }
+});
 
 // ---------- The overlay ----------
 
@@ -141,6 +321,7 @@ function ReactionBoardEditorOverlay({
   const arrowStartRef = useRef<string | null>(null);
   const gridOrigin = useRef({ x: 0, y: 0 });
   const gridRef = useRef<View>(null);
+  const insets = useSafeAreaInsets();
 
   const activeFace: BoardFace = side === 'front' ? board.front : board.back;
 
@@ -151,7 +332,12 @@ function ReactionBoardEditorOverlay({
   // position was built. Reset on every flip to the newly active face's own
   // head, since Others' two faces can have differently-sized histories.
   const [historyIndex, setHistoryIndex] = useState(isPlan ? initial.back.moves.length : initial.front.moves.length);
-  const atHead = historyIndex === activeFace.moves.length;
+  // `>=`, not `===` — if historyIndex is ever stale/out of range for
+  // `activeFace` (e.g. it was captured against the other face, or a face
+  // was just replaced wholesale by Apply-to-Back/Reset), treating anything
+  // past the end as "at head" falls back to the always-safe
+  // `activeFace.pieces` below instead of indexing off the end of `moves`.
+  const atHead = historyIndex >= activeFace.moves.length;
 
   const path = useMemo(
     () => (isReactions && cursorId ? findPath(board.recording, cursorId) ?? [] : []),
@@ -198,6 +384,29 @@ function ReactionBoardEditorOverlay({
     () => (selected ? legalMovesFrom(engineState, selected) : []),
     [engineState, selected]
   );
+
+  // Engine analysis — runs for whatever position is currently on screen,
+  // in any mode/phase. Debounced so rapid moves/navigation don't spam the
+  // engine with a search per intermediate position.
+  const engine = useStockfishEngine();
+  const fen = toFen(engineState.pieces, engineState.turn, engineState.castling, engineState.enPassant);
+  useEffect(() => {
+    if (!engine.ready) return;
+    const t = setTimeout(() => engine.evaluate(fen, fen.split(' ')[1] as 'w' | 'b'), ENGINE_ANALYSIS_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engine.ready, fen]);
+  // Only trust `engine.lines` once they actually belong to the position
+  // currently on screen — otherwise a slow-to-cancel previous search could
+  // flash stale arrows/eval for a moment after a move.
+  const engineLines = engine.analyzedFen === fen ? engine.lines : [];
+  const engineArrows: NumberedArrow[] = engineLines.map((line) => ({
+    id: `engine-${line.multipv}`,
+    from: line.from,
+    to: line.to,
+    color: line.multipv === 1 ? engineColors.best : engineColors.alt,
+    width: line.multipv === 1 ? 0.22 : 0.15
+  }));
 
   const styleSet = boardStyles[boardStyle] ?? boardStyles[0];
   const { hiddenSquares, ghosts } = usePieceAnimation(engineState.pieces, CELL, flipped);
@@ -366,6 +575,13 @@ function ReactionBoardEditorOverlay({
     setPendingPromotion(null);
   }
 
+  // Tapping a resolved engine line plays it directly — the engine already
+  // resolved any promotion piece as part of its own best move, so there's no
+  // need to route this through the promotion picker like a manual move.
+  function playEngineMove(line: EngineLine) {
+    finishMove(line.from, line.to, line.promotion);
+  }
+
   // ---------- Arrows / circles ----------
 
   // Drawing the same arrow (same from/to) again toggles it off if the color
@@ -485,6 +701,20 @@ function ReactionBoardEditorOverlay({
     return PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
+      // In the move tool, dragging across the board never does anything —
+      // only a tap (select) followed by another tap (destination) moves a
+      // piece — so a drag that turns out to be a scroll gesture can safely
+      // be handed over to the enclosing ScrollView. Annotate mode must keep
+      // it: dragging there draws an arrow, so the ScrollView must not be
+      // able to steal it mid-gesture.
+      onPanResponderTerminationRequest: () => tool === 'move',
+      // PanResponder blocks Android's native view hierarchy (the
+      // ScrollView's own touch interception) from ever seeing the gesture
+      // by default, regardless of the JS-level termination request above —
+      // that's the actual reason scrolling was still fully dead over the
+      // board in move mode. This is the Android-specific switch that
+      // actually lets it through.
+      onShouldBlockNativeResponder: () => tool !== 'move',
       onPanResponderGrant: (evt) => {
         const { pageX, pageY } = evt.nativeEvent;
         measureGrid(() => {
@@ -625,8 +855,18 @@ function ReactionBoardEditorOverlay({
 
   function handleFlip() {
     const next: Side = side === 'front' ? 'back' : 'front';
+    // Flipping to a back that's never been touched, while the front has a
+    // real position on it, is almost always "I built the front, now let me
+    // annotate the same position on the back" — so carry the front's
+    // position/annotations/history over automatically (same as Apply to
+    // Back), rather than dropping the user onto an empty starting board.
+    if (next === 'back' && isStartingFace(board.back) && !isStartingFace(board.front)) {
+      setBoard((prev) => ({ ...prev, back: { ...cloneBoardFace(prev.front), text: prev.back.text } }));
+      setHistoryIndex(board.front.moves.length);
+    } else {
+      setHistoryIndex(board[next].moves.length);
+    }
     setSide(next);
-    setHistoryIndex(board[next].moves.length);
     setSelected(null);
     setTempArrow(null);
   }
@@ -653,7 +893,7 @@ function ReactionBoardEditorOverlay({
 
   return (
     <SafeAreaView style={styles.overlay}>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
         <View style={styles.topBar}>
           <Pressable onPress={handleCancel}>
             <Text style={styles.topBarBtn}>Cancel</Text>
@@ -664,54 +904,39 @@ function ReactionBoardEditorOverlay({
           </Pressable>
         </View>
 
-        {/* Others has a real front/back flip, so it gets two independent
-            descriptions. Reactions and Plan have only one position (Plan's
-            "back" is just where that single position/its arrows live, not
-            a second face) so they get a single Description field —
-            Reactions' shown throughout Study, Plan's alongside the plan. */}
-        {isOthers ? (
-          <>
-            <Text style={styles.fieldLabel}>Front description</Text>
-            <TextInput
-              style={styles.textArea}
-              value={board.front.text}
-              onChangeText={(text) => setBoard((prev) => ({ ...prev, front: { ...prev.front, text } }))}
-              multiline
-              placeholder="Shown in Study on the front..."
-              placeholderTextColor={colors.textDim}
-            />
-            <Text style={styles.fieldLabel}>Back description</Text>
-            <TextInput
-              style={styles.textArea}
-              value={board.back.text}
-              onChangeText={(text) => setBoard((prev) => ({ ...prev, back: { ...prev.back, text } }))}
-              multiline
-              placeholder="Shown in Study on the back..."
-              placeholderTextColor={colors.textDim}
-            />
-          </>
-        ) : (
-          <>
-            <Text style={styles.fieldLabel}>Description</Text>
-            <TextInput
-              style={styles.textArea}
-              value={isPlan ? board.back.text : board.front.text}
-              onChangeText={(text) =>
-                setBoard((prev) =>
-                  isPlan ? { ...prev, back: { ...prev.back, text } } : { ...prev, front: { ...prev.front, text } }
-                )
-              }
-              multiline
-              placeholder="Shown in Study..."
-              placeholderTextColor={colors.textDim}
-            />
-          </>
-        )}
+        {engine.element}
 
         {isOthers && (
-          <Text style={styles.sideLabel}>{side === 'front' ? 'Front' : 'Back'}</Text>
+          <Pressable
+            onPress={handleFlip}
+            style={[styles.sideLabelBtn, side === 'back' && styles.sideLabelBtnBack]}
+            hitSlop={6}
+          >
+            <Text style={styles.sideLabelText}>{side === 'front' ? 'SWITCH TO BACK' : 'SWITCH TO FRONT'}</Text>
+            <View style={side === 'back' && styles.flipIconRotated}>
+              <FlipIcon size={13} color={colors.onPrimary} />
+            </View>
+          </Pressable>
         )}
 
+        {/* One Description field for every mode — for Others it follows
+            the Flip button just like the position does (`side` is fixed to
+            'front' for Reactions and 'back' for Plan, so `activeFace`
+            already resolves to the right face in every case without
+            needing to branch on mode here). */}
+        <Text style={styles.fieldLabel}>Description</Text>
+        <TextInput
+          style={styles.textArea}
+          value={activeFace.text}
+          onChangeText={(text) => setBoard((prev) => ({ ...prev, [side]: { ...prev[side], text } }))}
+          multiline
+          placeholder="Shown in Study..."
+          placeholderTextColor={colors.textDim}
+        />
+
+        <EngineMovesRow lines={engineLines} engineState={engineState} onPlayMove={playEngineMove} />
+
+        <View style={styles.boardRow}>
         <View
           ref={gridRef}
           onLayout={() => measureGrid()}
@@ -744,11 +969,14 @@ function ReactionBoardEditorOverlay({
             })}
           </View>
           <View style={StyleSheet.absoluteFill} pointerEvents="none">
+            <NumberedArrowsSvg arrows={engineArrows} size={BOARD_SIZE} flipped={flipped} />
             <NumberedArrowsSvg arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} />
             <CirclesSvg circles={visibleCircles} size={BOARD_SIZE} flipped={flipped} />
             <NumberedArrowBadges arrows={committedNumberedArrows} size={BOARD_SIZE} flipped={flipped} />
             <PieceAnimationGhosts ghosts={ghosts} cell={CELL} />
           </View>
+        </View>
+        <EngineEvalBar lines={engineLines} flipped={flipped} height={BOARD_SIZE} />
         </View>
 
         {pendingPromotion && (
@@ -772,7 +1000,7 @@ function ReactionBoardEditorOverlay({
             top — these are the controls you reach for while actively
             drawing, not one-time setup like board style (now global). */}
         <View style={styles.row}>
-          <Text style={styles.label}>Color</Text>
+          <Text style={styles.label}>Arrow</Text>
           <View style={styles.swatchRow}>
             {ARROW_KEYS.map((color) => (
               <Pressable
@@ -795,21 +1023,6 @@ function ReactionBoardEditorOverlay({
           <Pressable onPress={clearAnnotations} style={styles.toolBtn}>
             <Text style={styles.toolBtnText}>✖</Text>
           </Pressable>
-        </View>
-
-        <View style={styles.row}>
-          <Pressable onPress={() => setTool('move')} style={[styles.toolBtn, tool === 'move' && styles.toolBtnActive]}>
-            <Text style={[styles.toolBtnText, tool === 'move' && styles.toolBtnTextActive]}>✥</Text>
-          </Pressable>
-          <View style={{ flex: 1 }} />
-          <View style={styles.navGroup}>
-            <Pressable onPress={handleBack} disabled={!canBack} style={[styles.toolBtn, !canBack && styles.stepBtnDisabled]}>
-              <Text style={styles.toolBtnText}>‹</Text>
-            </Pressable>
-            <Pressable onPress={handleForward} disabled={!canForward} style={[styles.toolBtn, !canForward && styles.stepBtnDisabled]}>
-              <Text style={styles.toolBtnText}>›</Text>
-            </Pressable>
-          </View>
         </View>
 
         {mode === 'reactions' && phase === 'playing' && (
@@ -850,13 +1063,27 @@ function ReactionBoardEditorOverlay({
         <Pressable onPress={handleReset} style={styles.resetBtn}>
           <Text style={styles.resetBtnText}>Reset board</Text>
         </Pressable>
-
-        {isOthers && (
-          <Pressable onPress={handleFlip} style={styles.flipBtn}>
-            <Text style={styles.flipBtnText}>{side === 'front' ? 'Flip to Back' : 'Flip to Front'}</Text>
-          </Pressable>
-        )}
       </ScrollView>
+
+      {/* Fixed below the ScrollView (not part of its scrollable content) and
+          padded out to the safe-area inset so the move tool is always fully
+          visible on screen the moment this editor opens, regardless of
+          device height or scroll position — no more relying on the content
+          above it happening to be short enough to fit. */}
+      <View style={[styles.footer, { paddingBottom: insets.bottom + 10 }]}>
+        <Pressable onPress={() => setTool('move')} style={[styles.toolBtn, tool === 'move' && styles.toolBtnActive]}>
+          <Text style={[styles.toolBtnText, tool === 'move' && styles.toolBtnTextActive]}>✥</Text>
+        </Pressable>
+        <View style={{ flex: 1 }} />
+        <View style={styles.navGroup}>
+          <Pressable onPress={handleBack} disabled={!canBack} style={[styles.toolBtn, !canBack && styles.stepBtnDisabled]}>
+            <Text style={styles.toolBtnText}>‹</Text>
+          </Pressable>
+          <Pressable onPress={handleForward} disabled={!canForward} style={[styles.toolBtn, !canForward && styles.stepBtnDisabled]}>
+            <Text style={styles.toolBtnText}>›</Text>
+          </Pressable>
+        </View>
+      </View>
     </SafeAreaView>
   );
 }
@@ -966,12 +1193,36 @@ export function openReactionBoardEditor(
 
 const styles = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: colors.bg },
+  scroll: { flex: 1 },
   content: { padding: 16, paddingBottom: 32 },
+  footer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    backgroundColor: colors.bg
+  },
   topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
   topBarBtn: { color: colors.textDim, ...type.body },
   saveBtn: { color: colors.accentHover, ...type.bodyStrong },
   title: { color: colors.text, ...type.h2 },
-  sideLabel: { color: colors.textDim, fontSize: 12.5, fontWeight: '700', textAlign: 'center', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
+  sideLabelBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    alignSelf: 'center',
+    backgroundColor: colors.primary,
+    borderRadius: radius.pill,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    marginBottom: 8
+  },
+  sideLabelBtnBack: { backgroundColor: colors.danger },
+  flipIconRotated: { transform: [{ rotate: '180deg' }] },
+  sideLabelText: { color: colors.onPrimary, fontSize: 12.5, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
   fieldLabel: { color: colors.textDim, fontSize: 12.5, marginBottom: 6, marginTop: 10 },
   textArea: {
     backgroundColor: colors.panel2,
@@ -994,7 +1245,8 @@ const styles = StyleSheet.create({
   toolBtnActive: { backgroundColor: colors.accent, borderColor: colors.accent },
   toolBtnText: { color: colors.text, fontSize: 18 },
   toolBtnTextActive: { color: colors.onPrimary },
-  board: { alignSelf: 'center', borderRadius: 6, overflow: 'hidden', borderWidth: 1, borderColor: colors.border, marginTop: 20 },
+  boardRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 20 },
+  board: { alignSelf: 'center', borderRadius: 6, overflow: 'hidden', borderWidth: 1, borderColor: colors.border },
   selectedHighlight: { backgroundColor: 'rgba(21,128,61,0.35)' },
   moveDot: { position: 'absolute', width: CELL * 0.28, height: CELL * 0.28, borderRadius: (CELL * 0.28) / 2, backgroundColor: 'rgba(21,128,61,0.55)' },
   captureRing: { position: 'absolute', width: CELL - 6, height: CELL - 6, borderRadius: (CELL - 6) / 2, borderWidth: 3, borderColor: 'rgba(220,38,38,0.85)' },
@@ -1009,12 +1261,10 @@ const styles = StyleSheet.create({
   infoBtn: { width: 22, height: 22, borderRadius: 11, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
   infoBtnText: { color: colors.textDim, fontSize: 13, fontWeight: '700' },
   stepBtnDisabled: { opacity: 0.4 },
-  applyBtn: { marginTop: 14, backgroundColor: colors.panel2, borderWidth: 1, borderColor: colors.border, borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
-  applyBtnText: { color: colors.text, fontSize: 14, fontWeight: '600' },
-  resetBtn: { marginTop: 14, backgroundColor: colors.panel2, borderWidth: 1, borderColor: colors.border, borderRadius: 10, paddingVertical: 13, alignItems: 'center' },
-  resetBtnText: { color: colors.text, fontSize: 15, fontWeight: '600' },
-  flipBtn: { marginTop: 10, backgroundColor: colors.primary, borderRadius: radius.pill, paddingVertical: 13, alignItems: 'center' },
-  flipBtnText: { color: colors.onPrimary, fontSize: 15, fontWeight: '700' }
+  applyBtn: { marginTop: 14, backgroundColor: colors.primary, borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
+  applyBtnText: { color: colors.onPrimary, fontSize: 14, fontWeight: '600' },
+  resetBtn: { marginTop: 14, backgroundColor: colors.danger, borderRadius: 10, paddingVertical: 13, alignItems: 'center' },
+  resetBtnText: { color: 'white', fontSize: 15, fontWeight: '600' },
 });
 
 const notationStyles = StyleSheet.create({

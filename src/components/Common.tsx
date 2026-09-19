@@ -218,6 +218,28 @@ export function TopBar({
   );
 }
 
+// A piece on the same mid-tone circle the home screen's side tiles use — the
+// cburnett art outlines in black (white pieces) or is black-filled with thin
+// white detail (black pieces), so a near-black background makes black
+// pieces vanish; this mid-tone reads both colors clearly. Use it anywhere a
+// piece stands in for a side/level outside the board.
+export function PieceBadge({ code, size }: { code: PieceCode; size: number }) {
+  return (
+    <View
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        backgroundColor: colors.pieceBadgeBg,
+        alignItems: 'center',
+        justifyContent: 'center'
+      }}
+    >
+      <PieceGlyph code={code} cell={size * 0.85} />
+    </View>
+  );
+}
+
 // `piece` shows which level's list this path leads into (Queen for
 // repertoires, Rook for openings, Knight for cards) — the same glyph used
 // for that level's row badges and empty state, so the "what am I looking
@@ -226,7 +248,7 @@ export function TopBar({
 export function Breadcrumb({ text, piece }: { text: string; piece?: PieceCode }) {
   return (
     <View style={styles.breadcrumbRow}>
-      {piece && <PieceGlyph code={piece} cell={16} />}
+      {piece && <PieceBadge code={piece} size={24} />}
       <Text style={styles.breadcrumb}>{text}</Text>
     </View>
   );

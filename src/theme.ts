@@ -106,6 +106,15 @@ export const arrowColors: Record<'green' | 'orange' | 'red' | 'blue', string> = 
   blue: '#7EB8F2'
 };
 
+// Distinct from arrowColors.blue (a paler, pastel shade meant for the
+// user's own annotations) — an engine suggestion needs to read as clearly
+// not a hand-drawn arrow, even when the board also has blue plan/other
+// arrows on it.
+export const engineColors = {
+  best: '#3B82F6',
+  alt: '#94a3b8'
+};
+
 export const boardStyles: { light: string; dark: string }[] = [
   { light: '#e9edcc', dark: '#6a9455' },
   { light: '#e8cfa4', dark: '#97643f' },

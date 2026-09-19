@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+  </head>
+  <body>
+    <script>
+      function report(text) {
+        if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(text);
+      }
+
+      window.onerror = function (message, source, lineno, colno) {
+        report('page-error: ' + message + ' (' + source + ':' + lineno + ')');
+      };
+      report('page-loaded');
+
+      var engine = null;
+
+      function xhrLoad(url, responseType, onDone, onError) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', url, true);
+        xhr.responseType = responseType;
+        xhr.timeout = 30000;
+        xhr.onload = function () {
+          // A *successful* local-file XHR reports status 0 (no real HTTP
+          // response), not 200 — treating that as failure is a common
+          // mistake that breaks this exact case.
+          if (xhr.status === 0 || xhr.status === 200) onDone(xhr.response);
+          else onError('http ' + xhr.status + ' loading ' + url);
+        };
+        xhr.onerror = function () {
+          onError('network error loading ' + url);
+        };
+        xhr.ontimeout = function () {
+          onError('timeout loading ' + url);
+        };
+        xhr.send();
+      }
+
+      report('loading-engine-file');
+
+      // ASM.js build: plain JavaScript, no WebAssembly at all — chosen
+      // specifically to sidestep a "null function" WASM runtime trap the
+      // WASM NNUE builds hit on this device (their SIMD-using code
+      // compiles/instantiates fine but faults the first time it's actually
+      // called, which points at a partial/buggy WASM SIMD implementation
+      // in this WebView). No separate binary to fetch — the whole engine
+      // is this one file. Still needs the file://-XHR + blob: URL Worker
+      // trick, though: Chromium blocks loading a Worker's script from a
+      // file:// URL outright, and this WebView can't take Cross-Origin
+      // Embedder/Opener-Policy headers to make SharedArrayBuffer usable
+      // even if a threaded build were an option.
+      xhrLoad(
+        'stockfish-18-asm.js',
+        'text',
+        function (source) {
+          report('file-loaded');
+          var blobUrl = URL.createObjectURL(new Blob([source], { type: 'application/javascript' }));
+          engine = new Worker(blobUrl);
+          engine.onmessage = function (e) {
+            report(typeof e.data === 'string' ? e.data : String(e.data));
+          };
+          engine.onerror = function (e) {
+            report('worker-error: ' + (e.message || 'worker failed to load'));
+          };
+          report('worker-created');
+        },
+        function (e) {
+          report('load-failed: ' + e);
+        }
+      );
+
+      // react-native-webview delivers RN -> page messages via a 'message'
+      // event on `document` (Android) — listening on `window` too is a
+      // harmless no-op safety net.
+      function handleMessage(e) {
+        if (engine && typeof e.data === 'string') engine.postMessage(e.data);
+      }
+      document.addEventListener('message', handleMessage);
+      window.addEventListener('message', handleMessage);
+    </script>
+  </body>
+</html>

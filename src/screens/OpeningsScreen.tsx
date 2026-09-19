@@ -11,8 +11,7 @@ import {
 } from '../storage';
 import { confirmDialog, promptDialog, anchoredMenu } from '../overlay';
 import type { Opening, PieceCode, Repertoire } from '../types';
-import { Screen, TopBar, Breadcrumb, BigButton, rowStyles } from '../components/Common';
-import { PieceGlyph } from '../components/ChessBoard';
+import { Screen, TopBar, Breadcrumb, BigButton, PieceBadge, rowStyles } from '../components/Common';
 import { colors, spacing, type } from '../theme';
 import { startStudySession } from './StudySessionOverlay';
 
@@ -70,9 +69,7 @@ function OpeningRow({
     <View style={rowStyles.row}>
       {editing ? (
         <View style={rowStyles.main}>
-          <View style={rowStyles.iconBadge}>
-            <PieceGlyph code={piece} cell={26} />
-          </View>
+          <PieceBadge code={piece} size={52} />
           <View style={{ flex: 1, minWidth: 0 }}>
             <TextInput
               ref={inputRef}
@@ -90,9 +87,7 @@ function OpeningRow({
         </View>
       ) : (
         <Pressable onPress={onPress} style={({ pressed }) => [rowStyles.main, pressed && { opacity: 0.7 }]}>
-          <View style={rowStyles.iconBadge}>
-            <PieceGlyph code={piece} cell={26} />
-          </View>
+          <PieceBadge code={piece} size={52} />
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={rowStyles.title} numberOfLines={1}>
               {title}
@@ -212,7 +207,7 @@ export function OpeningsScreen({
         // and doubles as a reminder of which side ("White"/"Black") this
         // repertoire belongs to.
         <View style={emptyStyles.wrap}>
-          <PieceGlyph code={rep.group === 'white' ? 'wR' : 'bR'} cell={emptyPieceSize} />
+          <PieceBadge code={rep.group === 'white' ? 'wR' : 'bR'} size={emptyPieceSize} />
           <Text style={emptyStyles.text}>No openings yet. Add one to get started.</Text>
         </View>
       ) : (

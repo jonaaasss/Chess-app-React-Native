@@ -3,7 +3,7 @@ import { View, Text, Pressable, StyleSheet, Animated, Easing, PanResponder, type
 import Svg, { Path } from 'react-native-svg';
 import { allSquares, flipIndex, mainLineNodes, squareFromIndex } from '../chess';
 import { legalMovesFrom, makeMove, type GameState } from '../chessEngine';
-import type { Arrow, Card, Circle, MoveNode, PieceCode } from '../types';
+import type { Arrow, Card, Circle, MoveNode, PieceCode, ReactionBoard } from '../types';
 import { boardStyles, colors, radius } from '../theme';
 import { ArrowsSvg, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, type NumberedArrow } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts, PIECE_ANIM_DURATION_MS } from '../components/PieceAnimation';
@@ -109,16 +109,28 @@ export function ReactionStudy({
   card,
   yourColor,
   boardStyle,
-  onResult
+  onResult,
+  boardRef
 }: {
   card: Card;
   yourColor: 'w' | 'b';
   boardStyle: number;
   onResult: (correct: boolean) => void;
+  boardRef?: React.MutableRefObject<ReactionBoard | null>;
 }) {
   const boards = useMemo(() => [...card.boards].sort((a, b) => a.order - b.order), [card]);
   const [boardIdx, setBoardIdx] = useState(0);
   const [ply, setPly] = useState(0);
+  // Set only while the prev/next buttons have pulled the board back to
+  // review an earlier position; null means "live" (showing `ply`, the true
+  // progress driving auto-play/solving). What's displayed is derived from
+  // the two below rather than kept as its own synced state — an earlier
+  // version mirrored `ply` into a separate state via an effect, and its
+  // state-updater read a ref that had already been overwritten by the time
+  // React ran it, so the board could stay stuck on the previous position
+  // after a move.
+  const [reviewPly, setReviewPly] = useState<number | null>(null);
+  const viewPly = reviewPly ?? ply;
   const [selected, setSelected] = useState<string | null>(null);
   const [wrongMove, setWrongMove] = useState(false);
   const [wrongMovePreview, setWrongMovePreview] = useState<Partial<Record<string, PieceCode>> | null>(null);
@@ -172,19 +184,32 @@ export function ReactionStudy({
   const board = boards[boardIdx];
   const line = useMemo(() => (board ? mainLineNodes(board.recording) : []), [board]);
 
+  // Lets the Edit button (in the parent study session chrome) jump straight
+  // into whichever board is actually on screen right now, instead of just
+  // opening the card and making you find/open the right board yourself.
+  // Written directly during render (not a useEffect, which only runs after
+  // paint and left a real gap where a fast Edit tap could still read the
+  // previous board, or null right after mount) — safe here since it's a
+  // plain ref write with no read-back that could affect this render's
+  // output.
+  if (board && boardRef) boardRef.current = board;
+
   function siblingsAt(n: number): MoveNode[] {
     if (!board) return [];
     return n === 0 ? board.recording : line[n - 1]?.children ?? [];
   }
 
+  // Driven by `viewPly`, not `ply` — the position actually shown/interacted
+  // with, which is the live position unless the prev/next buttons have
+  // stepped it back to review an earlier one (see `viewPly`'s declaration).
   const engineState: GameState = useMemo(() => {
     if (!board) return { pieces: {}, turn: 'w', castling: { wK: false, wQ: false, bK: false, bQ: false }, enPassant: null };
     let st: GameState = { pieces: board.pieces, turn: board.turn, castling: board.castling, enPassant: board.enPassant };
-    for (let i = 0; i < ply && i < line.length; i++) {
+    for (let i = 0; i < viewPly && i < line.length; i++) {
       st = makeMove(st, line[i].from, line[i].to, line[i].promotion).next;
     }
     return st;
-  }, [board, line, ply]);
+  }, [board, line, viewPly]);
 
   // Position right before the branch (base for the variant walkthrough).
   const branchState: GameState = useMemo(() => {
@@ -197,38 +222,63 @@ export function ReactionStudy({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [board, line, branchPly]);
 
-  // All recorded continuations at this branch, shortest first, for the
-  // numbered arrow display. `siblings[0]` is the line's own true
-  // continuation — it's excluded from `walkableVariants` (the ones actually
-  // played through with a rewind) since resuming the line after the
-  // showcase already plays it; walking it here too would just replay the
-  // same moves a second time.
+  // All recorded continuations at this branch, shortest first. `siblings[0]`
+  // is the line's own true continuation — it's excluded from
+  // `walkableVariants` (the ones actually played through with a rewind)
+  // since resuming the line after the showcase already plays it; walking it
+  // here too would just replay the same moves a second time.
   const sortedVariants = useMemo(() => {
     if (!inVariant) return [];
     return [...siblingsAt(branchPly)].sort((a, b) => mainLineNodes([a]).length - mainLineNodes([b]).length);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inVariant, board, line, branchPly]);
 
-  const mainlineSiblingId = board ? siblingsAt(branchPly)[0]?.id : undefined;
+  const mainlineSibling = board ? siblingsAt(branchPly)[0] : undefined;
   const walkableVariants = useMemo(
-    () => sortedVariants.filter((v) => v.id !== mainlineSiblingId),
-    [sortedVariants, mainlineSiblingId]
+    () => sortedVariants.filter((v) => v.id !== mainlineSibling?.id),
+    [sortedVariants, mainlineSibling]
+  );
+
+  // The numbered arrows must match the order they're actually walked in —
+  // every walkable variant (shortest first), then the line's own true
+  // continuation last (it's always shown last, once the showcase resumes
+  // the main line) — rather than `sortedVariants`' plain shortest-first
+  // order, which can put the mainline continuation anywhere among the
+  // numbers while it's still always walked last, numbering it out of step
+  // with when it's actually shown.
+  const orderedVariants = useMemo(
+    () => (mainlineSibling ? [...walkableVariants, mainlineSibling] : walkableVariants),
+    [walkableVariants, mainlineSibling]
   );
 
   // Once every walkable variant has been shown, `variantIdx` is pushed one
   // past the end as a sentinel: there's one last arrow flash — the actual
-  // recorded continuation (mainlineSiblingId), shown in green exactly like
+  // recorded continuation (mainlineSibling), shown in green exactly like
   // every walkable variant was — before the line resumes on it. Without
   // this, resuming the mainline sibling after the last variant's rewind
   // would skip straight to playing its move with no arrow shown at all.
   const showingMainline = variantIdx >= walkableVariants.length;
-  const currentVariant = showingMainline ? undefined : walkableVariants[variantIdx];
-  const activeArrowIdx = sortedVariants.findIndex((v) => v.id === (showingMainline ? mainlineSiblingId : currentVariant?.id));
+  // The mainline sentinel is walked through the exact same 'playing' stage
+  // as every other variant (see the two effects below) rather than a
+  // bespoke "just jump ply forward" shortcut — that shortcut used to mark
+  // the move as already played without it ever actually happening (no
+  // animation, and if it was your move to find, no chance to find it).
+  // Reusing the real playing/tap/auto-play machinery is what variants 1
+  // and 2 already rely on successfully.
+  const currentVariant = showingMainline ? mainlineSibling : walkableVariants[variantIdx];
+  const activeArrowIdx = orderedVariants.findIndex((v) => v.id === currentVariant?.id);
   const variantArrows = useMemo(
-    () => toVariantArrows(sortedVariants, activeArrowIdx),
-    [sortedVariants, activeArrowIdx]
+    () => toVariantArrows(orderedVariants, activeArrowIdx),
+    [orderedVariants, activeArrowIdx]
   );
-  const variantLine = useMemo(() => (currentVariant ? mainLineNodes([currentVariant]) : []), [currentVariant]);
+  // A real variant's showcase plays out its whole recorded subtree; the
+  // mainline sentinel must stop after exactly its one move — the rest of
+  // the line resumes through the normal ply-based flow (with its own
+  // branch detection), not through this one-off showcase.
+  const variantLine = useMemo(
+    () => (currentVariant ? (showingMainline ? [currentVariant] : mainLineNodes([currentVariant])) : []),
+    [currentVariant, showingMainline]
+  );
 
   const variantState: GameState = useMemo(() => {
     let st = branchState;
@@ -239,16 +289,23 @@ export function ReactionStudy({
   }, [branchState, variantLine, variantSubPly]);
 
   // Whichever position is "live" right now — the main line, or the variant
-  // being walked through — drives the board, taps, hint, and solution.
+  // being walked through — drives taps, hint, and solution; these stay tied
+  // to the true `ply`/`variantSubPly` regardless of what's being reviewed,
+  // since reviewing an earlier position is never itself a solving
+  // opportunity (see `isReviewing` below, which gates taps/hint/solution).
   const activeState = inVariant ? variantState : engineState;
   const activeNextMove = inVariant ? variantLine[variantSubPly] : line[ply];
   const activeMoveColor = activeNextMove ? (activeNextMove.turnAfter === 'w' ? 'b' : 'w') : null;
   const activeIsYourTurn = variantStage === 'playing' ? activeMoveColor === yourColor : inVariant ? false : activeMoveColor === yourColor;
   const activeLineDone = inVariant ? variantSubPly >= variantLine.length : !board || ply >= line.length;
+  // True while the prev/next buttons have stepped the board back to an
+  // earlier position — taps, Hint and Show solution are all suspended
+  // until you step back to the live position (or it catches back up to you).
+  const isReviewing = !inVariant && viewPly !== ply;
 
   const { arrows: visibleArrows, circles: visibleCircles } = useMemo(
-    () => (board ? activeAnnotationsAt(board, line, inVariant ? branchPly : ply) : { arrows: [], circles: [] }),
-    [board, line, ply, inVariant, branchPly]
+    () => (board ? activeAnnotationsAt(board, line, inVariant ? branchPly : viewPly) : { arrows: [], circles: [] }),
+    [board, line, viewPly, inVariant, branchPly]
   );
 
   const legalTargets = useMemo(
@@ -288,13 +345,19 @@ export function ReactionStudy({
     return () => clearTimeout(t);
   }, [inVariant, ply, activeIsYourTurn, activeLineDone]);
 
-  // Board finished → next board, or the whole card is done.
+  // Board finished → next board, or the whole card is done. Held off
+  // entirely while reviewing (see `isReviewing`) — stepping back to look at
+  // the completed line must actually give time to look at it, not just
+  // delay the inevitable by `AUTO_ADVANCE_DELAY_MS`. Returning to the live
+  // position (or letting it catch back up) re-triggers this effect and the
+  // advance proceeds from there.
   useEffect(() => {
-    if (inVariant || !activeLineDone) return;
+    if (inVariant || !activeLineDone || isReviewing) return;
     if (boardIdx < boards.length - 1) {
       const t = setTimeout(() => {
         setBoardIdx((i) => i + 1);
         setPly(0);
+        setReviewPly(null);
         setSelected(null);
         setHintOn(false);
         setShownBranches(new Set());
@@ -302,31 +365,34 @@ export function ReactionStudy({
       return () => clearTimeout(t);
     }
     setAllDone(true);
-  }, [inVariant, activeLineDone, boardIdx, boards.length]);
+  }, [inVariant, activeLineDone, isReviewing, boardIdx, boards.length]);
 
-  // Variant intro: show the numbered arrows briefly, then either start
-  // playing that variant, or — for the sentinel "mainline" flash after the
-  // last one — resume the main line directly (there's no separate variant
-  // to play/rewind for it; the normal main-line auto-play effect takes it
-  // from here once `inVariant` goes false).
+  // Variant intro: show the numbered arrows briefly, then start playing —
+  // uniformly for a real variant and for the mainline sentinel alike (see
+  // `variantLine`/the playing effect below for how the sentinel's single
+  // move gets committed instead of rewound).
   useEffect(() => {
     if (variantStage !== 'intro') return;
-    const t = setTimeout(() => {
-      if (showingMainline) {
-        setVariantStage('none');
-        setVariantArrowsVisible(false);
-        setPly(branchPly + 1);
-      } else {
-        setVariantStage('playing');
-      }
-    }, VARIANT_INTRO_MS);
+    const t = setTimeout(() => setVariantStage('playing'), VARIANT_INTRO_MS);
     return () => clearTimeout(t);
-  }, [variantStage, variantIdx, showingMainline, branchPly]);
+  }, [variantStage]);
 
-  // Variant playing: auto-play its opponent moves; when it ends, pause then rewind.
+  // Variant playing: auto-play its opponent moves; when it ends, either
+  // pause then rewind (a real, truly-alternate variant) or — for the
+  // mainline sentinel, which is never rewound — pause then commit its move
+  // straight into the real `ply` and exit variant mode, letting the normal
+  // ply-based flow (with its own branch detection) resume from there.
   useEffect(() => {
     if (variantStage !== 'playing') return;
     if (activeLineDone) {
+      if (showingMainline) {
+        const t = setTimeout(() => {
+          setVariantStage('none');
+          setVariantArrowsVisible(false);
+          setPly(branchPly + variantLine.length);
+        }, VARIANT_REWIND_PAUSE_MS);
+        return () => clearTimeout(t);
+      }
       const t = setTimeout(() => setVariantStage('rewinding'), VARIANT_REWIND_PAUSE_MS);
       return () => clearTimeout(t);
     }
@@ -338,7 +404,7 @@ export function ReactionStudy({
       }, AUTO_ADVANCE_DELAY_MS);
       return () => clearTimeout(t);
     }
-  }, [variantStage, activeLineDone, activeIsYourTurn]);
+  }, [variantStage, activeLineDone, activeIsYourTurn, showingMainline, branchPly, variantLine.length]);
 
   // Spin the rewind icon for as long as the whole rewinding stage lasts —
   // kept in its own effect, keyed only on variantStage, so the loop plays
@@ -383,7 +449,7 @@ export function ReactionStudy({
 
   function handleSquareTap(sq: string) {
     if (inVariant && variantStage !== 'playing') return;
-    if (!activeIsYourTurn || activeLineDone || wrongMove) return;
+    if (isReviewing || !activeIsYourTurn || activeLineDone || wrongMove) return;
     if (!selected) {
       const p = activeState.pieces[sq];
       if (p && p[0] === activeState.turn) setSelected(sq);
@@ -424,7 +490,7 @@ export function ReactionStudy({
   }
 
   function showSolution() {
-    if (!activeIsYourTurn || activeLineDone) return;
+    if (isReviewing || !activeIsYourTurn || activeLineDone) return;
     if (inVariant) {
       setVariantSubPly((p) => p + 1);
       setVariantArrowsVisible(false);
@@ -434,6 +500,29 @@ export function ReactionStudy({
     setSelected(null);
     setHintOn(false);
     setMistakes((m) => m + 1);
+  }
+
+  // Prev/next let you step back through the main line to review an earlier
+  // position (and forward again, up to the live position) — inert during
+  // the variant walkthrough, which is its own fully automatic showcase.
+  const canStepReview = !inVariant;
+  const canGoPrev = canStepReview && viewPly > 0;
+  const canGoNext = canStepReview && viewPly < ply;
+
+  function handlePrevMove() {
+    if (!canGoPrev) return;
+    setReviewPly(viewPly - 1);
+    setSelected(null);
+    setHintOn(false);
+  }
+
+  function handleNextMove() {
+    if (!canGoNext) return;
+    // Stepping forward onto the live position means you're no longer
+    // reviewing — back to null so the view follows `ply` again.
+    setReviewPly(viewPly + 1 >= ply ? null : viewPly + 1);
+    setSelected(null);
+    setHintOn(false);
   }
 
   // The PanResponder below is created once (via useRef) so claiming the
@@ -465,20 +554,17 @@ export function ReactionStudy({
 
   const styleSet = boardStyles[boardStyle] ?? boardStyles[0];
   const hintCircles = hintOn && activeIsYourTurn && activeNextMove ? [{ square: activeNextMove.from, color: 'green' as const }] : [];
-  const playedSans = line.slice(0, ply).map((n) => n.san);
+  const playedSans = line.slice(0, viewPly).map((n) => n.san);
   const notationParts = playedSans.length > 0 ? formatNotationParts(playedSans, line[0].turnAfter === 'b', yourColor) : [];
   const showVariantArrows = variantArrowsVisible;
 
-  // The intro's numbered arrows already say "here are your options" — no
-  // need for a redundant "Variation X/Y" label on top; during intro it's
-  // always about to be the opponent's reply, so just say that. The
-  // mainline flash is also an "intro" of sorts (`activeLineDone` reads true
-  // for it since there's no variant line behind it) so it needs the same
-  // carve-out to avoid claiming the variation is already "complete".
-  const isMainlineFlash = variantStage === 'intro' && showingMainline;
-  const statusText = isMainlineFlash
-    ? "Opponent's move…"
-    : variantStage === 'rewinding'
+  // `activeIsYourTurn` is forced false during 'intro' (see its definition)
+  // regardless of whose move is about to be shown, so this already reads
+  // "Opponent's move…" throughout every intro flash — a real variant's and
+  // the mainline sentinel's alike — without needing a special case for
+  // either.
+  const statusText =
+    variantStage === 'rewinding'
       ? 'Rewinding…'
       : activeLineDone
         ? inVariant
@@ -488,7 +574,7 @@ export function ReactionStudy({
           ? 'Your move'
           : "Opponent's move…";
   const statusColor =
-    isMainlineFlash || (!activeLineDone && variantStage !== 'rewinding')
+    !activeLineDone && variantStage !== 'rewinding'
       ? activeIsYourTurn
         ? colors.primary
         : colors.danger
@@ -557,6 +643,20 @@ export function ReactionStudy({
         )}
       </View>
 
+      {/* Step back/forward through the main line to review it — always
+          shown, including once the line is complete or the whole card is
+          done, since reviewing what just happened is exactly when this is
+          most useful. Inert during the variant walkthrough, which is its
+          own automatic showcase. */}
+      <View style={styles.navRow}>
+        <Pressable onPress={handlePrevMove} disabled={!canGoPrev} style={[styles.navBtn, !canGoPrev && styles.navBtnDisabled]}>
+          <Text style={styles.navBtnText}>‹</Text>
+        </Pressable>
+        <Pressable onPress={handleNextMove} disabled={!canGoNext} style={[styles.navBtn, !canGoNext && styles.navBtnDisabled]}>
+          <Text style={styles.navBtnText}>›</Text>
+        </Pressable>
+      </View>
+
       {notationParts.length > 0 ? (
         <Text style={styles.notation}>
           {notationParts.map((part, i) => (
@@ -572,15 +672,15 @@ export function ReactionStudy({
           <View style={styles.actionRow}>
             <Pressable
               onPress={() => setHintOn(true)}
-              disabled={!activeIsYourTurn || activeLineDone || (inVariant && variantStage !== 'playing')}
-              style={[styles.actionBtn, styles.hintBtn, (!activeIsYourTurn || activeLineDone) && styles.actionDisabled]}
+              disabled={isReviewing || !activeIsYourTurn || activeLineDone || (inVariant && variantStage !== 'playing')}
+              style={[styles.actionBtn, styles.hintBtn, (isReviewing || !activeIsYourTurn || activeLineDone) && styles.actionDisabled]}
             >
               <Text style={styles.hintText}>Hint</Text>
             </Pressable>
             <Pressable
               onPress={showSolution}
-              disabled={!activeIsYourTurn || activeLineDone || (inVariant && variantStage !== 'playing')}
-              style={[styles.actionBtn, styles.solutionBtn, (!activeIsYourTurn || activeLineDone) && styles.actionDisabled]}
+              disabled={isReviewing || !activeIsYourTurn || activeLineDone || (inVariant && variantStage !== 'playing')}
+              style={[styles.actionBtn, styles.solutionBtn, (isReviewing || !activeIsYourTurn || activeLineDone) && styles.actionDisabled]}
             >
               <Text style={styles.solutionText}>Show solution</Text>
             </Pressable>
@@ -608,6 +708,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(15,23,42,0.55)'
   },
+  navRow: { flexDirection: 'row', gap: 10 },
+  navBtn: { width: 40, height: 40, borderRadius: 10, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel2, alignItems: 'center', justifyContent: 'center' },
+  navBtnDisabled: { opacity: 0.4 },
+  navBtnText: { color: colors.text, fontSize: 18 },
   notation: { color: colors.textDim, fontSize: 13, textAlign: 'center', paddingHorizontal: 12 },
   notationYours: { color: colors.primary, fontWeight: '700' },
   wrongText: { color: colors.danger, fontSize: 13, fontWeight: '700' },

@@ -11,10 +11,10 @@ import { openReactionBoardEditor } from './ReactionBoardEditorOverlay';
 const MAX_BOARDS = 6;
 const PREVIEW_SIZE = 148;
 
-// The card's board section for BOTH modes: up to 6 boards in 2 columns,
-// filled row-major (board 1,3,5 in column 1; 2,4,6 in column 2). Each tile
-// opens the editor for that mode on tap; "Others" also shows the reminder
-// that its front and back boards stay in sync.
+// The card's board section for all three modes: up to 6 boards in 2
+// columns, filled row-major (board 1,3,5 in column 1; 2,4,6 in column 2).
+// Each tile opens the editor for that mode on tap; a mode-specific hint
+// above the grid explains whatever isn't obvious from the boards alone.
 export function BoardsGrid({
   mode,
   boards,
@@ -63,6 +63,31 @@ export function BoardsGrid({
 
   return (
     <View>
+      {mode === 'reactions' && (
+        <View style={styles.hint}>
+          <Text style={styles.hintIcon}>ⓘ</Text>
+          <Text style={styles.hintText}>
+            {'1) Set up your starting position.\n2) Press "Play" and play out the moves you want to study (you can practice multiple variations by going back to a move and playing a different move).\n3) While studying, the opponent\'s moves will be played automatically and you have to find the move you recorded.'}
+          </Text>
+        </View>
+      )}
+      {mode === 'others' && (
+        <View style={styles.hint}>
+          <Text style={styles.hintIcon}>ⓘ</Text>
+          <Text style={styles.hintText}>
+            {'1) Set up your position on the front side.\n2) Flip to back and make some moves and/or draw arrows.\n3) While studying, you will see the front side. Once you tap the card, it will flip to the back and you mark whether you were correct or not.'}
+          </Text>
+        </View>
+      )}
+      {mode === 'plan' && (
+        <View style={styles.hint}>
+          <Text style={styles.hintIcon}>ⓘ</Text>
+          <Text style={styles.hintText}>
+            {'1) Set up your position.\n2) Draw arrows which is the general plan in the position.\n3) While studying, you will find the exact position but without arrows which you will have to draw yourself.'}
+          </Text>
+        </View>
+      )}
+
       <View style={styles.grid}>
         {sorted.map((board) => {
           // The grid preview is a management view, not Study — it always
@@ -106,16 +131,6 @@ export function BoardsGrid({
         </Pressable>
       )}
 
-      {mode === 'others' && (
-        <Text style={styles.reminder}>
-          Front and back are edited separately now — flip inside the board editor, or use "Apply to Back" to copy one onto the other.
-        </Text>
-      )}
-      {mode === 'plan' && (
-        <Text style={styles.reminder}>
-          Each board needs at least one arrow — it's hidden in Study and you'll draw it yourself.
-        </Text>
-      )}
     </View>
   );
 }
@@ -146,5 +161,20 @@ const styles = StyleSheet.create({
     marginTop: 8
   },
   addBoardText: { color: colors.textDim, fontSize: 14 },
-  reminder: { color: colors.textDim, fontSize: 12, marginTop: 10, textAlign: 'center' }
+  hint: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.accent,
+    borderRadius: radius.md,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 12
+  },
+  hintIcon: { color: colors.accent, fontSize: 13, fontWeight: '700' },
+  hintText: { color: colors.text, fontSize: 12.5, fontWeight: '500', flex: 1, lineHeight: 17 }
 });

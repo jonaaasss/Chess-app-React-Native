@@ -65,6 +65,7 @@ export interface NumberedArrow {
   to: string;
   color: string; // resolved hex/rgba, not an ArrowColor key — callers may use non-palette colors (e.g. Study's green/red)
   number?: number; // omit to draw the arrow without a badge
+  width?: number; // stroke width in board-square units; defaults to the standard 0.16 (e.g. engine best-move arrows go slightly thicker)
 }
 
 // Same thin-line arrow look as the board editor's plain ArrowsSvg — used
@@ -103,7 +104,7 @@ export function NumberedArrowsSvg({ arrows, size, flipped = false }: { arrows: N
             x2={x2}
             y2={y2}
             stroke={a.color}
-            strokeWidth={0.16}
+            strokeWidth={a.width ?? 0.16}
             strokeLinecap="round"
             opacity={0.9}
             markerEnd={`url(#numbered-head-${a.id})`}

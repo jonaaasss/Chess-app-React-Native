@@ -3,7 +3,7 @@ import { View, Text, Pressable, StyleSheet, PanResponder, type PanResponderInsta
 import { allSquares, flipIndex, squareFromIndex } from '../chess';
 import type { Arrow, ArrowColor, Card, ReactionBoard } from '../types';
 import { arrowColors, boardStyles, colors, radius } from '../theme';
-import { CirclesSvg, PieceGlyph, NumberedArrowsSvg, type NumberedArrow } from '../components/ChessBoard';
+import { CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, type NumberedArrow } from '../components/ChessBoard';
 
 // A wrong arrow flashes briefly before it's removed — long enough to
 // register as "that's what I drew", short enough not to block retrying.
@@ -32,6 +32,25 @@ function buildColorGroups(arrows: Arrow[]): ColorGroup[] {
   );
 }
 
+// The badge number an arrow shows in the board editor is its position
+// within its own same-color group there (only shown once a color is used
+// 2+ times) — keyed by from/to/color so a drawn arrow in Study can look up
+// the exact same number instead of just numbering by the order you find
+// them in, which would rarely match.
+function editorArrowNumbers(arrows: Arrow[]): Map<string, number> {
+  const countByColor: Partial<Record<ArrowColor, number>> = {};
+  for (const a of arrows) countByColor[a.color] = (countByColor[a.color] ?? 0) + 1;
+  const seenByColor: Partial<Record<ArrowColor, number>> = {};
+  const numbers = new Map<string, number>();
+  for (const a of arrows) {
+    const seen = (seenByColor[a.color] = (seenByColor[a.color] ?? 0) + 1);
+    if ((countByColor[a.color] ?? 0) > 1) {
+      numbers.set(`${a.from}-${a.to}-${a.color}`, seen);
+    }
+  }
+  return numbers;
+}
+
 // Interactive Plan study: the position is shown bare (no arrows/circles —
 // Study hides what the editor drew) and you have to draw the plan's arrows
 // yourself, one color group at a time in the fixed green→orange→red→blue
@@ -45,12 +64,14 @@ export function PlanStudy({
   card,
   yourColor,
   boardStyle,
-  onResult
+  onResult,
+  boardRef
 }: {
   card: Card;
   yourColor: 'w' | 'b';
   boardStyle: number;
   onResult: (correct: boolean) => void;
+  boardRef?: React.MutableRefObject<ReactionBoard | null>;
 }) {
   const boards = useMemo(() => [...card.boards].sort((a, b) => a.order - b.order), [card]);
   const [boardIdx, setBoardIdx] = useState(0);
@@ -64,11 +85,23 @@ export function PlanStudy({
   const [tempArrow, setTempArrow] = useState<{ from: string; to: string } | null>(null);
 
   const board: ReactionBoard | undefined = boards[boardIdx];
+
+  // Lets the Edit button (in the parent study session chrome) jump straight
+  // into whichever board is actually on screen right now, instead of just
+  // opening the card and making you find/open the right board yourself.
+  // Written directly during render (not a useEffect, which only runs after
+  // paint and left a real gap where a fast Edit tap could still read the
+  // previous board, or null right after mount) — safe here since it's a
+  // plain ref write with no read-back that could affect this render's
+  // output.
+  if (board && boardRef) boardRef.current = board;
+
   // A Plan board has one position — `back` is just where it (and its
   // arrows/circles/description) lives, not a second face. Its arrows are
   // the plan you have to reproduce; its circles are decorative context
   // revealed only once the board is solved.
   const colorGroups = useMemo(() => (board ? buildColorGroups(board.back.arrows) : []), [board]);
+  const arrowNumbers = useMemo(() => editorArrowNumbers(board ? board.back.arrows : []), [board]);
 
   const gridRef = useRef<View>(null);
   const gridOrigin = useRef({ x: 0, y: 0 });
@@ -191,7 +224,8 @@ export function PlanStudy({
       id: `${a.from}-${a.to}-${i}`,
       from: a.from,
       to: a.to,
-      color: arrowColors[a.color]
+      color: arrowColors[a.color],
+      number: arrowNumbers.get(`${a.from}-${a.to}-${a.color}`)
     }));
     if (wrongArrow) {
       list.push({ id: 'wrong', from: wrongArrow.from, to: wrongArrow.to, color: colors.danger });
@@ -200,7 +234,7 @@ export function PlanStudy({
       list.push({ id: 'preview', from: tempArrow.from, to: tempArrow.to, color: previewColor });
     }
     return list;
-  }, [drawnArrows, wrongArrow, tempArrow, colorGroups, groupIdx]);
+  }, [drawnArrows, wrongArrow, tempArrow, colorGroups, groupIdx, arrowNumbers]);
 
   if (!board) {
     return <Text style={{ color: colors.textDim }}>This card has no boards to study.</Text>;
@@ -243,6 +277,7 @@ export function PlanStudy({
         </View>
         <View style={StyleSheet.absoluteFill} pointerEvents="none">
           <NumberedArrowsSvg arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} />
+          <NumberedArrowBadges arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} />
           {boardDone && board.back.circles.length > 0 && <CirclesSvg circles={board.back.circles} size={BOARD_SIZE} flipped={flipped} />}
         </View>
       </View>

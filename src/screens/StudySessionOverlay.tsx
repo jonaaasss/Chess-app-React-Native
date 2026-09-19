@@ -1,13 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { getBoardStyle, getCard, getCards, getOpening, getRepertoire, getSetting } from '../storage';
+import { getBoardStyle, getCard, getCards, getOpening, getRepertoire, getSetting, saveCard } from '../storage';
 import { showOverlay } from '../overlay';
-import type { Card } from '../types';
+import type { Card, ReactionBoard } from '../types';
 import { colors, radius, type } from '../theme';
 import { ChessBoardView } from '../components/ChessBoard';
 import { BackCircleButton, EditCircleButton } from '../components/Common';
 import { openCardEditor } from './CardEditorOverlay';
+import { openReactionBoardEditor } from './ReactionBoardEditorOverlay';
 import { ReactionStudy } from './ReactionStudy';
 import { PlanStudy } from './PlanStudy';
 
@@ -83,6 +84,16 @@ function StudySessionOverlay({
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [card, setCard] = useState<Card | null>(null);
+  // Whichever board Reactions/Plan's own internal progression is currently
+  // showing — written synchronously during the child's render (not via a
+  // useEffect, which only fires after paint and left a real gap where a
+  // fast Edit tap could still find this null) — so Edit can jump straight
+  // into that exact board instead of the card's board list. Others mode
+  // shows every board of the card at once (no single "current" one), so it
+  // stays null there and Edit falls back to opening the card. A ref, not
+  // state: it's read imperatively on Edit and never needs to itself trigger
+  // a re-render.
+  const currentBoardRef = useRef<ReactionBoard | null>(null);
   const [openingName, setOpeningName] = useState('');
   const [yourColor, setYourColor] = useState<'w' | 'b'>('w');
   const [boardStyle, setBoardStyle] = useState(0);
@@ -113,6 +124,7 @@ function StudySessionOverlay({
   useEffect(() => {
     if (!item) return;
     setFlipped(false);
+    currentBoardRef.current = null;
     (async () => {
       const c = await getCard(item.cardId);
       if (!c) {
@@ -157,6 +169,20 @@ function StudySessionOverlay({
 
   async function handleEditCard() {
     if (!card) return;
+    // Reactions/Plan show one board at a time — jump straight into whatever
+    // board is actually on screen right now instead of the card's board
+    // list, which would otherwise make you go find and open it yourself.
+    // Others has no single "current" board (every board is shown at once),
+    // so it always falls through to the card editor below.
+    if ((card.mode === 'reactions' || card.mode === 'plan') && currentBoardRef.current) {
+      const updated = await openReactionBoardEditor(currentBoardRef.current, card.mode, yourColor, boardStyle);
+      if (!updated) return;
+      const updatedCard = { ...card, boards: card.boards.map((b) => (b.id === updated.id ? updated : b)) };
+      await saveCard(updatedCard);
+      setCard(updatedCard);
+      currentBoardRef.current = updated;
+      return;
+    }
     const result = await openCardEditor(card.id);
     if (result.deleted) {
       advance(null);
@@ -258,6 +284,7 @@ function StudySessionOverlay({
               yourColor={yourColor}
               boardStyle={boardStyle}
               onResult={(correct) => advance(correct ? null : item)}
+              boardRef={currentBoardRef}
             />
           </View>
         ) : card.mode === 'plan' ? (
@@ -268,6 +295,7 @@ function StudySessionOverlay({
               yourColor={yourColor}
               boardStyle={boardStyle}
               onResult={(correct) => advance(correct ? null : item)}
+              boardRef={currentBoardRef}
             />
           </View>
         ) : (
