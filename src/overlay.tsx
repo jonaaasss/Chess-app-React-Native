@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Modal, View, Text, TextInput, StyleSheet, Pressable, Dimensions } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
-import { colors, radius, spacing, type } from './theme';
+import { colors, radius, spacing, touchTarget, type } from './theme';
 import { TutorialLayer, useTutorial, useTutorialTarget } from './tutorial';
 import type { TutorialSurface } from './tutorialContent';
 
@@ -324,7 +324,7 @@ function AnchoredMenu({
             hitSlop={6}
             style={({ pressed }) => [anchoredStyles.item, pressed && styles.btnPressed]}
           >
-            <Text style={anchoredStyles.itemText}>{opt}</Text>
+            <Text style={[anchoredStyles.itemText, /^delete/i.test(opt) && anchoredStyles.itemTextDanger]}>{opt}</Text>
           </Pressable>
         ))}
       </View>
@@ -338,10 +338,12 @@ const anchoredStyles = StyleSheet.create({
     alignItems: 'flex-end'
   },
   item: {
-    paddingVertical: 10,
+    minHeight: touchTarget,
+    justifyContent: 'center',
     paddingHorizontal: 14
   },
-  itemText: { color: colors.textPrimary, fontSize: 15, fontWeight: '600' }
+  itemText: { color: colors.textPrimary, fontSize: 15, fontWeight: '600' },
+  itemTextDanger: { color: colors.dangerText }
 });
 
 export function anchoredMenu(options: string[], anchor: AnchorRect): Promise<string | null> {

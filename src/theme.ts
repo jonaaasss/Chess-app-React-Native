@@ -34,6 +34,8 @@ export const colors = {
   danger: '#dc2626',
   onDanger: '#ffffff',
   dangerPressed: '#b91c1c',
+  // Danger as text on the dark background (the solid red above is for fills).
+  dangerText: '#F27C7C',
 
   evalRight: '#15803d',
   evalWrong: '#dc2626',

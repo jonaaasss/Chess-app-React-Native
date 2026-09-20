@@ -11,47 +11,49 @@ import {
   getShowFirstOpeningGuide,
   setShowFirstOpeningGuide
 } from '../storage';
-import { boardStyles, colors, type } from '../theme';
+import { boardStyles, colors, touchTarget, type } from '../theme';
 import { Screen, TopBar } from '../components/Common';
 
-const SHUFFLE_TOOLTIP =
-  'When enabled, the cards within each opening are shuffled during study — the order of openings in a full repertoire session is always randomized.';
+const SHUFFLE_DESCRIPTION =
+  'Shuffles the cards within each opening while you study. In a whole-repertoire session the openings are always shuffled.';
 
-const MULTIPLE_REPERTOIRES_TOOLTIP =
-  'Almost nobody needs more than one repertoire per side, so that list is skipped by default. Turn this on to always see it — useful once you actually have more than one.';
+const MULTIPLE_REPERTOIRES_DESCRIPTION =
+  'Always show the list of repertoires per side, so you can add a second one. Off: you go straight to your only repertoire.';
 
-const FIRST_OPENING_TOOLTIP =
-  'The two orange beginner buttons on the home screen: one walks you through two example cards (a Reactions card and a Plan card) of the Italian Game, the other guides you through making your own first card. You can hide them there once you no longer need them, and bring them back here.';
+const FIRST_OPENING_DESCRIPTION =
+  'The two orange buttons on Home: one walks you through two example cards, the other helps you make your first card.';
 
+// One name per entry in `boardStyles`, in the same order.
+const BOARD_STYLE_NAMES = ['Green', 'Brown', 'Slate'];
+
+// The whole row is the switch: tapping the label or its description toggles
+// too, not just the small switch itself.
 function ToggleRow({
   label,
   value,
   onToggle,
-  tooltip
+  description
 }: {
   label: string;
   value: boolean;
   onToggle: () => void;
-  tooltip: string;
+  description: string;
 }) {
-  const [showTooltip, setShowTooltip] = useState(false);
   return (
-    <View style={{ marginBottom: 20 }}>
-      <View style={styles.row}>
+    <Pressable
+      onPress={onToggle}
+      accessibilityRole="switch"
+      accessibilityState={{ checked: value }}
+      style={({ pressed }) => [styles.toggleRow, pressed && styles.toggleRowPressed]}
+    >
+      <View style={{ flex: 1 }}>
         <Text style={styles.label}>{label}</Text>
-        <Pressable onPress={() => setShowTooltip((v) => !v)} hitSlop={12} style={{ padding: 6 }}>
-          <Text style={{ color: colors.textDim, fontSize: 16 }}>ⓘ</Text>
-        </Pressable>
-        <Pressable onPress={onToggle} hitSlop={10} style={[styles.toggle, value && styles.toggleOn]}>
-          <View style={[styles.toggleThumb, value && styles.toggleThumbOn]} />
-        </Pressable>
+        <Text style={styles.description}>{description}</Text>
       </View>
-      {showTooltip && (
-        <View style={styles.tooltip}>
-          <Text style={styles.tooltipText}>{tooltip}</Text>
-        </View>
-      )}
-    </View>
+      <View style={[styles.toggle, value && styles.toggleOn]}>
+        <View style={[styles.toggleThumb, value && styles.toggleThumbOn]} />
+      </View>
+    </Pressable>
   );
 }
 
@@ -100,34 +102,34 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
   return (
     <Screen>
       <TopBar title="Settings" onBack={onBack} />
-      <ToggleRow label="Shuffle" value={shuffleOn} onToggle={toggleShuffle} tooltip={SHUFFLE_TOOLTIP} />
+      <ToggleRow label="Shuffle cards" value={shuffleOn} onToggle={toggleShuffle} description={SHUFFLE_DESCRIPTION} />
       <ToggleRow
         label="Show multiple repertoires"
         value={showMultiple}
         onToggle={toggleShowMultiple}
-        tooltip={MULTIPLE_REPERTOIRES_TOOLTIP}
+        description={MULTIPLE_REPERTOIRES_DESCRIPTION}
       />
       <ToggleRow
         label="Show beginner guide buttons"
         value={showGuide}
         onToggle={toggleShowGuide}
-        tooltip={FIRST_OPENING_TOOLTIP}
+        description={FIRST_OPENING_DESCRIPTION}
       />
 
-      <Text style={styles.label}>Board style</Text>
+      <Text style={[styles.label, { marginTop: 8 }]}>Board style</Text>
       <Text style={styles.boardStyleHint}>Applies to every board's chessboard, everywhere in the app.</Text>
       <View style={styles.swatchRow}>
         {boardStyles.map((s, idx) => (
-          <Pressable
-            key={idx}
-            onPress={() => pickBoardStyle(idx)}
-            hitSlop={6}
-            style={[styles.styleSwatch, boardStyle === idx && styles.styleSwatchActive]}
-          >
-            {[0, 1, 2, 3].map((cell) => {
-              const isLight = cell === 0 || cell === 3;
-              return <View key={cell} style={{ width: '50%', height: '50%', backgroundColor: isLight ? s.light : s.dark }} />;
-            })}
+          <Pressable key={idx} onPress={() => pickBoardStyle(idx)} style={styles.swatchItem}>
+            <View style={[styles.styleSwatch, boardStyle === idx && styles.styleSwatchActive]}>
+              {[0, 1, 2, 3].map((cell) => {
+                const isLight = cell === 0 || cell === 3;
+                return <View key={cell} style={{ width: '50%', height: '50%', backgroundColor: isLight ? s.light : s.dark }} />;
+              })}
+            </View>
+            <Text style={[styles.swatchName, boardStyle === idx && styles.swatchNameActive]}>
+              {BOARD_STYLE_NAMES[idx] ?? `Style ${idx + 1}`}
+            </Text>
           </Pressable>
         ))}
       </View>
@@ -136,26 +138,28 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
 }
 
 const styles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  label: { color: colors.text, ...type.bodyStrong, fontSize: 16, flex: 1 },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    minHeight: 56,
+    paddingVertical: 10,
+    marginBottom: 12,
+    borderRadius: 10
+  },
+  toggleRowPressed: { opacity: 0.7 },
+  label: { color: colors.text, ...type.bodyStrong, fontSize: 16 },
+  description: { color: colors.textDim, ...type.caption, marginTop: 3 },
   toggle: { width: 46, height: 26, borderRadius: 13, backgroundColor: colors.border, justifyContent: 'center' },
   toggleOn: { backgroundColor: colors.accent },
   toggleThumb: { width: 20, height: 20, borderRadius: 10, backgroundColor: 'white', marginLeft: 3 },
   toggleThumbOn: { marginLeft: 23 },
-  tooltip: {
-    backgroundColor: colors.panel2,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    padding: 12,
-    marginTop: 8
-  },
-  tooltipText: { color: colors.textDim, ...type.caption },
-  boardStyleHint: { color: colors.textDim, ...type.caption, marginTop: -4, marginBottom: 10 },
-  swatchRow: { flexDirection: 'row', gap: 10 },
+  boardStyleHint: { color: colors.textDim, ...type.caption, marginTop: 2, marginBottom: 10 },
+  swatchRow: { flexDirection: 'row', gap: 16 },
+  swatchItem: { alignItems: 'center', gap: 6, minHeight: touchTarget },
   styleSwatch: {
-    width: 40,
-    height: 40,
+    width: touchTarget,
+    height: touchTarget,
     borderRadius: 8,
     borderWidth: 2,
     borderColor: 'transparent',
@@ -163,5 +167,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap'
   },
-  styleSwatchActive: { borderColor: colors.accent }
+  styleSwatchActive: { borderColor: colors.accent },
+  swatchName: { color: colors.textDim, ...type.caption },
+  swatchNameActive: { color: colors.text }
 });

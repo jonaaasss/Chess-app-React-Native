@@ -163,7 +163,7 @@ function MoveDuplicateOverlay({ card, close }: { card: Card; close: (result: Res
         <Text style={styles.sectionLabel}>Choose destination</Text>
 
         <DropdownField
-          label="Group"
+          label="Side"
           value={selectedGroup === 'white' ? 'White' : 'Black'}
           icon={selectedGroup === 'white' ? '♔' : '♚'}
           onPress={handlePickGroup}
@@ -189,7 +189,7 @@ function MoveDuplicateOverlay({ card, close }: { card: Card; close: (result: Res
         />
 
         <Pressable onPress={handleConfirm} style={styles.confirmBtn}>
-          <Text style={styles.confirmBtnText}>Confirm</Text>
+          <Text style={styles.confirmBtnText}>{mode === 'move' ? 'Move card' : 'Duplicate card'}</Text>
         </Pressable>
       </ScrollView>
     </SafeAreaView>

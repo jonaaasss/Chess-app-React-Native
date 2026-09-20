@@ -9,7 +9,7 @@ import {
   setShowFirstOpeningGuide
 } from '../storage';
 import type { GroupId, PieceCode } from '../types';
-import { colors, radius, spacing, type } from '../theme';
+import { colors, radius, spacing, touchTarget, type } from '../theme';
 import { BigButton, Screen, SettingsCircleButton } from '../components/Common';
 import { PieceGlyph } from '../components/ChessBoard';
 import { startGuideSession } from './StudySessionOverlay';
@@ -101,6 +101,7 @@ export function HomeScreen({
               <Text style={styles.tileSub}>
                 {s.repertoires} repertoire{s.repertoires === 1 ? '' : 's'} · {s.openings} opening
                 {s.openings === 1 ? '' : 's'} · {s.cards} card{s.cards === 1 ? '' : 's'}
+                {exampleHidden ? '' : ' · incl. example'}
               </Text>
             </View>
             <View style={styles.chevronCircle}>
@@ -170,6 +171,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center'
   },
   tileChevron: { color: colors.text, fontSize: 18 },
-  exampleBtn: { alignItems: 'center', paddingVertical: 14, marginTop: spacing.md },
+  exampleBtn: { alignItems: 'center', justifyContent: 'center', minHeight: touchTarget, marginTop: spacing.md },
   exampleBtnText: { color: colors.textDim, ...type.caption, textDecorationLine: 'underline' }
 });

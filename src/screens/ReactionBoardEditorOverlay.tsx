@@ -1057,7 +1057,7 @@ function ReactionBoardEditorOverlay({
   async function handleSave() {
     if (mode === 'plan' && board.back.arrows.length === 0) {
       await alertDialog(
-        'A Plan board needs at least one arrow on its back — that arrow is the plan you\'ll have to reproduce in Study. If you don\'t want to use arrows here, switch this card to "Others" mode instead.'
+        'A Plan board needs at least one arrow on its back — that arrow is the plan you\'ll have to reproduce in Study. If you don\'t want to use arrows here, switch this card to "Front & back" mode instead.'
       );
       return;
     }
@@ -1069,7 +1069,7 @@ function ReactionBoardEditorOverlay({
     <SafeAreaView style={styles.overlay}>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
         <View style={styles.topBar}>
-          <Pressable onPress={handleCancel}>
+          <Pressable onPress={handleCancel} hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}>
             <Text style={styles.topBarBtn}>Cancel</Text>
           </Pressable>
           <View style={styles.titleGroup}>
@@ -1078,7 +1078,7 @@ function ReactionBoardEditorOverlay({
               <Text style={[styles.tipToggle, tipOpen && styles.tipToggleOpen]}>ⓘ</Text>
             </Pressable>
           </View>
-          <Pressable ref={saveRef} collapsable={false} onPress={handleSave}>
+          <Pressable ref={saveRef} collapsable={false} onPress={handleSave} hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}>
             <Text style={[styles.topBarBtn, styles.saveBtn]}>Save</Text>
           </Pressable>
         </View>
@@ -1464,7 +1464,7 @@ const styles = StyleSheet.create({
   captureRing: { position: 'absolute', width: CELL - 6, height: CELL - 6, borderRadius: (CELL - 6) / 2, borderWidth: 3, borderColor: 'rgba(220,38,38,0.85)' },
   promoRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12, alignSelf: 'center' },
   promoLabel: { color: colors.textDim, fontSize: 13, marginRight: 4 },
-  promoBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
+  promoBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
   promoBtnText: { color: colors.onPrimary, fontWeight: '700' },
   playBtn: { marginTop: 16, backgroundColor: colors.primary, borderRadius: radius.pill, paddingVertical: 14, alignItems: 'center' },
   playBtnText: { color: colors.onPrimary, fontSize: 15.5, fontWeight: '700' },

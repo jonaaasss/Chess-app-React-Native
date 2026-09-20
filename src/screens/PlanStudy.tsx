@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, PanResponder, type PanResponderInstance } from 'react-native';
 import { allSquares, flipIndex, squareFromIndex } from '../chess';
 import type { Arrow, ArrowColor, Card, ReactionBoard } from '../types';
-import { arrowColors, boardStyles, colors, radius } from '../theme';
+import { arrowColors, boardStyles, colors, radius, touchTarget } from '../theme';
 import { CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, type NumberedArrow } from '../components/ChessBoard';
 import type { GuideTargets } from '../components/GuideCoach';
 import type { CoachEvent } from '../guideContent';
@@ -335,6 +335,7 @@ export function PlanStudy({
               <Text style={styles.solutionText}>Show solution</Text>
             </Pressable>
           </View>
+          <Text style={styles.slipNote}>Show solution counts as a slip.</Text>
           <Text style={[styles.wrongText, !wrongArrow && styles.wrongTextHidden]}>Wrong arrow. Try again.</Text>
         </>
       ) : (
@@ -371,13 +372,14 @@ const styles = StyleSheet.create({
   warningText: { color: colors.text, fontSize: 13, lineHeight: 19 },
   warningBtn: { alignSelf: 'flex-start', backgroundColor: colors.gold, borderRadius: radius.pill, paddingVertical: 8, paddingHorizontal: 16, marginTop: 2 },
   warningBtnText: { color: colors.onGold, fontSize: 13, fontWeight: '700' },
+  slipNote: { color: colors.textDim, fontSize: 12 },
   wrongText: { color: colors.danger, fontSize: 13, fontWeight: '700' },
   wrongTextHidden: { opacity: 0 },
-  actionRow: { flexDirection: 'row', gap: 10 },
-  actionBtn: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: radius.pill },
+  actionRow: { flexDirection: 'row', gap: 10, alignSelf: 'stretch', paddingHorizontal: 12 },
+  actionBtn: { flex: 1, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16, borderRadius: radius.pill },
   solutionBtn: { backgroundColor: colors.primary },
   solutionText: { color: colors.onPrimary, fontSize: 13, fontWeight: '700' },
   actionDisabled: { opacity: 0.4 },
-  continueBtn: { marginTop: 4, paddingVertical: 12, paddingHorizontal: 20, borderRadius: radius.pill, backgroundColor: colors.primary },
+  continueBtn: { marginTop: 4, minHeight: touchTarget, justifyContent: 'center', paddingHorizontal: 20, borderRadius: radius.pill, backgroundColor: colors.primary },
   continueText: { color: colors.onPrimary, fontSize: 14, fontWeight: '700' }
 });

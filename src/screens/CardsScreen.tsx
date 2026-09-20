@@ -34,6 +34,17 @@ function cardPreviewText(card: Card): string {
   return '(board only)';
 }
 
+const MODE_LABELS: Record<Card['mode'], string> = {
+  reactions: 'Reactions',
+  plan: 'Plan',
+  others: 'Front & back'
+};
+
+function cardSubtitle(card: Card): string {
+  const n = card.boards.length;
+  return `${MODE_LABELS[card.mode]} · ${n} board${n === 1 ? '' : 's'}`;
+}
+
 // Same "⋮" treatment as the opening/repertoire rows: a plain-text popover
 // pinned under the button, and "Rename" edits the name in place.
 function CardRow({
@@ -87,22 +98,32 @@ function CardRow({
       {editing ? (
         <View style={styles.main}>
           <PieceBadge code={piece} size={52} />
-          <TextInput
-            ref={inputRef}
-            style={[styles.mainText, styles.mainInput]}
-            value={value}
-            onChangeText={setValue}
-            onSubmitEditing={commitEdit}
-            onBlur={commitEdit}
-            returnKeyType="done"
-          />
+          <View style={styles.mainCol}>
+            <TextInput
+              ref={inputRef}
+              style={[styles.mainText, styles.mainInput]}
+              value={value}
+              onChangeText={setValue}
+              onSubmitEditing={commitEdit}
+              onBlur={commitEdit}
+              returnKeyType="done"
+            />
+            <Text style={styles.subtitle} numberOfLines={1}>
+              {cardSubtitle(card)}
+            </Text>
+          </View>
         </View>
       ) : (
         <Pressable onPress={onOpen} style={styles.main}>
           <PieceBadge code={piece} size={52} />
-          <Text style={styles.mainText} numberOfLines={1}>
-            {idx + 1}. {label}
-          </Text>
+          <View style={styles.mainCol}>
+            <Text style={styles.mainText} numberOfLines={1}>
+              {idx + 1}. {label}
+            </Text>
+            <Text style={styles.subtitle} numberOfLines={1}>
+              {cardSubtitle(card)}
+            </Text>
+          </View>
         </Pressable>
       )}
       <Pressable ref={menuRef} onPress={openMenu} style={styles.menuBtn}>
@@ -183,7 +204,7 @@ export function CardsScreen({
   }
 
   async function handleDeleteCard(card: Card) {
-    const ok = await confirmDialog('Delete this card?');
+    const ok = await confirmDialog(`Delete "${card.name || 'this card'}"?`);
     if (ok) {
       await deleteCard(card.id);
       load();
@@ -248,7 +269,9 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
   main: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 14, paddingLeft: spacing.lg, minHeight: 44 },
-  mainText: { color: colors.text, fontSize: 15, fontWeight: '500', flex: 1 },
+  mainCol: { flex: 1, minWidth: 0 },
+  mainText: { color: colors.text, fontSize: 15, fontWeight: '500' },
+  subtitle: { color: colors.textSecondary, ...type.caption, marginTop: 3 },
   mainInput: { padding: 0, borderBottomWidth: 1, borderBottomColor: colors.accent },
   menuBtn: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }
 });

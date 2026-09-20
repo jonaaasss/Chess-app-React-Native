@@ -111,10 +111,17 @@ export function BoardsGrid({
         })}
       </View>
 
-      {boards.length < MAX_BOARDS && (
+      {boards.length < MAX_BOARDS ? (
         <Pressable onPress={handleAdd} style={styles.addBoardBtn}>
           <Text style={styles.addBoardText}>+ Add board</Text>
         </Pressable>
+      ) : (
+        // The limit stays visible instead of the button silently vanishing.
+        <View style={[styles.addBoardBtn, styles.addBoardBtnFull]}>
+          <Text style={styles.addBoardText}>
+            {MAX_BOARDS} / {MAX_BOARDS} boards
+          </Text>
+        </View>
       )}
     </View>
   );
@@ -130,10 +137,10 @@ const styles = StyleSheet.create({
     width: PREVIEW_SIZE,
     marginTop: 6
   },
-  duplicateBtn: { paddingVertical: 4, paddingHorizontal: 6 },
+  duplicateBtn: { minHeight: 48, justifyContent: 'center', paddingHorizontal: 6 },
   duplicateText: { color: colors.textDim, fontSize: 12.5, fontWeight: '600' },
   duplicateTextDisabled: { opacity: 0.4 },
-  deleteBtn: { transform: [{ scale: 0.85 }] },
+  deleteBtn: { minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
   addBoardBtn: {
     backgroundColor: colors.panel2,
     borderWidth: 1,
@@ -145,5 +152,6 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     marginTop: 8
   },
+  addBoardBtnFull: { opacity: 0.6, borderStyle: 'solid' },
   addBoardText: { color: colors.textDim, fontSize: 14 },
 });

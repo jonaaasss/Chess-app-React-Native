@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Svg, { Path } from 'react-native-svg';
 import { getBoardStyle, getCard, getCards, getOpening, getRepertoire, getSetting, saveCard } from '../storage';
 import { showOverlay } from '../overlay';
 import type { Card, ReactionBoard } from '../types';
@@ -21,6 +22,15 @@ import { openCardEditor } from './CardEditorOverlay';
 import { openReactionBoardEditor } from './ReactionBoardEditorOverlay';
 import { ReactionStudy } from './ReactionStudy';
 import { PlanStudy } from './PlanStudy';
+
+// Skip-to-next glyph, drawn (not a Unicode character) like the app's other icons.
+function SkipIcon({ size, color }: { size: number; color: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" fill={color} />
+    </Svg>
+  );
+}
 
 // "Others" cards: each board has its own independent front and back, text
 // included — flipping the card flips which face of every board is shown,
@@ -280,7 +290,7 @@ function StudySessionOverlay({
               <Text style={[styles.blockBtnText, { color: colors.onPrimary }]}>Restart</Text>
             </Pressable>
             <Pressable onPress={close} style={[styles.blockBtn, styles.secondaryBtn]}>
-              <Text style={[styles.blockBtnText, { color: colors.textPrimary }]}>Back to home</Text>
+              <Text style={[styles.blockBtnText, { color: colors.textPrimary }]}>Close</Text>
             </Pressable>
           </View>
         </View>
@@ -445,11 +455,12 @@ function StudySessionOverlay({
 
         <View style={styles.footerRow}>
           {item?.guide ? <View style={{ width: 38 }} /> : <EditCircleButton onPress={handleEditCard} />}
-          <Text style={styles.footerCount}>
-            {index + 1} / {total}
-          </Text>
           <Pressable onPress={handleSkip} style={styles.footerBtn}>
-            <Text style={styles.footerIcon}>▶</Text>
+            <View style={styles.skipRow}>
+              <SkipIcon size={18} color={colors.textDim} />
+              <Text style={styles.skipLabel}>Skip</Text>
+            </View>
+            <Text style={styles.skipNote}>counts as a slip</Text>
           </Pressable>
         </View>
       </ScrollView>
@@ -561,9 +572,10 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.border
   },
-  footerBtn: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
-  footerIcon: { color: colors.textDim, fontSize: 18 },
-  footerCount: { color: colors.textDim, fontSize: 13 },
+  footerBtn: { minHeight: 48, alignItems: 'flex-end', justifyContent: 'center', paddingHorizontal: 4 },
+  skipRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  skipLabel: { color: colors.textDim, fontSize: 14, fontWeight: '600' },
+  skipNote: { color: colors.textDim, fontSize: 11, opacity: 0.8 },
   doneScreen: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 20 },
   doneCheck: {
     width: 90,

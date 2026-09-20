@@ -4,7 +4,7 @@ import Svg, { Path } from 'react-native-svg';
 import { allSquares, flipIndex, mainLineNodes, squareFromIndex } from '../chess';
 import { legalMovesFrom, makeMove, type GameState } from '../chessEngine';
 import type { Arrow, Card, Circle, MoveNode, PieceCode, ReactionBoard } from '../types';
-import { boardStyles, colors, radius } from '../theme';
+import { boardStyles, colors, radius, touchTarget } from '../theme';
 import { ArrowsSvg, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, type NumberedArrow } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts, PIECE_ANIM_DURATION_MS } from '../components/PieceAnimation';
 import type { GuideTargets } from '../components/GuideCoach';
@@ -605,7 +605,7 @@ export function ReactionStudy({
     !activeLineDone && variantStage !== 'rewinding'
       ? activeIsYourTurn
         ? colors.primary
-        : colors.danger
+        : colors.textDim
       : colors.textDim;
 
   return (
@@ -722,6 +722,7 @@ export function ReactionStudy({
               <Text style={styles.solutionText}>Show solution</Text>
             </Pressable>
           </View>
+          <Text style={styles.slipNote}>Show solution counts as a slip.</Text>
           <Text style={[styles.wrongText, !wrongMove && styles.wrongTextHidden]}>Wrong move. Try again.</Text>
         </>
       ) : (
@@ -754,20 +755,21 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15,23,42,0.55)'
   },
   navRow: { flexDirection: 'row', gap: 10 },
-  navBtn: { width: 40, height: 40, borderRadius: 10, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel2, alignItems: 'center', justifyContent: 'center' },
+  navBtn: { width: touchTarget, height: touchTarget, borderRadius: 10, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel2, alignItems: 'center', justifyContent: 'center' },
   navBtnDisabled: { opacity: 0.4 },
   navBtnText: { color: colors.text, fontSize: 18 },
   notation: { color: colors.textDim, fontSize: 13, textAlign: 'center', paddingHorizontal: 12 },
   notationYours: { color: colors.primary, fontWeight: '700' },
+  slipNote: { color: colors.textDim, fontSize: 12 },
   wrongText: { color: colors.danger, fontSize: 13, fontWeight: '700' },
   wrongTextHidden: { opacity: 0 },
-  actionRow: { flexDirection: 'row', gap: 10 },
-  actionBtn: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: radius.pill },
+  actionRow: { flexDirection: 'row', gap: 10, alignSelf: 'stretch', paddingHorizontal: 12 },
+  actionBtn: { flex: 1, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16, borderRadius: radius.pill },
   hintBtn: { backgroundColor: colors.gold },
   hintText: { color: colors.onGold, fontSize: 13, fontWeight: '700' },
   solutionBtn: { backgroundColor: colors.primary },
   solutionText: { color: colors.onPrimary, fontSize: 13, fontWeight: '700' },
   actionDisabled: { opacity: 0.4 },
-  continueBtn: { marginTop: 4, paddingVertical: 12, paddingHorizontal: 20, borderRadius: radius.pill, backgroundColor: colors.primary },
+  continueBtn: { marginTop: 4, minHeight: touchTarget, justifyContent: 'center', paddingHorizontal: 20, borderRadius: radius.pill, backgroundColor: colors.primary },
   continueText: { color: colors.onPrimary, fontSize: 14, fontWeight: '700' }
 });

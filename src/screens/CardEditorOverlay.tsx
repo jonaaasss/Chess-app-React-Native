@@ -164,7 +164,7 @@ function CardEditorOverlay({
     }
     const hasRecording = card.mode === 'reactions' && next !== 'reactions' && card.boards.some((b) => b.recording.length > 0);
     if (hasRecording) {
-      const modeName = next === 'others' ? 'Others' : 'Plan';
+      const modeName = next === 'others' ? 'Front & back' : 'Plan';
       const ok = await confirmDialog(
         `Switching to ${modeName} deletes all recorded moves/notation on this card's boards. Each board's position, arrows, and circles are kept as its front and back. Continue?`
       );
@@ -189,7 +189,7 @@ function CardEditorOverlay({
 
   async function handleDelete() {
     if (!card) return;
-    const ok = await confirmDialog('Delete this card? This cannot be undone.');
+    const ok = await confirmDialog(`Delete "${card.name || 'this card'}"? This cannot be undone.`);
     if (ok) {
       await deleteCard(card.id);
       close({ changed: true, deleted: true });
@@ -200,11 +200,11 @@ function CardEditorOverlay({
     <SafeAreaView style={styles.overlay}>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.topBar}>
-          <Pressable onPress={handleCancel}>
+          <Pressable onPress={handleCancel} hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}>
             <Text style={styles.topBarBtn}>Cancel</Text>
           </Pressable>
           <Text style={styles.title}>Edit card</Text>
-          <Pressable ref={saveRef} collapsable={false} onPress={handleSave}>
+          <Pressable ref={saveRef} collapsable={false} onPress={handleSave} hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}>
             <Text style={[styles.topBarBtn, styles.saveBtn]}>Save</Text>
           </Pressable>
         </View>
@@ -224,7 +224,7 @@ function CardEditorOverlay({
               <Text style={[styles.modeBtnText, card.mode === 'plan' && styles.modeBtnTextActive]}>Plan</Text>
             </Pressable>
             <Pressable ref={modeRefs.others} collapsable={false} onPress={() => handleSetMode('others')} style={[styles.modeBtn, card.mode === 'others' && styles.modeBtnActive]}>
-              <Text style={[styles.modeBtnText, card.mode === 'others' && styles.modeBtnTextActive]}>Others</Text>
+              <Text style={[styles.modeBtnText, card.mode === 'others' && styles.modeBtnTextActive]}>Front & back</Text>
             </Pressable>
           </View>
         </View>
@@ -270,8 +270,8 @@ const styles = StyleSheet.create({
   modeBtnText: { color: colors.textDim, fontSize: 13, fontWeight: '600' },
   modeBtnTextActive: { color: colors.onPrimary },
   blockBtn: { width: '100%', borderRadius: 10, paddingVertical: 13, alignItems: 'center', marginTop: 12 },
-  secondaryBtn: { backgroundColor: colors.gold },
-  secondaryBtnText: { color: colors.onGold },
-  dangerBtn: { backgroundColor: colors.danger },
+  secondaryBtn: { backgroundColor: 'transparent', borderWidth: 1, borderColor: colors.textDim },
+  secondaryBtnText: { color: colors.text },
+  dangerBtn: { backgroundColor: colors.danger, marginTop: 28 },
   blockBtnText: { color: 'white', fontSize: 15, fontWeight: '600' }
 });
