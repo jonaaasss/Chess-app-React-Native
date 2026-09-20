@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { deleteCard, getBoardStyle, getCard, getOpening, getRepertoire, saveCard } from '../storage';
-import { confirmDialog, showOverlay } from '../overlay';
+import { confirmDialog, showOverlay, SnackbarLayer, useOverlayBack } from '../overlay';
 import type { BoardFace, Card, CardMode, ReactionBoard } from '../types';
 import { colors, type } from '../theme';
 import { openMoveDuplicateDialog } from './MoveDuplicateOverlay';
@@ -12,6 +12,8 @@ import { TutorialLayer, useTutorial, useTutorialTarget } from '../tutorial';
 export interface CardEditorResult {
   changed: boolean;
   deleted: boolean;
+  // Set when the card was deleted, so whoever opened the editor can offer Undo.
+  deletedCard?: Card;
 }
 
 // Which face holds "the" single description for a mode that isn't Others
@@ -113,6 +115,8 @@ function CardEditorOverlay({
   // once here and threaded down to every board preview/editor.
   const [boardStyle, setBoardStyle] = useState(0);
   const changedRef = useRef(false);
+  // The card as it is in storage, to tell whether there's anything to lose.
+  const originalRef = useRef('');
   const tutorial = useTutorial();
   const saveRef = useTutorialTarget('cardEditor.save');
   const modeRefs = {
@@ -128,6 +132,7 @@ function CardEditorOverlay({
         close({ changed: false, deleted: false });
         return;
       }
+      originalRef.current = JSON.stringify(original);
       setCard(JSON.parse(JSON.stringify(original)) as Card);
       const opening = await getOpening(original.openingId);
       const rep = opening ? await getRepertoire(opening.repertoireId) : undefined;
@@ -136,6 +141,8 @@ function CardEditorOverlay({
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cardId]);
+
+  useOverlayBack(() => handleCancel());
 
   if (!card) {
     return <SafeAreaView style={styles.overlay} />;
@@ -148,7 +155,16 @@ function CardEditorOverlay({
     close({ changed: true, deleted: false });
   }
 
-  function handleCancel() {
+  function isDirty() {
+    return card !== null && JSON.stringify(card) !== originalRef.current;
+  }
+
+  async function handleCancel() {
+    // Not during the tutorial, which handles leaving on its own.
+    if (isDirty() && !tutorial.step) {
+      const ok = await confirmDialog('Discard your changes?', { confirmLabel: 'Discard', cancelLabel: 'Keep editing' });
+      if (!ok) return;
+    }
     close({ changed: changedRef.current, deleted: false });
   }
 
@@ -178,7 +194,19 @@ function CardEditorOverlay({
 
   async function handleMoveDuplicate() {
     if (!card) return;
-    await saveCard(card);
+    // Moving or duplicating works on the saved card, so unsaved changes would
+    // be left behind (or, saved silently, couldn't be cancelled any more).
+    if (isDirty()) {
+      const ok = await confirmDialog('Save your changes first? Moving or duplicating works on the saved card.', {
+        confirmLabel: 'Save & continue',
+        cancelLabel: 'Cancel',
+        confirmVariant: 'primary'
+      });
+      if (!ok) return;
+      await saveCard(card);
+      originalRef.current = JSON.stringify(card);
+      changedRef.current = true;
+    }
     const result = await openMoveDuplicateDialog(card);
     if (result === 'moved') {
       close({ changed: true, deleted: false });
@@ -187,13 +215,11 @@ function CardEditorOverlay({
     }
   }
 
+  // No confirmation: the caller offers Undo once this window has closed.
   async function handleDelete() {
     if (!card) return;
-    const ok = await confirmDialog(`Delete "${card.name || 'this card'}"? This cannot be undone.`);
-    if (ok) {
-      await deleteCard(card.id);
-      close({ changed: true, deleted: true });
-    }
+    await deleteCard(card.id);
+    close({ changed: true, deleted: true, deletedCard: card });
   }
 
   return (
@@ -244,6 +270,7 @@ function CardEditorOverlay({
           <Text style={styles.blockBtnText}>Delete card</Text>
         </Pressable>
       </ScrollView>
+      <SnackbarLayer />
       <TutorialLayer surface="cardEditor" />
     </SafeAreaView>
   );

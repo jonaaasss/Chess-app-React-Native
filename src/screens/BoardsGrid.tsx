@@ -1,11 +1,11 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { newReactionBoard, cloneReactionBoard } from '../chess';
 import { uid } from '../storage';
 import { ChessBoardView } from '../components/ChessBoard';
 import { ModeTip } from '../components/ModeTip';
 import { useTutorial, useTutorialTarget } from '../tutorial';
-import { CloseCircleButton } from '../overlay';
+import { CloseCircleButton, dismissSnackbar, showSnackbar } from '../overlay';
 import type { CardMode, ReactionBoard } from '../types';
 import { colors, radius, spacing } from '../theme';
 import { openReactionBoardEditor } from './ReactionBoardEditorOverlay';
@@ -33,6 +33,16 @@ export function BoardsGrid({
   const sorted = [...boards].sort((a, b) => a.order - b.order);
   const tutorial = useTutorial();
   const firstBoardRef = useTutorialTarget('cardEditor.board');
+  // The latest boards, for an Undo that comes a few seconds after the delete.
+  const boardsRef = useRef(boards);
+  boardsRef.current = boards;
+  const undoSnackbar = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (undoSnackbar.current !== null) dismissSnackbar(undoSnackbar.current);
+    },
+    []
+  );
 
   function renumber(list: ReactionBoard[]): ReactionBoard[] {
     return list.map((b, i) => ({ ...b, order: i }));
@@ -53,7 +63,18 @@ export function BoardsGrid({
     // live on the board itself, so there's nowhere left for a boardless
     // card to keep anything.
     if (boards.length <= 1) return;
+    const index = sorted.findIndex((b) => b.id === board.id);
     onChange(renumber(boards.filter((b) => b.id !== board.id)));
+    undoSnackbar.current = showSnackbar({
+      message: 'Board deleted',
+      actionLabel: 'Undo',
+      onAction: () => {
+        const current = [...boardsRef.current].sort((a, b) => a.order - b.order);
+        if (current.length >= MAX_BOARDS || current.some((b) => b.id === board.id)) return;
+        current.splice(Math.min(index, current.length), 0, board);
+        onChange(renumber(current));
+      }
+    });
   }
 
   async function handleOpen(board: ReactionBoard) {

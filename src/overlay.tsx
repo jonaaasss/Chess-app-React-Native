@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Modal, View, Text, TextInput, StyleSheet, Pressable, Dimensions } from 'react-native';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import { Modal, View, Text, TextInput, StyleSheet, Pressable, Dimensions, Animated } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import { colors, radius, spacing, touchTarget, type } from './theme';
 import { TutorialLayer, useTutorial, useTutorialTarget } from './tutorial';
@@ -52,6 +53,27 @@ interface Entry extends OverlayOptions {
 let nextId = 1;
 let setEntries: React.Dispatch<React.SetStateAction<Entry[]>> | null = null;
 
+// What the Android back button/gesture does is up to the window that's on top:
+// each window registers its handler under its own entry id (see
+// `useOverlayBack`), and only the top Modal ever receives the press.
+const OverlayEntryContext = createContext<number | null>(null);
+const backHandlers = new Map<number, () => void>();
+
+// Call from a window (or dialog) rendered through `showOverlay`. `handler`
+// always runs with the latest render's state.
+export function useOverlayBack(handler: () => void) {
+  const id = useContext(OverlayEntryContext);
+  const latest = useRef(handler);
+  latest.current = handler;
+  useEffect(() => {
+    if (id === null) return;
+    backHandlers.set(id, () => latest.current());
+    return () => {
+      backHandlers.delete(id);
+    };
+  }, [id]);
+}
+
 export function OverlayHost() {
   const [entries, setEntriesState] = useState<Entry[]>([]);
   const { step } = useTutorial();
@@ -78,8 +100,15 @@ export function OverlayHost() {
           animations.current.set(entry.id, animation);
         }
         return (
-          <Modal key={entry.id} visible transparent animationType={animation} statusBarTranslucent onRequestClose={() => {}}>
-            {entry.node}
+          <Modal
+            key={entry.id}
+            visible
+            transparent
+            animationType={animation}
+            statusBarTranslucent
+            onRequestClose={() => backHandlers.get(entry.id)?.()}
+          >
+            <OverlayEntryContext.Provider value={entry.id}>{entry.node}</OverlayEntryContext.Provider>
           </Modal>
         );
       })}
@@ -143,13 +172,32 @@ export function DialogButton({
   );
 }
 
-function ConfirmDialog({ message, close }: { message: string; close: (result: boolean) => void }) {
+export interface ConfirmOptions {
+  confirmLabel?: string;
+  cancelLabel?: string;
+  confirmVariant?: 'danger' | 'primary';
+}
+
+function ConfirmDialog({
+  message,
+  options,
+  close
+}: {
+  message: string;
+  options: ConfirmOptions;
+  close: (result: boolean) => void;
+}) {
+  useOverlayBack(() => close(false));
   return (
     <Backdrop>
       <Text style={styles.message}>{message}</Text>
       <View style={styles.row}>
-        <DialogButton title="Cancel" variant="secondary" onPress={() => close(false)} />
-        <DialogButton title="Delete" variant="danger" onPress={() => close(true)} />
+        <DialogButton title={options.cancelLabel ?? 'Cancel'} variant="secondary" onPress={() => close(false)} />
+        <DialogButton
+          title={options.confirmLabel ?? 'Delete'}
+          variant={options.confirmVariant ?? 'danger'}
+          onPress={() => close(true)}
+        />
       </View>
     </Backdrop>
   );
@@ -158,6 +206,7 @@ function ConfirmDialog({ message, close }: { message: string; close: (result: bo
 // Purely informational — one OK button, no cancel path — for blocking a
 // action until the user acknowledges why (e.g. a missing required arrow).
 function AlertDialog({ message, close }: { message: string; close: (result: void) => void }) {
+  useOverlayBack(() => close());
   return (
     <Backdrop>
       <Text style={styles.message}>{message}</Text>
@@ -194,6 +243,7 @@ function PromptDialog({
     tutorial.event('promptCancel');
     close(null);
   }
+  useOverlayBack(cancel);
   return (
     <Backdrop tutorialSurface="prompt">
       <Text style={styles.title}>{title}</Text>
@@ -233,6 +283,7 @@ function SimpleMenu({
   options: string[];
   close: (result: string | null) => void;
 }) {
+  useOverlayBack(() => close(null));
   return (
     <View style={menuStyles.backdrop}>
       <View style={styles.box}>
@@ -271,8 +322,8 @@ const menuStyles = StyleSheet.create({
   title: { color: colors.textPrimary, ...type.h2, flex: 1, marginRight: spacing.md }
 });
 
-export function confirmDialog(message: string): Promise<boolean> {
-  return showOverlay<boolean>((close) => <ConfirmDialog message={message} close={close} />);
+export function confirmDialog(message: string, options: ConfirmOptions = {}): Promise<boolean> {
+  return showOverlay<boolean>((close) => <ConfirmDialog message={message} options={options} close={close} />);
 }
 
 export function alertDialog(message: string): Promise<void> {
@@ -309,6 +360,7 @@ function AnchoredMenu({
   options: string[];
   close: (result: string | null) => void;
 }) {
+  useOverlayBack(() => close(null));
   const screenWidth = Dimensions.get('window').width;
   const top = anchor.y + anchor.height + 4;
   const right = Math.max(8, screenWidth - (anchor.x + anchor.width));
@@ -349,6 +401,124 @@ const anchoredStyles = StyleSheet.create({
 export function anchoredMenu(options: string[], anchor: AnchorRect): Promise<string | null> {
   return showOverlay<string | null>((close) => <AnchoredMenu anchor={anchor} options={options} close={close} />);
 }
+
+// ---------- Snackbar ----------
+// A short message at the bottom of the screen, optionally with an action
+// ("Undo"). It's drawn by a <SnackbarLayer /> that lives in each window that
+// can be on top (the app itself, the editors), because a Modal window covers
+// everything below it — only the topmost layer shows the message.
+
+const SNACKBAR_MS = 6000;
+
+export interface SnackbarOptions {
+  message: string;
+  actionLabel?: string;
+  onAction?: () => void;
+  duration?: number;
+}
+
+interface SnackbarState extends SnackbarOptions {
+  id: number;
+}
+
+let currentSnackbar: SnackbarState | null = null;
+let snackbarTimer: ReturnType<typeof setTimeout> | undefined;
+let nextSnackbarId = 1;
+let nextLayerId = 1;
+const snackbarListeners = new Set<() => void>();
+const snackbarLayers: number[] = [];
+
+function notifySnackbar() {
+  snackbarListeners.forEach((listener) => listener());
+}
+
+// Returns an id, so whoever showed it can take it down again (see below).
+export function showSnackbar(options: SnackbarOptions): number {
+  if (snackbarTimer) clearTimeout(snackbarTimer);
+  const id = nextSnackbarId++;
+  currentSnackbar = { ...options, id };
+  snackbarTimer = setTimeout(() => dismissSnackbar(id), options.duration ?? SNACKBAR_MS);
+  notifySnackbar();
+  return id;
+}
+
+// With an id, only takes down that very message (not a newer one that has
+// replaced it).
+export function dismissSnackbar(id?: number) {
+  if (!currentSnackbar || (id !== undefined && currentSnackbar.id !== id)) return;
+  if (snackbarTimer) clearTimeout(snackbarTimer);
+  currentSnackbar = null;
+  notifySnackbar();
+}
+
+export function SnackbarLayer({ bottom = 16 }: { bottom?: number }) {
+  const insets = useSafeAreaInsets();
+  const [, rerender] = useState(0);
+  const [layerId] = useState(() => nextLayerId++);
+  const fade = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    snackbarLayers.push(layerId);
+    const listener = () => rerender((n) => n + 1);
+    snackbarListeners.add(listener);
+    notifySnackbar();
+    return () => {
+      snackbarLayers.splice(snackbarLayers.indexOf(layerId), 1);
+      snackbarListeners.delete(listener);
+      notifySnackbar();
+    };
+  }, [layerId]);
+
+  const item = currentSnackbar;
+  const isTop = snackbarLayers[snackbarLayers.length - 1] === layerId;
+  const shownId = item && isTop ? item.id : 0;
+  useEffect(() => {
+    if (!shownId) return;
+    fade.setValue(0);
+    Animated.timing(fade, { toValue: 1, duration: 180, useNativeDriver: true }).start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shownId]);
+
+  if (!item || !isTop) return null;
+  return (
+    <View pointerEvents="box-none" style={[snackbarStyles.wrap, { bottom: bottom + insets.bottom }]}>
+      <Animated.View style={[snackbarStyles.bar, { opacity: fade }]}>
+        <Text style={snackbarStyles.text}>{item.message}</Text>
+        {item.actionLabel ? (
+          <Pressable
+            onPress={() => {
+              dismissSnackbar(item.id);
+              item.onAction?.();
+            }}
+            style={snackbarStyles.action}
+          >
+            <Text style={snackbarStyles.actionText}>{item.actionLabel}</Text>
+          </Pressable>
+        ) : (
+          <View style={{ width: 10 }} />
+        )}
+      </Animated.View>
+    </View>
+  );
+}
+
+const snackbarStyles = StyleSheet.create({
+  wrap: { position: 'absolute', left: 12, right: 12, alignItems: 'center' },
+  bar: {
+    alignSelf: 'stretch',
+    maxWidth: 520,
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: touchTarget,
+    paddingLeft: 16,
+    backgroundColor: '#e2e8f0',
+    borderRadius: radius.md,
+    elevation: 6
+  },
+  text: { flex: 1, color: colors.bg, fontSize: 14, fontWeight: '500', paddingVertical: 10 },
+  action: { minWidth: 64, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14 },
+  actionText: { color: colors.goldPressed, fontSize: 14, fontWeight: '700' }
+});
 
 const styles = StyleSheet.create({
   backdrop: {

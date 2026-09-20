@@ -14,10 +14,11 @@ import {
   getOpening,
   getRepertoire,
   renameCard,
-  renameOpening
+  renameOpening,
+  restoreCard
 } from '../storage';
-import { confirmDialog, promptDialog, anchoredMenu } from '../overlay';
-import type { Card, Opening, PieceCode, Repertoire } from '../types';
+import { promptDialog, anchoredMenu, showSnackbar } from '../overlay';
+import type { Card, GroupId, Opening, PieceCode, Repertoire } from '../types';
 import { Screen, TopBar, Breadcrumb, BigButton, PieceBadge } from '../components/Common';
 import { colors, radius, spacing, type } from '../theme';
 import { openCardEditor } from './CardEditorOverlay';
@@ -135,10 +136,16 @@ function CardRow({
 
 export function CardsScreen({
   openingId,
-  onBack
+  onBack,
+  onGoHome,
+  onOpenGroup,
+  onOpenRepertoire
 }: {
   openingId: string;
   onBack: () => void;
+  onGoHome: () => void;
+  onOpenGroup: (group: GroupId) => void;
+  onOpenRepertoire: (repertoireId: string) => void;
 }) {
   const [opening, setOpening] = useState<Opening | null>(null);
   const [rep, setRep] = useState<Repertoire | null>(null);
@@ -181,6 +188,19 @@ export function CardsScreen({
     load();
   }
 
+  // No confirmation: deleting a card is undone from the message that follows.
+  function offerUndo(card: Card) {
+    showSnackbar({
+      message: `Deleted "${card.name || 'card'}"`,
+      actionLabel: 'Undo',
+      onAction: async () => {
+        const restored = await restoreCard(card);
+        if (!restored) showSnackbar({ message: "Can't undo: the opening is gone too." });
+        load();
+      }
+    });
+  }
+
   async function handleAddCard() {
     // While the tutorial is on this button, the name comes pre-filled.
     const prefill = tutorial.step?.target === 'cards.add' ? tutorial.step.promptPrefill : undefined;
@@ -189,12 +209,14 @@ export function CardsScreen({
     if (!name) return;
     const card = await addCard(openingId, name);
     tutorial.remember({ cardId: card.id });
-    await openCardEditor(card.id);
+    const result = await openCardEditor(card.id);
+    if (result.deletedCard) offerUndo(result.deletedCard);
     load();
   }
 
   async function handleOpenCard(card: Card) {
     const result = await openCardEditor(card.id);
+    if (result.deletedCard) offerUndo(result.deletedCard);
     if (result.changed) load();
   }
 
@@ -204,11 +226,9 @@ export function CardsScreen({
   }
 
   async function handleDeleteCard(card: Card) {
-    const ok = await confirmDialog(`Delete "${card.name || 'this card'}"?`);
-    if (ok) {
-      await deleteCard(card.id);
-      load();
-    }
+    await deleteCard(card.id);
+    load();
+    offerUndo(card);
   }
 
   if (!opening || !rep) return <Screen>{null}</Screen>;
@@ -217,7 +237,15 @@ export function CardsScreen({
 
   return (
     <Screen surface="cards">
-      <Breadcrumb text={`${rep.group === 'white' ? 'White' : 'Black'} › ${rep.name} › ${opening.name}`} piece={cardPiece} />
+      <Breadcrumb
+        segments={[
+          { label: 'Home', onPress: onGoHome },
+          { label: rep.group === 'white' ? 'White' : 'Black', onPress: () => onOpenGroup(rep.group) },
+          { label: rep.name, onPress: () => onOpenRepertoire(rep.id) },
+          { label: opening.name }
+        ]}
+        piece={cardPiece}
+      />
       <TopBar title={opening.name} onBack={onBack} onRename={handleRenameOpening} backTargetId="cards.back" />
 
       <BigButton title="+ Add card" onPress={handleAddCard} targetId="cards.add" />

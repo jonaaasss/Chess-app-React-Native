@@ -2,8 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
-import { getBoardStyle, getCard, getCards, getOpening, getRepertoire, getSetting, saveCard } from '../storage';
-import { showOverlay } from '../overlay';
+import { getBoardStyle, getCard, getCards, getOpening, getRepertoire, getSetting, restoreCard, saveCard } from '../storage';
+import { confirmDialog, showOverlay, showSnackbar, SnackbarLayer, useOverlayBack } from '../overlay';
 import type { Card, ReactionBoard } from '../types';
 import { colors, radius, type } from '../theme';
 import { ChessBoardView } from '../components/ChessBoard';
@@ -245,6 +245,16 @@ function StudySessionOverlay({
     }
     const result = await openCardEditor(card.id);
     if (result.deleted) {
+      const deleted = result.deletedCard;
+      if (deleted) {
+        showSnackbar({
+          message: `Deleted "${deleted.name || 'card'}"`,
+          actionLabel: 'Undo',
+          onAction: () => {
+            restoreCard(deleted);
+          }
+        });
+      }
       advance(null);
     } else if (result.changed) {
       const refreshed = await getCard(card.id);
@@ -252,10 +262,27 @@ function StudySessionOverlay({
     }
   }
 
+  // Leaving a session in progress asks first (the guide and the finished
+  // screen just close).
+  async function handleExit() {
+    if (item?.guide || done) {
+      close();
+      return;
+    }
+    const left = queue.length - index;
+    const ok = await confirmDialog(`Stop this session? ${left} card${left === 1 ? '' : 's'} left.`, {
+      confirmLabel: 'Stop',
+      cancelLabel: 'Keep studying'
+    });
+    if (ok) close();
+  }
+
   function handleSkip() {
     if (!item) return;
     advance(item);
   }
+
+  useOverlayBack(() => handleExit());
 
   if (done) {
     return (
@@ -378,7 +405,7 @@ function StudySessionOverlay({
       )}
       <ScrollView ref={scrollRef} contentContainerStyle={styles.content}>
         <View style={styles.topBar}>
-          <BackCircleButton onPress={close} />
+          <BackCircleButton onPress={handleExit} />
           <Text style={styles.title} numberOfLines={1}>
             {openingName}
           </Text>
@@ -465,6 +492,7 @@ function StudySessionOverlay({
         </View>
       </ScrollView>
 
+      <SnackbarLayer />
       {item?.guide && (
         <GuideCoach
           step={coachStepShown}

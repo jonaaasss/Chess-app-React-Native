@@ -273,11 +273,35 @@ export function PieceBadge({ code, size }: { code: PieceCode; size: number }) {
 // for that level's row badges and empty state, so the "what am I looking
 // at" cue stays visible even once you're a level deep and the rows
 // themselves have scrolled out of view.
-export function Breadcrumb({ text, piece }: { text: string; piece?: PieceCode }) {
+export interface BreadcrumbSegment {
+  label: string;
+  // Set on every segment but the last: tapping it goes straight to that level.
+  onPress?: () => void;
+}
+
+export function Breadcrumb({ segments, piece }: { segments: BreadcrumbSegment[]; piece?: PieceCode }) {
   return (
     <View style={styles.breadcrumbRow}>
       {piece && <PieceBadge code={piece} size={24} />}
-      <Text style={styles.breadcrumb}>{text}</Text>
+      <View style={styles.breadcrumbSegments}>
+        {segments.map((segment, i) => (
+          <View key={i} style={styles.breadcrumbSegment}>
+            {i > 0 && <Text style={styles.breadcrumb}> › </Text>}
+            {segment.onPress ? (
+              // hitSlop brings the 18px-tall text up to a 48dp touch target.
+              <Pressable onPress={segment.onPress} hitSlop={{ top: 15, bottom: 15, left: 6, right: 6 }} style={{ flexShrink: 1 }}>
+                <Text style={[styles.breadcrumb, styles.breadcrumbLink]} numberOfLines={1}>
+                  {segment.label}
+                </Text>
+              </Pressable>
+            ) : (
+              <Text style={[styles.breadcrumb, { flexShrink: 1 }]} numberOfLines={1}>
+                {segment.label}
+              </Text>
+            )}
+          </View>
+        ))}
+      </View>
     </View>
   );
 }
@@ -381,6 +405,9 @@ const styles = StyleSheet.create({
   },
   breadcrumbRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.xs },
   breadcrumb: { color: colors.textTertiary, ...type.caption },
+  breadcrumbLink: { color: colors.textSecondary },
+  breadcrumbSegments: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' },
+  breadcrumbSegment: { flexDirection: 'row', alignItems: 'center', maxWidth: '100%', flexShrink: 1 },
   iconBtn: {
     minWidth: touchTarget,
     minHeight: touchTarget,

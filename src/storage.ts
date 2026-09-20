@@ -354,6 +354,42 @@ export async function moveOrDuplicateCard(
   await persist();
 }
 
+// ---------- Restoring what was just deleted (for "Undo") ----------
+// Deleting never renumbers the siblings' `order`, so putting the entities
+// back with their old values slots them into the same place. Each returns
+// false when the level above no longer exists (there's nowhere to put it).
+
+export async function restoreCard(card: Card): Promise<boolean> {
+  const s = await load();
+  if (!s.openings.some((o) => o.id === card.openingId)) return false;
+  if (!s.cards.some((c) => c.id === card.id)) s.cards.push(card);
+  await persist();
+  return true;
+}
+
+export async function restoreOpening(opening: Opening, cards: Card[]): Promise<boolean> {
+  const s = await load();
+  if (!s.repertoires.some((r) => r.id === opening.repertoireId)) return false;
+  if (!s.openings.some((o) => o.id === opening.id)) s.openings.push(opening);
+  for (const card of cards) {
+    if (!s.cards.some((c) => c.id === card.id)) s.cards.push(card);
+  }
+  await persist();
+  return true;
+}
+
+export async function restoreRepertoire(rep: Repertoire, openings: Opening[], cards: Card[]): Promise<void> {
+  const s = await load();
+  if (!s.repertoires.some((r) => r.id === rep.id)) s.repertoires.push(rep);
+  for (const opening of openings) {
+    if (!s.openings.some((o) => o.id === opening.id)) s.openings.push(opening);
+  }
+  for (const card of cards) {
+    if (!s.cards.some((c) => c.id === card.id)) s.cards.push(card);
+  }
+  await persist();
+}
+
 // ---------- Aggregate stats ----------
 
 export async function getGroupStats(group: GroupId): Promise<{ repertoires: number; openings: number; cards: number }> {

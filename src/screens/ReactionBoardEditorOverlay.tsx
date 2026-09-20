@@ -8,7 +8,7 @@ import type { Arrow, ArrowColor, BoardFace, BoardMove, CardMode, Circle, MoveNod
 import { arrowColors, boardStyles, colors, engineColors, radius, spacing, type, variationColor } from '../theme';
 import { CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, type NumberedArrow } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts } from '../components/PieceAnimation';
-import { alertDialog, confirmDialog, showOverlay } from '../overlay';
+import { alertDialog, confirmDialog, dismissSnackbar, showOverlay, showSnackbar, SnackbarLayer, useOverlayBack } from '../overlay';
 import { getBoardEditorTipHidden, setBoardEditorTipHidden, uid } from '../storage';
 import { ModeTip } from '../components/ModeTip';
 import { TutorialLayer, useTutorial, useTutorialTarget } from '../tutorial';
@@ -310,6 +310,10 @@ function ReactionBoardEditorOverlay({
   // 1 at the top, a-file on the right.
   const flipped = yourColor === 'b';
   const [board, setBoard] = useState<ReactionBoard>(initial);
+  // The board as it was when this editor opened, to tell whether there's
+  // anything to lose on Cancel.
+  const initialJson = useRef('');
+  if (!initialJson.current) initialJson.current = JSON.stringify(initial);
   const [phase, setPhase] = useState<'setup' | 'playing'>(initial.recording.length > 0 ? 'playing' : 'setup');
   const [cursorId, setCursorId] = useState<string | null>(
     initial.recording.length > 0 ? mainLineLeafId(initial.recording) : null
@@ -357,6 +361,7 @@ function ReactionBoardEditorOverlay({
   // pull the user off the move being asked for) and the tip box are hidden,
   // and a step that asks for one specific move accepts only that move.
   const tutorial = useTutorial();
+  useOverlayBack(() => handleCancel());
   const guided = tutorial.step?.surface === 'boardEditor';
   const expectMove = guided ? tutorial.step?.expectMove : undefined;
   const expectArrow = guided ? tutorial.step?.expectArrow : undefined;
@@ -907,6 +912,43 @@ function ReactionBoardEditorOverlay({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tool, annotateColor, board, cursorId, selected, pendingPromotion, branchChoices, phase, side, historyIndex, atHead, expectMove?.from, expectMove?.to, expectArrow?.from, expectArrow?.to, expectArrow?.color]);
 
+  // "Arrows cleared" + Undo. Undo only puts the arrows back while nothing else
+  // has changed on the board since; the moment something has, it goes away
+  // (so it can never wipe moves played afterwards).
+  const clearUndo = useRef<{ before: ReactionBoard; after: ReactionBoard | null; snackbar: number | null } | null>(null);
+  useEffect(() => {
+    const undo = clearUndo.current;
+    if (!undo) return;
+    if (undo.after === null) {
+      if (board === undo.before) return;
+      undo.after = board;
+      undo.snackbar = showSnackbar({
+        message: 'Arrows cleared',
+        actionLabel: 'Undo',
+        onAction: () => {
+          setBoard((current) => (current === undo.after ? undo.before : current));
+          clearUndo.current = null;
+        }
+      });
+    } else if (board !== undo.after) {
+      if (undo.snackbar !== null) dismissSnackbar(undo.snackbar);
+      clearUndo.current = null;
+    }
+  }, [board]);
+  useEffect(
+    () => () => {
+      const undo = clearUndo.current;
+      if (undo?.snackbar != null) dismissSnackbar(undo.snackbar);
+    },
+    []
+  );
+
+  function handleClearArrows() {
+    if (visibleArrows.length === 0 && visibleCircles.length === 0) return;
+    clearUndo.current = { before: board, after: null, snackbar: null };
+    clearAnnotations();
+  }
+
   // ---------- Reset / undo / play / flip / apply-to-back ----------
 
   async function handleReset() {
@@ -1050,6 +1092,11 @@ function ReactionBoardEditorOverlay({
   }
 
   async function handleCancel() {
+    // Not during the tutorial, which handles leaving on its own.
+    if (!tutorial.step && JSON.stringify(board) !== initialJson.current) {
+      const ok = await confirmDialog('Discard your changes?', { confirmLabel: 'Discard', cancelLabel: 'Keep editing' });
+      if (!ok) return;
+    }
     tutorial.event('boardCancel');
     close(null);
   }
@@ -1218,7 +1265,7 @@ function ReactionBoardEditorOverlay({
             ))}
           </View>
           <View style={{ flex: 1 }} />
-          <Pressable onPress={clearAnnotations} style={styles.toolBtn}>
+          <Pressable onPress={handleClearArrows} style={styles.toolBtn}>
             <Text style={styles.toolBtnText}>✖</Text>
           </Pressable>
         </View>
@@ -1289,6 +1336,7 @@ function ReactionBoardEditorOverlay({
           </Pressable>
         </View>
       </View>
+      <SnackbarLayer bottom={76} />
       <TutorialLayer surface="boardEditor" flipped={flipped} />
     </SafeAreaView>
   );

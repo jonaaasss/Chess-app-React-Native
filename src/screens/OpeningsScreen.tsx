@@ -7,10 +7,11 @@ import {
   getOpenings,
   getRepertoire,
   renameOpening,
-  renameRepertoire
+  renameRepertoire,
+  restoreOpening
 } from '../storage';
-import { confirmDialog, promptDialog, anchoredMenu } from '../overlay';
-import type { Opening, PieceCode, Repertoire } from '../types';
+import { promptDialog, anchoredMenu, showSnackbar } from '../overlay';
+import type { GroupId, Opening, PieceCode, Repertoire } from '../types';
 import { Screen, TopBar, Breadcrumb, BigButton, PieceBadge, rowStyles } from '../components/Common';
 import { useTutorial, useTutorialTarget } from '../tutorial';
 import { colors, spacing, type } from '../theme';
@@ -124,10 +125,14 @@ interface OpeningRowData {
 export function OpeningsScreen({
   repertoireId,
   onBack,
+  onGoHome,
+  onOpenGroup,
   onOpenOpening
 }: {
   repertoireId: string;
   onBack: () => void;
+  onGoHome: () => void;
+  onOpenGroup: (group: GroupId) => void;
   onOpenOpening: (openingId: string) => void;
 }) {
   const [rep, setRep] = useState<Repertoire | null>(null);
@@ -190,12 +195,20 @@ export function OpeningsScreen({
     load();
   }
 
+  // No confirmation: the delete is undone from the message that follows.
   async function handleDeleteOpening(opening: Opening) {
-    const ok = await confirmDialog(`Delete "${opening.name}" and all its cards?`);
-    if (ok) {
-      await deleteOpening(opening.id);
-      load();
-    }
+    const cards = await getCards(opening.id);
+    await deleteOpening(opening.id);
+    load();
+    showSnackbar({
+      message: `Deleted "${opening.name}" (${cards.length} card${cards.length === 1 ? '' : 's'})`,
+      actionLabel: 'Undo',
+      onAction: async () => {
+        const restored = await restoreOpening(opening, cards);
+        if (!restored) showSnackbar({ message: "Can't undo: the repertoire is gone too." });
+        load();
+      }
+    });
   }
 
   if (!rep) return <Screen>{null}</Screen>;
@@ -204,7 +217,14 @@ export function OpeningsScreen({
 
   return (
     <Screen surface="openings">
-      <Breadcrumb text={`${rep.group === 'white' ? 'White' : 'Black'} › ${rep.name}`} piece={openingPiece} />
+      <Breadcrumb
+        segments={[
+          { label: 'Home', onPress: onGoHome },
+          { label: rep.group === 'white' ? 'White' : 'Black', onPress: () => onOpenGroup(rep.group) },
+          { label: rep.name }
+        ]}
+        piece={openingPiece}
+      />
       <TopBar title={rep.name} onBack={onBack} onRename={handleRenameRepertoire} />
 
       <BigButton title="+ Add opening" onPress={handleAddOpening} targetId="openings.add" />

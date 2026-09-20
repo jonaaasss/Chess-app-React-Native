@@ -3,12 +3,15 @@ import { View, Text, TextInput, Pressable, useWindowDimensions } from 'react-nat
 import {
   addRepertoire,
   deleteRepertoire,
+  getCards,
+  getOpenings,
   getRepertoireStats,
   getVisibleRepertoires,
   renameRepertoire,
-  restoreExampleRepertoire
+  restoreExampleRepertoire,
+  restoreRepertoire
 } from '../storage';
-import { confirmDialog, promptDialog, anchoredMenu } from '../overlay';
+import { confirmDialog, promptDialog, anchoredMenu, showSnackbar } from '../overlay';
 import type { GroupId, PieceCode, Repertoire } from '../types';
 import { Screen, TopBar, BigButton, Breadcrumb, PieceBadge, rowStyles } from '../components/Common';
 import { colors, spacing, type } from '../theme';
@@ -129,10 +132,12 @@ interface RepRow {
 export function RepertoiresScreen({
   group,
   onBack,
+  onGoHome,
   onOpenRepertoire
 }: {
   group: GroupId;
   onBack: () => void;
+  onGoHome: () => void;
   onOpenRepertoire: (repertoireId: string) => void;
 }) {
   const [rows, setRows] = useState<RepRow[]>([]);
@@ -167,12 +172,21 @@ export function RepertoiresScreen({
     load();
   }
 
+  // No confirmation: the delete is undone from the message that follows. What
+  // was in it is kept in memory until then.
   async function handleDeleteRepertoire(rep: Repertoire) {
-    const ok = await confirmDialog(`Delete "${rep.name}" and all its openings/cards?`);
-    if (ok) {
-      await deleteRepertoire(rep.id);
-      load();
-    }
+    const openings = await getOpenings(rep.id);
+    const cards = (await Promise.all(openings.map((o) => getCards(o.id)))).flat();
+    await deleteRepertoire(rep.id);
+    load();
+    showSnackbar({
+      message: `Deleted "${rep.name}" (${openings.length} opening${openings.length === 1 ? '' : 's'})`,
+      actionLabel: 'Undo',
+      onAction: async () => {
+        await restoreRepertoire(rep, openings, cards);
+        load();
+      }
+    });
   }
 
   async function handleRestoreExample(rep: Repertoire) {
@@ -189,7 +203,7 @@ export function RepertoiresScreen({
 
   return (
     <Screen surface="repertoires">
-      <Breadcrumb text={group === 'white' ? 'White' : 'Black'} piece={groupPiece} />
+      <Breadcrumb segments={[{ label: 'Home', onPress: onGoHome }, { label: group === 'white' ? 'White' : 'Black' }]} piece={groupPiece} />
       <TopBar title={group === 'white' ? 'White' : 'Black'} onBack={onBack} />
 
       <BigButton title="+ Add repertoire" onPress={handleAdd} />

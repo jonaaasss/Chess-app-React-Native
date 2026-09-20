@@ -17,7 +17,7 @@ import {
 import { ensureSeeded, resolveGroupEntry } from './src/storage';
 import type { GroupId } from './src/types';
 import { colors } from './src/theme';
-import { OverlayHost } from './src/overlay';
+import { OverlayHost, SnackbarLayer } from './src/overlay';
 import { TutorialProvider } from './src/tutorial';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { RepertoiresScreen } from './src/screens/RepertoiresScreen';
@@ -64,6 +64,7 @@ function RepertoiresRoute({ navigation, route }: NativeStackScreenProps<RootStac
     <RepertoiresScreen
       group={route.params.group}
       onBack={() => navigation.goBack()}
+      onGoHome={() => navigation.popToTop()}
       onOpenRepertoire={(repertoireId) => navigation.navigate('Openings', { repertoireId })}
     />
   );
@@ -74,13 +75,23 @@ function OpeningsRoute({ navigation, route }: NativeStackScreenProps<RootStackPa
     <OpeningsScreen
       repertoireId={route.params.repertoireId}
       onBack={() => navigation.goBack()}
+      onGoHome={() => navigation.popToTop()}
+      onOpenGroup={(group) => navigation.popTo('Repertoires', { group })}
       onOpenOpening={(openingId) => navigation.navigate('Cards', { openingId })}
     />
   );
 }
 
 function CardsRoute({ navigation, route }: NativeStackScreenProps<RootStackParamList, 'Cards'>) {
-  return <CardsScreen openingId={route.params.openingId} onBack={() => navigation.goBack()} />;
+  return (
+    <CardsScreen
+      openingId={route.params.openingId}
+      onBack={() => navigation.goBack()}
+      onGoHome={() => navigation.popToTop()}
+      onOpenGroup={(group) => navigation.popTo('Repertoires', { group })}
+      onOpenRepertoire={(repertoireId) => navigation.popTo('Openings', { repertoireId })}
+    />
+  );
 }
 
 function SettingsRoute({ navigation }: NativeStackScreenProps<RootStackParamList, 'Settings'>) {
@@ -151,6 +162,7 @@ export default function App() {
             </Stack.Navigator>
           </NavigationContainer>
         )}
+        <SnackbarLayer />
         <OverlayHost />
         </TutorialProvider>
       </GestureHandlerRootView>

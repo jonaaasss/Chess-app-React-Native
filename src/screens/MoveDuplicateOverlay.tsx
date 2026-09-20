@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getOpening, getOpenings, getRepertoire, getRepertoires, moveOrDuplicateCard } from '../storage';
-import { simpleMenu, showOverlay } from '../overlay';
+import { simpleMenu, showOverlay, showSnackbar, useOverlayBack } from '../overlay';
 import type { Card, GroupId, Opening, Repertoire } from '../types';
 import { colors, radius, type } from '../theme';
 import { BackCircleButton } from '../components/Common';
@@ -74,6 +74,7 @@ function MoveDuplicateOverlay({ card, close }: { card: Card; close: (result: Res
   const [openings, setOpenings] = useState<Opening[]>([]);
   const [selectedOpening, setSelectedOpening] = useState<Opening | null>(null);
   const [mode, setMode] = useState<Mode>('duplicate');
+  useOverlayBack(() => close('cancelled'));
 
   useEffect(() => {
     (async () => {
@@ -145,6 +146,9 @@ function MoveDuplicateOverlay({ card, close }: { card: Card; close: (result: Res
       return;
     }
     await moveOrDuplicateCard(card.id, selectedOpening.id, mode);
+    showSnackbar({
+      message: `${mode === 'move' ? 'Moved' : 'Duplicated'} to "${selectedOpening.name}"`
+    });
     close(mode === 'move' ? 'moved' : 'duplicated');
   }
 
