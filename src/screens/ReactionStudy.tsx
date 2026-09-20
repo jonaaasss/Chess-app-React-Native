@@ -87,9 +87,10 @@ function RewindIcon({ size, color }: { size: number; color: string }) {
 
 // One level of branching at the position right before `siblings` were
 // recorded: every sibling is a candidate "variant", shown as a numbered
-// arrow (red, except the current one shown in green), shortest-first.
-// Uses the same numbered-arrow style as the board editor's own same-color
-// arrow numbering, so the two look identical.
+// arrow (red, except the current one shown in green). The number is the
+// order they're walked through in, so the arrow that plays first is 1 —
+// which means the recorded main line, always walked last, is the highest
+// number here (unlike in the board editor, where it's 1).
 function toVariantArrows(variants: MoveNode[], activeIdx: number): NumberedArrow[] {
   return variants.map((v, i) => ({
     id: v.id,
@@ -251,13 +252,10 @@ export function ReactionStudy({
     [sortedVariants, mainlineSibling]
   );
 
-  // The numbered arrows must match the order they're actually walked in —
-  // every walkable variant (shortest first), then the line's own true
-  // continuation last (it's always shown last, once the showcase resumes
-  // the main line) — rather than `sortedVariants`' plain shortest-first
-  // order, which can put the mainline continuation anywhere among the
-  // numbers while it's still always walked last, numbering it out of step
-  // with when it's actually shown.
+  // The order the variants are actually walked in — every walkable variant
+  // (shortest first), then the line's own true continuation last (it's always
+  // shown last, once the showcase resumes the main line). The numbered arrows
+  // follow this order exactly, so each number is the order it's shown in.
   const orderedVariants = useMemo(
     () => (mainlineSibling ? [...walkableVariants, mainlineSibling] : walkableVariants),
     [walkableVariants, mainlineSibling]

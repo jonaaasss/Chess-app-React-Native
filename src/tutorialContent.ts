@@ -342,7 +342,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     id: 'cards.back',
     surface: 'cards',
     target: 'cards.back',
-    text: 'Use the back arrows to go up a level: openings, repertoires, Home.',
+    text: 'Use the back arrows to go up a level: Openings, Repertoires, Home.',
     advance: 'button'
   }
 ];

@@ -115,6 +115,11 @@ export const engineColors = {
   alt: '#94a3b8'
 };
 
+// Marks where a recorded line branches (the board editor's numbered
+// continuations, Study's variant callouts). A hue of its own, so it never
+// reads as one of the four annotation colors or as an engine suggestion.
+export const variationColor = '#B592F2';
+
 export const boardStyles: { light: string; dark: string }[] = [
   { light: '#e9edcc', dark: '#6a9455' },
   { light: '#e8cfa4', dark: '#97643f' },

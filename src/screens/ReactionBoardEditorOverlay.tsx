@@ -2,10 +2,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, PanResponder, PanResponderInstance, ScrollView, ActivityIndicator } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { allSquares, cloneBoardFace, flipIndex, squareFromIndex, startingPosition, toFen } from '../chess';
+import { allSquares, cloneBoardFace, flipIndex, squareFromIndex, squareIndex, startingPosition, toFen } from '../chess';
 import { legalMovesFrom, makeMove, isPromotionMove, type GameState } from '../chessEngine';
 import type { Arrow, ArrowColor, BoardFace, BoardMove, CardMode, Circle, MoveNode, PromotionPiece, ReactionBoard } from '../types';
-import { arrowColors, boardStyles, colors, engineColors, radius, spacing, type } from '../theme';
+import { arrowColors, boardStyles, colors, engineColors, radius, spacing, type, variationColor } from '../theme';
 import { CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, type NumberedArrow } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts } from '../components/PieceAnimation';
 import { alertDialog, confirmDialog, showOverlay } from '../overlay';
@@ -23,6 +23,17 @@ const PROMOTION_PIECES: PromotionPiece[] = ['Q', 'R', 'B', 'N'];
 
 type Tool = 'move' | 'annotate';
 type Side = 'front' | 'back';
+
+// A touch this close (in board squares) to a continuation's arrow follows it.
+const BRANCH_HIT = 0.3;
+
+function distanceToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy || 1;
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
 
 // ---------- Tree helpers (all immutable — return new trees/boards) ----------
 
@@ -457,7 +468,36 @@ function ReactionBoardEditorOverlay({
   // currently on screen — otherwise a slow-to-cancel previous search could
   // flash stale arrows/eval for a moment after a move.
   const engineLines = engine.analyzedFen === fen ? engine.lines : [];
-  const engineArrows: NumberedArrow[] = (hideEngine ? [] : engineLines).map((line) => ({
+
+  // Where the recorded line branches (two or more continuations from this
+  // position): one numbered arrow per continuation, 1 being the main line
+  // that › plays, the rest in the order they're listed in the notation. Not
+  // while a tutorial step is asking for one specific move. Two promotions on
+  // the same squares share one arrow.
+  const branchChoices = useMemo(() => {
+    if (!isReactions || phase !== 'playing' || expectMove) return [];
+    const seen = new Set<string>();
+    const choices = (cursorNode ? cursorNode.children : board.recording)
+      .map((node, i) => ({ node, number: i + 1 }))
+      .filter(({ node }) => {
+        const key = node.from + node.to;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    return choices.length >= 2 ? choices : [];
+  }, [isReactions, phase, expectMove, cursorNode, board.recording]);
+  const branchArrows: NumberedArrow[] = branchChoices.map(({ node, number }) => ({
+    id: `branch-${node.id}`,
+    from: node.from,
+    to: node.to,
+    color: variationColor,
+    number
+  }));
+
+  // The engine's own arrows would sit on top of the same moves; its panel and
+  // eval bar stay.
+  const engineArrows: NumberedArrow[] = (hideEngine || branchChoices.length > 0 ? [] : engineLines).map((line) => ({
     id: `engine-${line.multipv}`,
     from: line.from,
     to: line.to,
@@ -503,6 +543,35 @@ function ReactionBoardEditorOverlay({
     const file = Math.floor((pageX - gridOrigin.current.x) / CELL);
     const rank = Math.floor((pageY - gridOrigin.current.y) / CELL);
     return squareFromIndex(flipIndex(file, flipped), flipIndex(rank, flipped));
+  }
+
+  // The continuation whose arrow a touch landed on, if any. Selecting a piece
+  // always wins: a piece of the side to move under the touch is never taken
+  // over by an arrow passing through its square (the arrow's own start square
+  // holds exactly such a piece).
+  function branchAt(pageX: number, pageY: number, sq: string): MoveNode | null {
+    if (branchChoices.length === 0) return null;
+    const under = engineState.pieces[sq];
+    if (under && under[0] === engineState.turn) return null;
+    const px = (pageX - gridOrigin.current.x) / CELL;
+    const py = (pageY - gridOrigin.current.y) / CELL;
+    const center = (square: string) => {
+      const raw = squareIndex(square);
+      return { x: flipIndex(raw.file, flipped) + 0.5, y: flipIndex(raw.rank, flipped) + 0.5 };
+    };
+    let best: MoveNode | null = null;
+    let bestDistance = BRANCH_HIT;
+    // Numbered in order, so on an exact tie the lower number wins.
+    for (const { node } of branchChoices) {
+      const a = center(node.from);
+      const b = center(node.to);
+      const d = distanceToSegment(px, py, a.x, a.y, b.x, b.y);
+      if (d < bestDistance) {
+        best = node;
+        bestDistance = d;
+      }
+    }
+    return best;
   }
 
   // ---------- Committing a move (Reactions setup: advances the base
@@ -793,6 +862,13 @@ function ReactionBoardEditorOverlay({
           const sq = squareFromPage(pageX, pageY);
           if (!sq) return;
           if (tool === 'move') {
+            // With nothing selected, a tap on one of the numbered arrows
+            // follows that continuation, same as playing its move.
+            const branch = !selected && !pendingPromotion ? branchAt(pageX, pageY, sq) : null;
+            if (branch) {
+              setCursorId(branch.id);
+              return;
+            }
             handleSquareTap(sq);
           } else {
             arrowStartRef.current = sq;
@@ -829,7 +905,7 @@ function ReactionBoardEditorOverlay({
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tool, annotateColor, board, cursorId, selected, phase, side, historyIndex, atHead, expectMove?.from, expectMove?.to, expectArrow?.from, expectArrow?.to, expectArrow?.color]);
+  }, [tool, annotateColor, board, cursorId, selected, pendingPromotion, branchChoices, phase, side, historyIndex, atHead, expectMove?.from, expectMove?.to, expectArrow?.from, expectArrow?.to, expectArrow?.color]);
 
   // ---------- Reset / undo / play / flip / apply-to-back ----------
 
@@ -1088,8 +1164,10 @@ function ReactionBoardEditorOverlay({
           <View style={StyleSheet.absoluteFill} pointerEvents="none">
             <NumberedArrowsSvg arrows={engineArrows} size={BOARD_SIZE} flipped={flipped} />
             <NumberedArrowsSvg arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} />
+            <NumberedArrowsSvg arrows={branchArrows} size={BOARD_SIZE} flipped={flipped} />
             <CirclesSvg circles={visibleCircles} size={BOARD_SIZE} flipped={flipped} />
             <NumberedArrowBadges arrows={committedNumberedArrows} size={BOARD_SIZE} flipped={flipped} />
+            <NumberedArrowBadges arrows={branchArrows} size={BOARD_SIZE} flipped={flipped} />
             <PieceAnimationGhosts ghosts={ghosts} cell={CELL} />
           </View>
         </View>

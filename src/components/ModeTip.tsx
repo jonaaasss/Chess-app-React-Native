@@ -8,7 +8,7 @@ import { colors, radius } from '../theme';
 // (always shown) and the board editor (closable) so the two can't drift.
 export const MODE_TIPS: Record<CardMode, string> = {
   reactions:
-    '1) Set up your starting position.\n2) Press "Play" and play out the moves you want to study (you can practice multiple variations by going back to a move and playing a different move).\n3) While studying, the opponent\'s moves will be played automatically and you have to find the move you recorded.',
+    '1) Set up your starting position.\n2) Press "Play" and play out the moves you want to study (you can practice multiple variations by going back to a move and playing a different move; where the line branches, numbered arrows show the options: tap one or play that move to follow it).\n3) While studying, the opponent\'s moves will be played automatically and you have to find the move you recorded.',
   plan:
     '1) Set up your position.\n2) Draw arrows which is the general plan in the position.\n3) While studying, you will find the exact position but without arrows which you will have to draw yourself.',
   others:
