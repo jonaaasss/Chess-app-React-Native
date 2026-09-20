@@ -1314,9 +1314,12 @@ export function openReactionBoardEditor(
   yourColor: 'w' | 'b' = 'w',
   boardStyle = 0
 ): Promise<ReactionBoard | null> {
-  return showOverlay<ReactionBoard | null>((close) => (
-    <ReactionBoardEditorOverlay initial={board} mode={mode} yourColor={yourColor} boardStyle={boardStyle} close={close} />
-  ));
+  return showOverlay<ReactionBoard | null>(
+    (close) => (
+      <ReactionBoardEditorOverlay initial={board} mode={mode} yourColor={yourColor} boardStyle={boardStyle} close={close} />
+    ),
+    { animation: 'none' }
+  );
 }
 
 const styles = StyleSheet.create({

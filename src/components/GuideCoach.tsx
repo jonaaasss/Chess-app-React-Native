@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Animated, Easing } from 'react-native';
 import Svg, { Path, Rect } from 'react-native-svg';
 import { FILES, RANKS, flipIndex } from '../chess';
@@ -40,6 +40,7 @@ interface Layout {
 }
 
 const DIM = 'rgba(0,0,0,0.65)';
+const FADE_MS = 180;
 const BUBBLE_GAP = 14;
 // A tap outside the bubble only counts as "Got it" once the popup has been up
 // this long, so a tap that was really meant for whatever was underneath an
@@ -55,8 +56,45 @@ const NEAR = 1.5;
 // border, so everything laid over it has to start that far in to line up.
 const BOARD_BORDER = 1;
 
-const near = (a: Layout, b: Layout) =>
+// How often the targets of coming steps are measured in the background, how
+// long one must have held still, and how old a sighting can be, for a step
+// to be shown the moment it starts instead of waiting to see the target
+// hold still all over again.
+const TRACK_MS = 120;
+const STABLE_MS = 100;
+const STALE_MS = 450;
+// Extra checks right after a popup appears (then every 400 ms), so a target
+// that did move after all is caught within a few frames.
+const RECHECK_MS = [60, 150];
+
+interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+const nearRect = (a: Box, b: Box) =>
   Math.abs(a.x - b.x) < NEAR && Math.abs(a.y - b.y) < NEAR && Math.abs(a.w - b.w) < NEAR && Math.abs(a.h - b.h) < NEAR;
+
+const near = (a: Layout, b: Layout) => nearRect(a, b);
+
+// Where each spotlight target was last measured (window coordinates), since
+// when it has been in that spot, and when it was last seen.
+const sightings = new WeakMap<object, Box & { since: number; seen: number }>();
+
+function noteSighting(view: object, r: Box) {
+  const now = Date.now();
+  const prev = sightings.get(view);
+  sightings.set(view, prev && nearRect(prev, r) ? { ...prev, seen: now } : { ...r, since: now, seen: now });
+}
+
+// The target is where it was last seen, and has been there for a while.
+function holdsStill(view: object, r: Box) {
+  const prev = sightings.get(view);
+  const now = Date.now();
+  return Boolean(prev && now - prev.seen < STALE_MS && now - prev.since >= STABLE_MS && nearRect(prev, r));
+}
 
 // Runs `make()` over and over until cancelled. Deliberately not
 // Animated.loop: those started before the animated view is actually on
@@ -82,6 +120,13 @@ function useRepeatingAnimation(active: boolean, deps: unknown[], make: () => Ani
   }, [active, ...deps]);
 }
 
+// Just the dimming, no popup: a screen or window the flow has already moved
+// away from holds it for a moment so it doesn't flash back to normal before
+// the next one has taken over.
+export function DimVeil() {
+  return <Pressable style={[StyleSheet.absoluteFill, { backgroundColor: DIM }]} />;
+}
+
 // A coach popup: dims everything except the one real control it's about (a
 // pulsing gold ring marks it), with a speech bubble beside it and, where
 // useful, an animated finger showing the gesture. For "Got it" steps the
@@ -93,7 +138,9 @@ function useRepeatingAnimation(active: boolean, deps: unknown[], make: () => Ani
 //
 // Nothing is shown until the target's position has stopped moving and the
 // bubble has been measured, so it appears once, in the right place, instead
-// of jumping there from wherever it first landed.
+// of jumping there from wherever it first landed. A target that was already
+// seen holding still in that same spot (see `watch`) counts as settled at
+// once, so a step that follows another one needn't wait.
 export function GuideCoach({
   step,
   resolveTarget,
@@ -102,6 +149,9 @@ export function GuideCoach({
   choices,
   holeOpen,
   nextDisabled,
+  startDimmed,
+  watch,
+  onShown,
   onNext,
   onExit
 }: {
@@ -115,6 +165,14 @@ export function GuideCoach({
   nextDisabled?: boolean;
   // Replaces "Got it" (and outside-tap dismissal) with these buttons.
   choices?: CoachChoice[];
+  // This popup takes over from one that was already up elsewhere: dim from the
+  // very first frame instead of fading the dimming in.
+  startDimmed?: boolean;
+  // Targets of steps still to come. They're measured in the background, so
+  // that when their step starts the popup can appear right away.
+  watch?: () => Array<React.RefObject<View | null> | undefined>;
+  // Called whenever the popup has appeared (or changed to a new step).
+  onShown?: () => void;
   onNext: () => void;
   // Shows a small ✕ that abandons the whole flow.
   onExit?: () => void;
@@ -134,10 +192,60 @@ export function GuideCoach({
   const lastTargetRef = useRef<React.RefObject<View | null> | null>(null);
   // Once a popup has been up, the screen stays dimmed (and blocked) even in
   // the gaps between steps, instead of flashing back to normal.
-  const [everShown, setEverShown] = useState(false);
+  const [everShown, setEverShown] = useState(Boolean(startDimmed));
   useEffect(() => {
     if (visible) setEverShown(true);
   }, [visible]);
+
+  // The very first popup of a flow fades in, dimming and all. After that the
+  // dimming stays put and each new popup simply takes over from the one
+  // before it, with no fade to wait for.
+  const appear = useRef(new Animated.Value(0)).current;
+  const dimIn = useRef(new Animated.Value(startDimmed ? 1 : 0)).current;
+  const cutIn = useRef(Boolean(startDimmed));
+  useEffect(() => {
+    if (!visible) {
+      appear.setValue(0);
+      return;
+    }
+    if (cutIn.current) return;
+    const fades = Animated.parallel([
+      Animated.timing(appear, { toValue: 1, duration: FADE_MS, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      Animated.timing(dimIn, { toValue: 1, duration: FADE_MS, easing: Easing.out(Easing.quad), useNativeDriver: true })
+    ]);
+    fades.start(({ finished }) => {
+      if (finished) cutIn.current = true;
+    });
+    return () => fades.stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, step?.id]);
+
+  // Keeps the coming targets' positions up to date, whether or not a popup is
+  // up right now.
+  const watchRef = useRef(watch);
+  watchRef.current = watch;
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
+    const sweep = () => {
+      for (const ref of watchRef.current?.() ?? []) {
+        const view = ref?.current;
+        view?.measureInWindow((x, y, w, h) => {
+          if (!cancelled && w > 0 && h > 0) noteSighting(view, { x, y, w, h });
+        });
+      }
+      timer = setTimeout(sweep, TRACK_MS);
+    };
+    sweep();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
+  useEffect(() => {
+    if (visible) onShown?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, step?.id]);
 
   // Polls the target's position (window coordinates, re-based on this
   // overlay's own origin) until several consecutive reads agree, then shows
@@ -145,7 +253,10 @@ export function GuideCoach({
   // keyboard opening, a list settling) the popup hides and shows again at the
   // new spot instead of visibly jumping. If the target never appears, falls
   // back to a centered bubble rather than showing nothing.
-  useEffect(() => {
+  // A layout effect, so that when the step changes to one with a different
+  // target the old spotlight is cleared before anything is painted, instead of
+  // showing the new text at the old spot for a frame.
+  useLayoutEffect(() => {
     if (!step) {
       lastTargetRef.current = null;
       setLayout(null);
@@ -169,69 +280,99 @@ export function GuideCoach({
     let settled = keep;
     let shown: Layout | null = keep ? layoutRef.current : null;
     let polls = 0;
+    // Checks right after the popup appears come sooner than later ones.
+    let rechecks = keep ? RECHECK_MS.length : 0;
+    const nextCheck = () => RECHECK_MS[rechecks++] ?? 400;
     const schedule = (ms: number) => {
       timer = setTimeout(tick, ms);
+    };
+    // Measures this overlay and the target side by side.
+    const read = (done: (root: Box | null, tgt: Box | null, view: View | null) => void) => {
+      const view = centered ? null : resolveTarget?.()?.current ?? null;
+      let root: Box | null = null;
+      let tgt: Box | null = null;
+      let pending = view ? 2 : 1;
+      const finish = () => {
+        if (--pending === 0) done(root, tgt, view);
+      };
+      if (rootRef.current) {
+        rootRef.current.measureInWindow((x, y, w, h) => {
+          root = { x, y, w, h };
+          finish();
+        });
+      } else {
+        finish();
+      }
+      view?.measureInWindow((x, y, w, h) => {
+        tgt = w > 0 && h > 0 ? { x, y, w, h } : null;
+        finish();
+      });
     };
     const tick = () => {
       if (cancelled) return;
       polls++;
-      rootRef.current?.measureInWindow((ox, oy, W, H) => {
+      read((root, tgt, view) => {
         if (cancelled) return;
+        if (!root) {
+          schedule(POLL_MS);
+          return;
+        }
+        const W = root.w;
+        const H = root.h;
         if (centered) {
           setLayout({ x: 0, y: 0, w: 0, h: 0, W, H });
           return;
         }
-        const ref = resolveTarget?.();
-        const measured = (cur: Layout | null) => {
-          if (cancelled) return;
-          if (!cur) {
-            if (!settled && polls >= MAX_SETTLE_POLLS) {
-              settled = true;
-              setLayout({ x: 0, y: 0, w: 0, h: 0, W, H });
-              return;
-            }
-            schedule(settled ? 400 : POLL_MS);
-            return;
-          }
-          if (settled) {
-            // Already showing. If the target has since moved, hide the popup
-            // and settle again at the new spot rather than visibly jumping.
-            if (shown && !near(shown, cur)) {
-              settled = false;
-              agree = 1;
-              last = cur;
-              shown = null;
-              setLayout(null);
-              schedule(POLL_MS);
-              return;
-            }
-            schedule(400);
-            return;
-          }
-          if (last && near(last, cur)) agree++;
-          else {
-            agree = 1;
-            last = cur;
-          }
-          if (agree >= SETTLE_READS) {
+        // Read before this sighting is noted: was the target already known to
+        // be holding still where it is now?
+        const knownStill = Boolean(view && tgt && holdsStill(view, tgt));
+        if (view && tgt) noteSighting(view, tgt);
+        const cur: Layout | null = tgt ? { x: tgt.x - root.x, y: tgt.y - root.y, w: tgt.w, h: tgt.h, W, H } : null;
+        if (!cur) {
+          if (!settled && polls >= MAX_SETTLE_POLLS) {
             settled = true;
-            shown = cur;
-            setLayout(cur);
-            schedule(400);
-          } else {
-            schedule(POLL_MS);
+            setLayout({ x: 0, y: 0, w: 0, h: 0, W, H });
+            return;
           }
-        };
-        if (!ref?.current) {
-          measured(null);
+          schedule(settled ? 400 : POLL_MS);
           return;
         }
-        ref.current.measureInWindow((x, y, w, h) => {
-          measured(w > 0 && h > 0 ? { x: x - ox, y: y - oy, w, h, W, H } : null);
-        });
+        if (settled) {
+          // Already showing. If the target has since moved, hide the popup
+          // and settle again at the new spot rather than visibly jumping.
+          if (shown && !near(shown, cur)) {
+            settled = false;
+            agree = 1;
+            last = cur;
+            shown = null;
+            setLayout(null);
+            schedule(POLL_MS);
+            return;
+          }
+          schedule(nextCheck());
+          return;
+        }
+        if (knownStill) agree = SETTLE_READS;
+        else if (last && near(last, cur)) agree++;
+        else {
+          agree = 1;
+          last = cur;
+        }
+        if (agree >= SETTLE_READS) {
+          settled = true;
+          shown = cur;
+          rechecks = 0;
+          setLayout(cur);
+          schedule(nextCheck());
+        } else {
+          schedule(POLL_MS);
+        }
       });
     };
-    schedule(keep ? POLL_MS : 60);
+    // A step that changes the target starts measuring at once, not after a
+    // pause.
+    if (keep) schedule(POLL_MS);
+    else tick();
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
@@ -308,13 +449,15 @@ export function GuideCoach({
       style={StyleSheet.absoluteFill}
       pointerEvents="box-none"
     >
-      {!layout && (
-        // Between steps / while the target settles: nothing underneath can be
-        // tapped, and once a popup has been up the dimming stays too.
+      {!visible && (
+        // Between steps / while the target settles and the bubble is measured:
+        // nothing underneath can be tapped, and once a popup has been up the
+        // dimming stays too. It goes away in the same frame the spotlight
+        // version below appears, so the screen never flashes back to normal.
         <Pressable style={[StyleSheet.absoluteFill, everShown && { backgroundColor: DIM }]} />
       )}
       {layout && (
-        <View style={[StyleSheet.absoluteFill, { opacity: visible ? 1 : 0 }]} pointerEvents="box-none">
+        <Animated.View style={[StyleSheet.absoluteFill, { opacity: visible ? dimIn : 0 }]} pointerEvents="box-none">
           {noSpot ? (
             <Pressable onPress={onOutsidePress} style={[styles.dim, { left: 0, top: 0, width: layout.W, height: layout.H }]} />
           ) : (
@@ -338,7 +481,12 @@ export function GuideCoach({
                   style={{ position: 'absolute', left: layout.x, top: layout.y, width: layout.w, height: layout.h }}
                 />
               )}
+            </>
+          )}
 
+          {/* Everything that fades in with each new popup: ring, finger, bubble. */}
+          <Animated.View style={[StyleSheet.absoluteFill, { opacity: cutIn.current ? 1 : appear }]} pointerEvents="box-none">
+            {!noSpot && (
               <Animated.View
                 pointerEvents="none"
                 style={[
@@ -353,105 +501,105 @@ export function GuideCoach({
                   }
                 ]}
               />
-            </>
-          )}
+            )}
 
-          {step.finger && !noSpot && (() => {
-            const from = squareCenter(step.finger.from);
-            const to = squareCenter(step.finger.to);
-            const tap = Boolean(step.finger.tap);
-            return (
-              <>
-                {/* A green arrow from the piece's square to where it goes, drawn
-                    by the same arrow component (and in the same place) as the
-                    board editor's own arrows. */}
-                {tap && (
-                  <View
+            {step.finger && !noSpot && (() => {
+              const from = squareCenter(step.finger.from);
+              const to = squareCenter(step.finger.to);
+              const tap = Boolean(step.finger.tap);
+              return (
+                <>
+                  {/* A green arrow from the piece's square to where it goes, drawn
+                      by the same arrow component (and in the same place) as the
+                      board editor's own arrows. */}
+                  {tap && (
+                    <View
+                      pointerEvents="none"
+                      style={{
+                        position: 'absolute',
+                        left: layout.x + BOARD_BORDER,
+                        top: layout.y + BOARD_BORDER,
+                        width: layout.w,
+                        height: layout.w
+                      }}
+                    >
+                      <NumberedArrowsSvg
+                        arrows={[{ id: 'guide-move', from: step.finger.from, to: step.finger.to, color: arrowColors.green }]}
+                        size={layout.w}
+                        flipped={flipped}
+                      />
+                    </View>
+                  )}
+                  <Animated.View
                     pointerEvents="none"
                     style={{
                       position: 'absolute',
-                      left: layout.x + BOARD_BORDER,
-                      top: layout.y + BOARD_BORDER,
-                      width: layout.w,
-                      height: layout.w
+                      // The fingertip sits at (14, 3) inside the 28x40 hand.
+                      left: from.x - 14,
+                      top: from.y - 3,
+                      opacity: finger.interpolate({ inputRange: [0, 0.08, 0.92, 1], outputRange: [0, 1, 1, 0] }),
+                      transform: [
+                        { translateX: finger.interpolate({ inputRange: [0, 1], outputRange: [0, to.x - from.x] }) },
+                        { translateY: finger.interpolate({ inputRange: [0, 1], outputRange: [0, to.y - from.y] }) },
+                        // A tap presses down on each square it lands on.
+                        {
+                          scale: tap
+                            ? finger.interpolate({
+                                inputRange: [0, 0.1, 0.2, 0.8, 0.9, 1],
+                                outputRange: [1, 0.82, 1, 1, 0.82, 1]
+                              })
+                            : 1
+                        }
+                      ]
                     }}
                   >
-                    <NumberedArrowsSvg
-                      arrows={[{ id: 'guide-move', from: step.finger.from, to: step.finger.to, color: arrowColors.green }]}
-                      size={layout.w}
-                      flipped={flipped}
-                    />
-                  </View>
-                )}
-                <Animated.View
-                  pointerEvents="none"
-                  style={{
-                    position: 'absolute',
-                    // The fingertip sits at (14, 3) inside the 28x40 hand.
-                    left: from.x - 14,
-                    top: from.y - 3,
-                    opacity: finger.interpolate({ inputRange: [0, 0.08, 0.92, 1], outputRange: [0, 1, 1, 0] }),
-                    transform: [
-                      { translateX: finger.interpolate({ inputRange: [0, 1], outputRange: [0, to.x - from.x] }) },
-                      { translateY: finger.interpolate({ inputRange: [0, 1], outputRange: [0, to.y - from.y] }) },
-                      // A tap presses down on each square it lands on.
-                      {
-                        scale: tap
-                          ? finger.interpolate({
-                              inputRange: [0, 0.1, 0.2, 0.8, 0.9, 1],
-                              outputRange: [1, 0.82, 1, 1, 0.82, 1]
-                            })
-                          : 1
-                      }
-                    ]
-                  }}
-                >
-                  <FingerIcon />
-                </Animated.View>
-              </>
-            );
-          })()}
+                    <FingerIcon />
+                  </Animated.View>
+                </>
+              );
+            })()}
 
-          <Pressable
-            onPress={onOutsidePress}
-            onLayout={(e) => setBubbleH(e.nativeEvent.layout.height)}
-            style={[styles.bubble, { top: bubbleTop }]}
-          >
-            <Text style={[styles.bubbleText, onExit ? styles.bubbleTextWithExit : null]}>{step.text}</Text>
-            {step.sub ? <Text style={styles.bubbleSub}>{step.sub}</Text> : null}
-            {choices ? (
-              <View style={styles.choices}>
-                {choices.map((c, i) => (
-                  <Pressable
-                    key={c.label}
-                    onPress={c.onPress}
-                    style={[styles.choice, i === choices.length - 1 ? styles.choicePrimary : styles.choiceSecondary]}
-                  >
-                    <Text style={[styles.choiceText, i === choices.length - 1 ? styles.choiceTextPrimary : styles.choiceTextSecondary]}>
-                      {c.label}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            ) : step.advance === 'button' ? (
-              <Pressable
-                onPress={nextDisabled ? undefined : onNext}
-                disabled={nextDisabled}
-                style={[styles.gotIt, nextDisabled && styles.gotItDisabled]}
-              >
-                <Text style={styles.gotItText}>Got it</Text>
-              </Pressable>
-            ) : null}
-            {onExit && (
-              <Pressable onPress={onExit} hitSlop={10} style={styles.exit}>
-                <Svg width={12} height={12} viewBox="0 0 24 24">
-                  <Path d="M6 6l12 12M18 6L6 18" stroke={colors.onGold} strokeWidth={3.5} strokeLinecap="round" />
-                </Svg>
-              </Pressable>
-            )}
-            {!noSpot && <View style={[styles.caret, { left: caretLeft - 16 }, above ? { bottom: -7 } : { top: -7 }]} />}
-          </Pressable>
-        </View>
+            <Pressable
+              onPress={onOutsidePress}
+              onLayout={(e) => setBubbleH(e.nativeEvent.layout.height)}
+              style={[styles.bubble, { top: bubbleTop }]}
+            >
+              <Text style={[styles.bubbleText, onExit ? styles.bubbleTextWithExit : null]}>{step.text}</Text>
+              {step.sub ? <Text style={styles.bubbleSub}>{step.sub}</Text> : null}
+              {choices ? (
+                <View style={styles.choices}>
+                  {choices.map((c, i) => (
+                    <Pressable
+                      key={c.label}
+                      onPress={c.onPress}
+                      style={[styles.choice, i === choices.length - 1 ? styles.choicePrimary : styles.choiceSecondary]}
+                    >
+                      <Text style={[styles.choiceText, i === choices.length - 1 ? styles.choiceTextPrimary : styles.choiceTextSecondary]}>
+                        {c.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : step.advance === 'button' ? (
+                <Pressable
+                  onPress={nextDisabled ? undefined : onNext}
+                  disabled={nextDisabled}
+                  style={[styles.gotIt, nextDisabled && styles.gotItDisabled]}
+                >
+                  <Text style={styles.gotItText}>Got it</Text>
+                </Pressable>
+              ) : null}
+              {onExit && (
+                <Pressable onPress={onExit} hitSlop={10} style={styles.exit}>
+                  <Svg width={12} height={12} viewBox="0 0 24 24">
+                    <Path d="M6 6l12 12M18 6L6 18" stroke={colors.onGold} strokeWidth={3.5} strokeLinecap="round" />
+                  </Svg>
+                </Pressable>
+              )}
+              {!noSpot && <View style={[styles.caret, { left: caretLeft - 16 }, above ? { bottom: -7 } : { top: -7 }]} />}
+            </Pressable>
+          </Animated.View>
+        </Animated.View>
       )}
     </View>
   );

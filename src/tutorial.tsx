@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { View } from 'react-native';
-import { GuideCoach } from './components/GuideCoach';
+import { DimVeil, GuideCoach } from './components/GuideCoach';
 import { TUTORIAL_STEPS, type TutorialStep, type TutorialSurface } from './tutorialContent';
 
 // Things the tutorial needs to remember from what the user just created, so a
@@ -31,6 +31,11 @@ interface TutorialContextValue {
   // A screen came into view; skips optional steps that belong to screens the
   // flow has already moved past.
   reportSurface: (surface: TutorialSurface) => void;
+  // The screen or window whose popup was up most recently (null before the
+  // first popup). A popup that takes over from another one starts out dimmed,
+  // and the one it took over from keeps its dimming until this changes.
+  shown: TutorialSurface | null;
+  markShown: (surface: TutorialSurface) => void;
   registerTarget: (id: string, ref: React.RefObject<View | null>) => () => void;
   getTarget: (id: string) => React.RefObject<View | null> | undefined;
 }
@@ -48,6 +53,8 @@ const TutorialContext = createContext<TutorialContextValue>({
   setFlag: noop,
   remember: noop,
   reportSurface: noop,
+  shown: null,
+  markShown: noop,
   registerTarget: () => noop,
   getTarget: () => undefined
 });
@@ -63,18 +70,22 @@ export function TutorialProvider({ children }: { children: React.ReactNode }) {
   const [index, setIndex] = useState<number | null>(null);
   const [memory, setMemory] = useState<Memory>({});
   const [flags, setFlags] = useState<Record<string, boolean>>({});
+  const [shown, setShown] = useState<TutorialSurface | null>(null);
   const targets = useRef(new Map<string, React.RefObject<View | null>>());
 
   const start = useCallback(() => {
     setMemory({});
     setFlags({});
+    setShown(null);
     setIndex(0);
   }, []);
   const stop = useCallback(() => {
     setIndex(null);
     setMemory({});
     setFlags({});
+    setShown(null);
   }, []);
+  const markShown = useCallback((surface: TutorialSurface) => setShown(surface), []);
   const setFlag = useCallback(
     (name: string, value: boolean) => setFlags((f) => (f[name] === value ? f : { ...f, [name]: value })),
     []
@@ -141,10 +152,12 @@ export function TutorialProvider({ children }: { children: React.ReactNode }) {
       setFlag,
       remember,
       reportSurface,
+      shown,
+      markShown,
       registerTarget,
       getTarget
     }),
-    [index, memory, flags, setFlag, start, stop, next, event, goTo, remember, reportSurface, registerTarget, getTarget]
+    [index, memory, flags, shown, setFlag, markShown, start, stop, next, event, goTo, remember, reportSurface, registerTarget, getTarget]
   );
 
   return <TutorialContext.Provider value={value}>{children}</TutorialContext.Provider>;
@@ -163,11 +176,28 @@ export function useTutorialTarget(id: string | undefined) {
   return ref;
 }
 
-// The tutorial's popup layer for one screen/window. Renders nothing unless the
-// current step belongs to this surface.
+// How long a screen keeps its dimming after the flow moved on to another one,
+// in case that one never shows up (the user went back, say).
+const HANDOVER_MS = 1500;
+
+// The tutorial's popup layer for one screen/window. Shows the popup when the
+// current step belongs to this surface. When the flow has just moved on from
+// it to another surface, it holds the dimming until that one has taken over,
+// so the screen doesn't flash back to normal in between.
 export function TutorialLayer({ surface, flipped }: { surface: TutorialSurface; flipped?: boolean }) {
-  const { step, flags, getTarget, next, stop } = useTutorial();
-  if (!step || step.surface !== surface) return null;
+  const { step, flags, shown, getTarget, next, stop, markShown } = useTutorial();
+  const mine = step?.surface === surface;
+  const handingOver = Boolean(step) && !mine && shown === surface;
+  const [expired, setExpired] = useState(false);
+  useEffect(() => {
+    if (!handingOver) {
+      setExpired(false);
+      return;
+    }
+    const t = setTimeout(() => setExpired(true), HANDOVER_MS);
+    return () => clearTimeout(t);
+  }, [handingOver]);
+  if (!step || !mine) return handingOver && !expired ? <DimVeil /> : null;
   return (
     <GuideCoach
       step={step}
@@ -175,6 +205,12 @@ export function TutorialLayer({ surface, flipped }: { surface: TutorialSurface; 
       flipped={flipped}
       holeOpen={step.holeOpen}
       nextDisabled={Boolean(step.requires && !flags[step.requires])}
+      startDimmed={shown !== null}
+      watch={() => {
+        const next = TUTORIAL_STEPS[TUTORIAL_STEPS.findIndex((s) => s.id === step.id) + 1];
+        return [step.target ? getTarget(step.target) : undefined, next?.target ? getTarget(next.target) : undefined];
+      }}
+      onShown={() => markShown(surface)}
       resolveTarget={step.target ? () => getTarget(step.target!) : undefined}
       onNext={next}
       onExit={stop}

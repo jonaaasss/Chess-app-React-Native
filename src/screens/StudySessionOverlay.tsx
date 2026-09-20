@@ -459,6 +459,7 @@ function StudySessionOverlay({
           step={coachStepShown}
           centered={!coachStepShown || coachStepShown.target === 'screen'}
           resolveTarget={() => coachTargetRef}
+          watch={() => Object.values(guideTargets)}
           flipped={yourColor === 'b'}
           choices={guideRoundsExplain ? roundsChoices : undefined}
           onNext={advanceCoach}

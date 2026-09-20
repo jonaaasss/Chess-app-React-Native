@@ -250,7 +250,9 @@ function CardEditorOverlay({
 }
 
 export function openCardEditor(cardId: string): Promise<CardEditorResult> {
-  return showOverlay<CardEditorResult>((close) => <CardEditorOverlay cardId={cardId} close={close} />);
+  return showOverlay<CardEditorResult>((close) => <CardEditorOverlay cardId={cardId} close={close} />, {
+    animation: 'none'
+  });
 }
 
 const styles = StyleSheet.create({

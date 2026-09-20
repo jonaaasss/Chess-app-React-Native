@@ -35,7 +35,16 @@ const closeStyles = StyleSheet.create({
   }
 });
 
-interface Entry {
+interface OverlayOptions {
+  // Dialogs fade in and out by default. Full-screen windows are better off
+  // without: during a fade both windows are half visible at once, each with
+  // its own tutorial popup on top.
+  animation?: 'fade' | 'none';
+  // Fade normally, except while the make-your-own-cards tutorial is running.
+  noAnimationInTutorial?: boolean;
+}
+
+interface Entry extends OverlayOptions {
   id: number;
   node: React.ReactNode;
 }
@@ -45,6 +54,10 @@ let setEntries: React.Dispatch<React.SetStateAction<Entry[]>> | null = null;
 
 export function OverlayHost() {
   const [entries, setEntriesState] = useState<Entry[]>([]);
+  const { step } = useTutorial();
+  // A window's animation is fixed when it opens (Android bakes it into the
+  // window, for closing too), so it's decided once per entry.
+  const animations = useRef(new Map<number, 'fade' | 'none'>());
   useEffect(() => {
     setEntries = setEntriesState;
     return () => {
@@ -52,18 +65,32 @@ export function OverlayHost() {
     };
   }, []);
 
+  for (const id of [...animations.current.keys()]) {
+    if (!entries.some((e) => e.id === id)) animations.current.delete(id);
+  }
+
   return (
     <>
-      {entries.map((entry) => (
-        <Modal key={entry.id} visible transparent animationType="fade" statusBarTranslucent onRequestClose={() => {}}>
-          {entry.node}
-        </Modal>
-      ))}
+      {entries.map((entry) => {
+        let animation = animations.current.get(entry.id);
+        if (!animation) {
+          animation = entry.animation === 'none' || (entry.noAnimationInTutorial && step) ? 'none' : 'fade';
+          animations.current.set(entry.id, animation);
+        }
+        return (
+          <Modal key={entry.id} visible transparent animationType={animation} statusBarTranslucent onRequestClose={() => {}}>
+            {entry.node}
+          </Modal>
+        );
+      })}
     </>
   );
 }
 
-export function showOverlay<T>(render: (close: (result: T) => void) => React.ReactNode): Promise<T> {
+export function showOverlay<T>(
+  render: (close: (result: T) => void) => React.ReactNode,
+  options: OverlayOptions = {}
+): Promise<T> {
   return new Promise((resolve) => {
     const id = nextId++;
     const handleClose = (result: T) => {
@@ -71,7 +98,7 @@ export function showOverlay<T>(render: (close: (result: T) => void) => React.Rea
       resolve(result);
     };
     const node = render(handleClose);
-    setEntries?.((prev) => [...prev, { id, node }]);
+    setEntries?.((prev) => [...prev, { id, node, ...options }]);
   });
 }
 
@@ -253,9 +280,10 @@ export function alertDialog(message: string): Promise<void> {
 }
 
 export function promptDialog(title: string, initial = '', placeholder = ''): Promise<string | null> {
-  return showOverlay<string | null>((close) => (
-    <PromptDialog title={title} initial={initial} placeholder={placeholder} close={close} />
-  ));
+  return showOverlay<string | null>(
+    (close) => <PromptDialog title={title} initial={initial} placeholder={placeholder} close={close} />,
+    { noAnimationInTutorial: true }
+  );
 }
 
 export function simpleMenu(options: string[], title?: string): Promise<string | null> {

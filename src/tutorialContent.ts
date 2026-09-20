@@ -317,14 +317,14 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     surface: 'boardEditor',
     target: 'boardEditor.description',
     text: 'This is the idea behind the plan: why, not what.',
-    sub: 'The arrows already show the moves. You can change this text.',
+    sub: 'G1 = the green arrow with number 1, G2 = the green arrow with number 2, O = the orange arrow. You can change this text.',
     advance: 'button',
     holeOpen: true,
     requires: 'description',
     prefillDescription: [
       'G1) d3 supports e4',
       'G2) the knight will later travel to f1 and g3',
-      'O1) castling with idea of Re1 to get the knight there'
+      'O) castling with idea of Re1 to get the knight there'
     ].join('\n')
   },
   { id: 'bp.save', surface: 'boardEditor', target: 'boardEditor.save', text: 'Tap Save to keep the board.', advance: 'boardSaved' },
