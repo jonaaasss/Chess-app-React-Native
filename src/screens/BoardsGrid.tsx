@@ -111,6 +111,7 @@ export function BoardsGrid({
             >
               <ChessBoardView board={previewBoard} size={PREVIEW_SIZE} flipped={yourColor === 'b'} />
             </Pressable>
+            <Text style={styles.tileCaption}>Board {tileIdx + 1} · tap to edit</Text>
             <View style={styles.tileActions}>
               <Pressable
                 onPress={() => handleDuplicate(board)}
@@ -151,6 +152,7 @@ export function BoardsGrid({
 const styles = StyleSheet.create({
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
   tile: { width: '50%', padding: spacing.xs, alignItems: 'center' },
+  tileCaption: { color: colors.textDim, fontSize: 12, marginTop: 6, width: PREVIEW_SIZE },
   tileActions: {
     flexDirection: 'row',
     alignItems: 'center',

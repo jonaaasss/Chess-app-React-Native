@@ -224,16 +224,18 @@ function CardEditorOverlay({
 
   return (
     <SafeAreaView style={styles.overlay}>
+      {/* Outside the scrolling part, so Cancel and Save never scroll away. */}
+      <View style={styles.header}>
+        <Pressable onPress={handleCancel} style={styles.headerCancel}>
+          <Text style={styles.topBarBtn}>Cancel</Text>
+        </Pressable>
+        <Text style={styles.title}>Edit card</Text>
+        <Pressable ref={saveRef} collapsable={false} onPress={handleSave} style={styles.headerSave}>
+          <Text style={styles.headerSaveText}>Save</Text>
+        </Pressable>
+      </View>
+
       <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.topBar}>
-          <Pressable onPress={handleCancel} hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}>
-            <Text style={styles.topBarBtn}>Cancel</Text>
-          </Pressable>
-          <Text style={styles.title}>Edit card</Text>
-          <Pressable ref={saveRef} collapsable={false} onPress={handleSave} hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}>
-            <Text style={[styles.topBarBtn, styles.saveBtn]}>Save</Text>
-          </Pressable>
-        </View>
 
         <View style={styles.modeHeaderRow}>
           <Text style={[styles.fieldLabel, { marginTop: 0, marginBottom: 0 }]}>Boards</Text>
@@ -285,9 +287,28 @@ export function openCardEditor(cardId: string): Promise<CardEditorResult> {
 const styles = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: colors.bg },
   content: { padding: 16, paddingBottom: 32 },
-  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.bg
+  },
+  headerCancel: { minHeight: 48, minWidth: 64, justifyContent: 'center' },
+  headerSave: {
+    minHeight: 48,
+    minWidth: 84,
+    paddingHorizontal: 22,
+    borderRadius: 999,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  headerSaveText: { color: colors.onPrimary, ...type.bodyStrong },
   topBarBtn: { color: colors.textDim, ...type.body },
-  saveBtn: { color: colors.accentHover, ...type.bodyStrong },
   title: { color: colors.text, ...type.h2 },
   fieldLabel: { color: colors.textDim, fontSize: 12.5, marginBottom: 6, marginTop: 14 },
   modeHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 0, marginBottom: 6 },

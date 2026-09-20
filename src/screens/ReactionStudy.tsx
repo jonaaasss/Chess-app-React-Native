@@ -146,6 +146,8 @@ export function ReactionStudy({
   const viewPly = reviewPly ?? ply;
   const [selected, setSelected] = useState<string | null>(null);
   const [wrongMove, setWrongMove] = useState(false);
+  // The square the wrong move was aimed at, flashed red while the message shows.
+  const [wrongSquare, setWrongSquare] = useState<string | null>(null);
   const [wrongMovePreview, setWrongMovePreview] = useState<Partial<Record<string, PieceCode>> | null>(null);
   const [hintOn, setHintOn] = useState(false);
   const [mistakes, setMistakes] = useState(0);
@@ -498,6 +500,7 @@ export function ReactionStudy({
         setHintOn(false);
       } else {
         setWrongMove(true);
+        setWrongSquare(sq);
         setMistakes((m) => m + 1);
         setWrongMovePreview(makeMove(activeState, selected, sq).next.pieces);
         // Clear the selection right away, not after the preview finishes —
@@ -508,6 +511,7 @@ export function ReactionStudy({
         setTimeout(() => setWrongMovePreview(null), WRONG_MOVE_SHOW_MS);
         setTimeout(() => {
           setWrongMove(false);
+          setWrongSquare(null);
         }, WRONG_MOVE_SHOW_MS + PIECE_ANIM_DURATION_MS);
       }
       return;
@@ -608,12 +612,17 @@ export function ReactionStudy({
         : colors.textDim
       : colors.textDim;
 
+  // A wrong move is announced where you're looking, in the status line above
+  // the board, rather than under the buttons.
+  const statusShown = wrongMove ? 'Wrong move — try again' : statusText;
+  const statusColorShown = wrongMove ? colors.danger : statusColor;
+
   return (
     <View style={{ alignItems: 'center', gap: 10 }}>
       {board.front.text ? <Text style={styles.boardText}>{board.front.text}</Text> : null}
-      <Text style={[styles.status, { color: statusColor }]}>
+      <Text style={[styles.status, { color: statusColorShown }]}>
         {boards.length > 1 ? `Board ${boardIdx + 1} / ${boards.length} — ` : ''}
-        {statusText}
+        {statusShown}
       </Text>
 
       <View ref={guideTargets?.board} collapsable={false}>
@@ -641,6 +650,7 @@ export function ReactionStudy({
                   {isSel && <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.selHighlight]} />}
                   {isTarget && !isCapture && <View pointerEvents="none" style={styles.moveDot} />}
                   {isCapture && <View pointerEvents="none" style={styles.captureRing} />}
+                  {sq === wrongSquare && <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.wrongSquare]} />}
                 </View>
               );
             })}
@@ -723,7 +733,6 @@ export function ReactionStudy({
             </Pressable>
           </View>
           <Text style={styles.slipNote}>Show solution counts as a slip.</Text>
-          <Text style={[styles.wrongText, !wrongMove && styles.wrongTextHidden]}>Wrong move. Try again.</Text>
         </>
       ) : (
         <Pressable
@@ -761,8 +770,7 @@ const styles = StyleSheet.create({
   notation: { color: colors.textDim, fontSize: 13, textAlign: 'center', paddingHorizontal: 12 },
   notationYours: { color: colors.primary, fontWeight: '700' },
   slipNote: { color: colors.textDim, fontSize: 12 },
-  wrongText: { color: colors.danger, fontSize: 13, fontWeight: '700' },
-  wrongTextHidden: { opacity: 0 },
+  wrongSquare: { backgroundColor: 'rgba(220,38,38,0.5)' },
   actionRow: { flexDirection: 'row', gap: 10, alignSelf: 'stretch', paddingHorizontal: 12 },
   actionBtn: { flex: 1, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16, borderRadius: radius.pill },
   hintBtn: { backgroundColor: colors.gold },

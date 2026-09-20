@@ -4,7 +4,7 @@ import Svg, { Path } from 'react-native-svg';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { allSquares, cloneBoardFace, flipIndex, squareFromIndex, squareIndex, startingPosition, toFen } from '../chess';
 import { legalMovesFrom, makeMove, isPromotionMove, type GameState } from '../chessEngine';
-import type { Arrow, ArrowColor, BoardFace, BoardMove, CardMode, Circle, MoveNode, PromotionPiece, ReactionBoard } from '../types';
+import type { Arrow, ArrowColor, BoardFace, BoardMove, CardMode, Circle, MoveNode, PieceCode, PromotionPiece, ReactionBoard } from '../types';
 import { arrowColors, boardStyles, colors, engineColors, radius, spacing, type, variationColor } from '../theme';
 import { CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, type NumberedArrow } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts } from '../components/PieceAnimation';
@@ -144,18 +144,34 @@ function evalLabel(line: EngineLine): string {
 // bottom — so the track's true middle lands exactly on the board's middle.
 // The number floats above that box (absolutely positioned, so it doesn't
 // add to its height) rather than sharing space inside it.
-function EngineEvalBar({ lines, flipped, height }: { lines: EngineLine[]; flipped: boolean; height: number }) {
+function EngineEvalBar({
+  lines,
+  stale,
+  flipped,
+  height
+}: {
+  lines: EngineLine[];
+  stale?: boolean;
+  flipped: boolean;
+  height: number;
+}) {
   const best = lines.find((l) => l.multipv === 1);
   let whiteShare = 0.5;
   if (best) {
     if (best.mate !== null) whiteShare = best.mate > 0 ? 1 : 0;
     else if (best.cp !== null) whiteShare = 1 / (1 + Math.exp(-best.cp / 300));
   }
+  // W and B mark the ends of the bar; each is dark on the white fill and light
+  // on the dark track, whichever it happens to sit on.
+  const whiteLetter = whiteShare > 0.12 ? '#0f172a' : '#cbd5e1';
+  const blackLetter = whiteShare < 0.88 ? '#cbd5e1' : '#0f172a';
   return (
-    <View style={[evalBarStyles.wrap, { height }]}>
+    <View style={[evalBarStyles.wrap, { height }, stale && { opacity: 0.5 }]}>
       <Text style={evalBarStyles.label}>{best ? evalLabel(best) : '—'}</Text>
       <View style={[evalBarStyles.track, { height, justifyContent: flipped ? 'flex-start' : 'flex-end' }]}>
         <View style={{ width: '100%', height: `${whiteShare * 100}%`, backgroundColor: '#e7e9ee' }} />
+        <Text style={[evalBarStyles.endLetter, { top: 2, color: flipped ? whiteLetter : blackLetter }]}>{flipped ? 'W' : 'B'}</Text>
+        <Text style={[evalBarStyles.endLetter, { bottom: 2, color: flipped ? blackLetter : whiteLetter }]}>{flipped ? 'B' : 'W'}</Text>
         {/* Marks the 0.0/even point at the bar's actual midpoint — always
             here regardless of `flipped`, since that only changes which end
             is White's, not where "even" sits. */}
@@ -185,7 +201,8 @@ const evalBarStyles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: '#2b2f36'
   },
-  centerLine: { position: 'absolute', left: 0, right: 0, top: '50%', height: 1, backgroundColor: 'rgba(148,163,184,0.9)' }
+  centerLine: { position: 'absolute', left: 0, right: 0, top: '50%', height: 1, backgroundColor: 'rgba(148,163,184,0.9)' },
+  endLetter: { position: 'absolute', left: 0, right: 0, textAlign: 'center', fontSize: 10, fontWeight: '800' }
 });
 
 // Same circular-arrow glyph as Study's RewindIcon (just smaller) — signals
@@ -216,18 +233,21 @@ const MULTIPV_SLOTS = [1, 2, 3];
 function EngineMovesRow({
   lines,
   engineState,
+  stale,
   onPlayMove,
   panelRef
 }: {
   lines: EngineLine[];
   engineState: GameState;
+  // Showing the last result while the new position is analysed.
+  stale?: boolean;
   onPlayMove: (line: EngineLine) => void;
   // Lets the tutorial spotlight the panel.
   panelRef?: React.RefObject<View | null>;
 }) {
   const movePrefix = engineState.turn === 'w' ? '1.' : '1...';
   return (
-    <View ref={panelRef} collapsable={false} style={engineMovesStyles.panel}>
+    <View ref={panelRef} collapsable={false} style={[engineMovesStyles.panel, stale && { opacity: 0.5 }]}>
       {MULTIPV_SLOTS.map((slot) => {
         const isBest = slot === 1;
         const rowStyle = [engineMovesStyles.row, isBest && engineMovesStyles.rowBest, slot !== MULTIPV_SLOTS.length && engineMovesStyles.rowDivider];
@@ -251,7 +271,7 @@ function EngineMovesRow({
           // position yet — show the raw squares rather than crash.
         }
         return (
-          <Pressable key={slot} onPress={() => onPlayMove(line)} style={rowStyle}>
+          <Pressable key={slot} onPress={() => onPlayMove(line)} disabled={stale} style={rowStyle}>
             <Text style={[engineMovesStyles.rank, isBest && engineMovesStyles.rankBest]}>{slot}</Text>
             <Text style={[engineMovesStyles.move, isBest && engineMovesStyles.moveBest]}>
               {movePrefix}
@@ -368,12 +388,17 @@ function ReactionBoardEditorOverlay({
   // Hidden while guided, except during the steps that point at them.
   const hideEngine = guided && !tutorial.step?.showEngine;
 
-  // The how-it-works tip: shown by default, closable with its ✕ and
-  // reopenable via the ⓘ next to the title, remembered per mode. null until
-  // the saved flag has loaded, so a tip you've hidden never flashes open.
+  // The how-it-works tip: open the first time this mode's editor is used (and
+  // folded from then on — it takes up a good part of the screen), closable
+  // with its ✕ and reopenable via the ⓘ next to the title, remembered per
+  // mode. null until the saved flag has loaded, so a tip you've hidden never
+  // flashes open.
   const [tipHidden, setTipHiddenState] = useState<boolean | null>(null);
   useEffect(() => {
-    getBoardEditorTipHidden(mode).then(setTipHiddenState);
+    getBoardEditorTipHidden(mode).then((hidden) => {
+      setTipHiddenState(hidden);
+      if (!hidden) setBoardEditorTipHidden(mode, true);
+    });
   }, [mode]);
   const tipOpen = tipHidden === false;
   function setTipHidden(hidden: boolean) {
@@ -473,6 +498,15 @@ function ReactionBoardEditorOverlay({
   // currently on screen — otherwise a slow-to-cancel previous search could
   // flash stale arrows/eval for a moment after a move.
   const engineLines = engine.analyzedFen === fen ? engine.lines : [];
+  // While the next position is still being analysed the panel keeps showing
+  // the last result, dimmed and not tappable, instead of three spinners (the
+  // arrows are never kept: they'd point at the wrong position). It shows the
+  // position they were for, so their notation still reads right.
+  const lastEngine = useRef<{ lines: EngineLine[]; state: GameState } | null>(null);
+  if (engineLines.length > 0) lastEngine.current = { lines: engineLines, state: engineState };
+  const engineStale = engineLines.length === 0 && lastEngine.current !== null;
+  const panelLines = engineStale ? lastEngine.current!.lines : engineLines;
+  const panelState = engineStale ? lastEngine.current!.state : engineState;
 
   // Where the recorded line branches (two or more continuations from this
   // position): one numbered arrow per continuation, 1 being the main line
@@ -1114,21 +1148,23 @@ function ReactionBoardEditorOverlay({
 
   return (
     <SafeAreaView style={styles.overlay}>
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
-        <View style={styles.topBar}>
-          <Pressable onPress={handleCancel} hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}>
-            <Text style={styles.topBarBtn}>Cancel</Text>
-          </Pressable>
-          <View style={styles.titleGroup}>
-            <Text style={styles.title}>{mode === 'reactions' ? 'Reactions board' : 'Board editor'}</Text>
-            <Pressable onPress={() => setTipHidden(tipOpen)} hitSlop={10}>
-              <Text style={[styles.tipToggle, tipOpen && styles.tipToggleOpen]}>ⓘ</Text>
-            </Pressable>
-          </View>
-          <Pressable ref={saveRef} collapsable={false} onPress={handleSave} hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}>
-            <Text style={[styles.topBarBtn, styles.saveBtn]}>Save</Text>
+      {/* Outside the scrolling part, so Cancel and Save never scroll away. */}
+      <View style={styles.header}>
+        <Pressable onPress={handleCancel} style={styles.headerCancel}>
+          <Text style={styles.topBarBtn}>Cancel</Text>
+        </Pressable>
+        <View style={styles.titleGroup}>
+          <Text style={styles.title}>{mode === 'reactions' ? 'Reactions board' : 'Board editor'}</Text>
+          <Pressable onPress={() => setTipHidden(tipOpen)} hitSlop={12}>
+            <Text style={[styles.tipToggle, tipOpen && styles.tipToggleOpen]}>ⓘ</Text>
           </Pressable>
         </View>
+        <Pressable ref={saveRef} collapsable={false} onPress={handleSave} style={styles.headerSave}>
+          <Text style={styles.headerSaveText}>Save</Text>
+        </Pressable>
+      </View>
+
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
 
         {guided && tutorial.step?.showTip ? (
           // Shown for the tutorial's intro whatever the user's own hidden/shown
@@ -1173,7 +1209,13 @@ function ReactionBoardEditorOverlay({
         </View>
 
         {!hideEngine && (
-          <EngineMovesRow lines={engineLines} engineState={engineState} onPlayMove={playEngineMove} panelRef={engineMovesRef} />
+          <EngineMovesRow
+            lines={panelLines}
+            engineState={panelState}
+            stale={engineStale}
+            onPlayMove={playEngineMove}
+            panelRef={engineMovesRef}
+          />
         )}
 
         <View ref={boardRowRef} collapsable={false} style={styles.boardRow}>
@@ -1218,7 +1260,7 @@ function ReactionBoardEditorOverlay({
             <PieceAnimationGhosts ghosts={ghosts} cell={CELL} />
           </View>
         </View>
-        {!hideEngine && <EngineEvalBar lines={engineLines} flipped={flipped} height={BOARD_SIZE} />}
+        {!hideEngine && <EngineEvalBar lines={panelLines} stale={engineStale} flipped={flipped} height={BOARD_SIZE} />}
         </View>
 
         {pendingPromotion && (
@@ -1226,7 +1268,7 @@ function ReactionBoardEditorOverlay({
             <Text style={styles.promoLabel}>Promote to:</Text>
             {PROMOTION_PIECES.map((p) => (
               <Pressable key={p} onPress={() => choosePromotion(p)} style={styles.promoBtn}>
-                <Text style={styles.promoBtnText}>{p}</Text>
+                <PieceGlyph code={`${engineState.turn}${p}` as PieceCode} cell={42} />
               </Pressable>
             ))}
           </View>
@@ -1242,7 +1284,7 @@ function ReactionBoardEditorOverlay({
             top — these are the controls you reach for while actively
             drawing, not one-time setup like board style (now global). */}
         <View style={styles.row}>
-          <Text style={styles.label}>Arrow</Text>
+          <Text style={styles.label}>Color</Text>
           <View ref={swatchesRef} collapsable={false} style={styles.swatchRow}>
             {ARROW_KEYS.map((color) => (
               <Pressable
@@ -1265,8 +1307,8 @@ function ReactionBoardEditorOverlay({
             ))}
           </View>
           <View style={{ flex: 1 }} />
-          <Pressable onPress={handleClearArrows} style={styles.toolBtn}>
-            <Text style={styles.toolBtnText}>✖</Text>
+          <Pressable onPress={handleClearArrows} style={styles.clearBtn}>
+            <Text style={styles.clearBtnText}>Clear arrows</Text>
           </Pressable>
         </View>
 
@@ -1275,20 +1317,15 @@ function ReactionBoardEditorOverlay({
             <View style={styles.notationHeaderRow}>
               <Text style={styles.notationHeaderText}>Recording</Text>
               <View style={styles.notationHeaderActions}>
-                <Pressable onPress={handleDeleteRecording} hitSlop={8}>
-                  <Text style={styles.deleteRecordingText}>Delete recording</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() =>
-                    alertDialog(
-                      "Every move you play on the board is added to the notation below. Tap a move to jump back to that position — playing a different move from there starts a variation. Long-press a move to delete it and everything after it, or use \"Delete recording\" to clear the whole recording and start over from the starting position. Use ‹ / › (above) to step through the line one move at a time. Tap Save (top right) whenever you're done."
-                    )
-                  }
-                  hitSlop={10}
-                  style={styles.infoBtn}
-                >
-                  <Text style={styles.infoBtnText}>?</Text>
-                </Pressable>
+                {cursorId ? (
+                  <Pressable onPress={() => handleDeleteMove(cursorId)} style={styles.notationAction}>
+                    <Text style={styles.deleteRecordingText}>Delete from here</Text>
+                  </Pressable>
+                ) : (
+                  <Pressable onPress={handleDeleteRecording} style={styles.notationAction}>
+                    <Text style={styles.deleteRecordingText}>Delete recording</Text>
+                  </Pressable>
+                )}
               </View>
             </View>
             <View ref={notationRef} collapsable={false}>
@@ -1303,6 +1340,7 @@ function ReactionBoardEditorOverlay({
               onDelete={handleDeleteMove}
             />
             </View>
+            <Text style={styles.notationHint}>Tap a move to jump to it. Long-press to delete it and everything after it.</Text>
           </>
         )}
 
@@ -1323,9 +1361,23 @@ function ReactionBoardEditorOverlay({
           device height or scroll position — no more relying on the content
           above it happening to be short enough to fit. */}
       <View style={[styles.footer, { paddingBottom: insets.bottom + 10 }]}>
-        <Pressable onPress={() => setTool('move')} style={[styles.toolBtn, tool === 'move' && styles.toolBtnActive]}>
-          <Text style={[styles.toolBtnText, tool === 'move' && styles.toolBtnTextActive]}>✥</Text>
-        </Pressable>
+        <View style={styles.toolSegment}>
+          <Pressable
+            onPress={() => setTool('move')}
+            style={[styles.toolSegBtn, tool === 'move' && styles.toolSegBtnActive]}
+          >
+            <Text style={[styles.toolSegText, tool === 'move' && styles.toolSegTextActive]}>Move</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              setTool('annotate');
+              setSelected(null);
+            }}
+            style={[styles.toolSegBtn, tool === 'annotate' && styles.toolSegBtnActive]}
+          >
+            <Text style={[styles.toolSegText, tool === 'annotate' && styles.toolSegTextActive]}>Draw</Text>
+          </Pressable>
+        </View>
         <View style={{ flex: 1 }} />
         <View style={styles.navGroup}>
           <Pressable ref={backRef} collapsable={false} onPress={handleBack} disabled={!canBack} style={[styles.toolBtn, !canBack && styles.stepBtnDisabled]}>
@@ -1336,7 +1388,7 @@ function ReactionBoardEditorOverlay({
           </Pressable>
         </View>
       </View>
-      <SnackbarLayer bottom={76} />
+      <SnackbarLayer bottom={88} />
       <TutorialLayer surface="boardEditor" flipped={flipped} />
     </SafeAreaView>
   );
@@ -1461,9 +1513,28 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
     backgroundColor: colors.bg
   },
-  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.bg
+  },
+  headerCancel: { minHeight: 48, minWidth: 64, justifyContent: 'center' },
+  headerSave: {
+    minHeight: 48,
+    minWidth: 84,
+    paddingHorizontal: 22,
+    borderRadius: radius.pill,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  headerSaveText: { color: colors.onPrimary, ...type.bodyStrong },
   topBarBtn: { color: colors.textDim, ...type.body },
-  saveBtn: { color: colors.accentHover, ...type.bodyStrong },
   title: { color: colors.text, ...type.h2 },
   titleGroup: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   tipToggle: { color: colors.textDim, fontSize: 18, fontWeight: '700' },
@@ -1483,16 +1554,19 @@ const styles = StyleSheet.create({
   sideLabelBtnBack: { backgroundColor: colors.danger },
   flipIconRotated: { transform: [{ rotate: '180deg' }] },
   sideLabelText: { color: colors.onPrimary, fontSize: 12.5, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
-  fieldLabel: { color: colors.textDim, fontSize: 12.5, marginBottom: 6, marginTop: 10 },
+  fieldLabel: { color: colors.textDim, fontSize: 12.5, marginBottom: 6, marginTop: 6 },
+  // One line high until there's more to show (then it grows to about four).
   textArea: {
     backgroundColor: colors.panel2,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 10,
     color: colors.text,
-    padding: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     fontSize: 14,
-    minHeight: 60,
+    minHeight: 44,
+    maxHeight: 112,
     textAlignVertical: 'top'
   },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14 },
@@ -1501,10 +1575,17 @@ const styles = StyleSheet.create({
   arrowSwatch: { width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: 'transparent' },
   swatchActive: { borderColor: colors.accent },
   navGroup: { flexDirection: 'row', gap: 10 },
-  toolBtn: { width: 44, height: 44, borderRadius: 10, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel2, alignItems: 'center', justifyContent: 'center' },
+  toolBtn: { width: 48, height: 48, borderRadius: 10, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel2, alignItems: 'center', justifyContent: 'center' },
   toolBtnActive: { backgroundColor: colors.accent, borderColor: colors.accent },
   toolBtnText: { color: colors.text, fontSize: 18 },
   toolBtnTextActive: { color: colors.onPrimary },
+  toolSegment: { flexDirection: 'row', backgroundColor: colors.panel2, borderRadius: 12, borderWidth: 1, borderColor: colors.border, padding: 2 },
+  toolSegBtn: { minHeight: 44, minWidth: 74, paddingHorizontal: 14, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  toolSegBtnActive: { backgroundColor: colors.accent },
+  toolSegText: { color: colors.textDim, fontSize: 14, fontWeight: '700' },
+  toolSegTextActive: { color: colors.onPrimary },
+  clearBtn: { minHeight: 48, justifyContent: 'center', paddingLeft: 12 },
+  clearBtnText: { color: colors.textDim, fontSize: 13, fontWeight: '600' },
   boardRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 20 },
   board: { alignSelf: 'center', borderRadius: 6, overflow: 'hidden', borderWidth: 1, borderColor: colors.border },
   selectedHighlight: { backgroundColor: 'rgba(21,128,61,0.35)' },
@@ -1512,16 +1593,15 @@ const styles = StyleSheet.create({
   captureRing: { position: 'absolute', width: CELL - 6, height: CELL - 6, borderRadius: (CELL - 6) / 2, borderWidth: 3, borderColor: 'rgba(220,38,38,0.85)' },
   promoRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12, alignSelf: 'center' },
   promoLabel: { color: colors.textDim, fontSize: 13, marginRight: 4 },
-  promoBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
-  promoBtnText: { color: colors.onPrimary, fontWeight: '700' },
+  promoBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.pieceBadgeBg, alignItems: 'center', justifyContent: 'center' },
   playBtn: { marginTop: 16, backgroundColor: colors.primary, borderRadius: radius.pill, paddingVertical: 14, alignItems: 'center' },
   playBtnText: { color: colors.onPrimary, fontSize: 15.5, fontWeight: '700' },
-  notationHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, marginBottom: 2 },
+  notationHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, marginBottom: 2, minHeight: 48 },
+  notationAction: { minHeight: 48, justifyContent: 'center' },
+  notationHint: { color: colors.textDim, fontSize: 12, lineHeight: 17, marginTop: 8 },
   notationHeaderText: { color: colors.textDim, fontSize: 12.5, fontWeight: '600' },
   notationHeaderActions: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   deleteRecordingText: { color: colors.danger, fontSize: 12.5, fontWeight: '700' },
-  infoBtn: { width: 22, height: 22, borderRadius: 11, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
-  infoBtnText: { color: colors.textDim, fontSize: 13, fontWeight: '700' },
   stepBtnDisabled: { opacity: 0.4 },
   applyBtn: { marginTop: 14, backgroundColor: colors.primary, borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
   applyBtnText: { color: colors.onPrimary, fontSize: 14, fontWeight: '600' },
@@ -1532,7 +1612,9 @@ const styles = StyleSheet.create({
 const notationStyles = StyleSheet.create({
   wrap: { backgroundColor: colors.panel, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: 12, marginTop: 16 },
   mainLine: { flexDirection: 'row', flexWrap: 'wrap' },
-  move: { color: colors.text, fontSize: 14.5 },
+  // The padding is the touch target: a move is a tap (jump) or long-press
+  // (delete), so it needs to be more than a line of small text tall.
+  move: { color: colors.text, fontSize: 14.5, paddingVertical: 9, paddingHorizontal: 2 },
   moveYours: { color: colors.primary },
   // Orange, not colors.accent (identical to moveYours' green) — the cursor
   // needs to stand out from "a move I played", not blend into it.

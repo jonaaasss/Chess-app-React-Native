@@ -264,8 +264,26 @@ export function PlanStudy({
 
   const styleSet = boardStyles[boardStyle] ?? boardStyles[0];
 
-  const statusText = boardDone ? 'Board complete!' : "Draw the plan's arrows";
-  const statusColor = boardDone ? colors.primary : colors.textDim;
+  // Which colour is being drawn and how far along it is ("Green arrows: 1 of
+  // 2"); a wrong arrow is announced here too, where you're looking.
+  const activeGroup = colorGroups[groupIdx];
+  const groupTotal = activeGroup ? activeGroup.arrows.length : 0;
+  const groupDone = groupTotal - remaining.length;
+  const colorName = activeGroup ? activeGroup.color[0].toUpperCase() + activeGroup.color.slice(1) : '';
+  const statusText = boardDone
+    ? 'Board complete!'
+    : wrongArrow
+      ? 'Wrong arrow — try again'
+      : activeGroup
+        ? `${colorName} arrows: ${groupDone} of ${groupTotal}`
+        : "Draw the plan's arrows";
+  const statusColor = boardDone
+    ? colors.primary
+    : wrongArrow
+      ? colors.danger
+      : activeGroup
+        ? arrowColors[activeGroup.color]
+        : colors.textDim;
 
   return (
     <View style={{ alignItems: 'center', gap: 10 }}>
@@ -336,7 +354,6 @@ export function PlanStudy({
             </Pressable>
           </View>
           <Text style={styles.slipNote}>Show solution counts as a slip.</Text>
-          <Text style={[styles.wrongText, !wrongArrow && styles.wrongTextHidden]}>Wrong arrow. Try again.</Text>
         </>
       ) : (
         <Pressable
@@ -373,8 +390,6 @@ const styles = StyleSheet.create({
   warningBtn: { alignSelf: 'flex-start', backgroundColor: colors.gold, borderRadius: radius.pill, paddingVertical: 8, paddingHorizontal: 16, marginTop: 2 },
   warningBtnText: { color: colors.onGold, fontSize: 13, fontWeight: '700' },
   slipNote: { color: colors.textDim, fontSize: 12 },
-  wrongText: { color: colors.danger, fontSize: 13, fontWeight: '700' },
-  wrongTextHidden: { opacity: 0 },
   actionRow: { flexDirection: 'row', gap: 10, alignSelf: 'stretch', paddingHorizontal: 12 },
   actionBtn: { flex: 1, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16, borderRadius: radius.pill },
   solutionBtn: { backgroundColor: colors.primary },

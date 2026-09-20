@@ -145,6 +145,9 @@ function StudySessionOverlay({
   };
   const [roundBanner, setRoundBanner] = useState(0); // the round number a banner is currently announcing, 0 = none
   const wrongThisRoundRef = useRef<QueueItem[]>([]);
+  // How many cards weren't right first time (known once round 1 is over), for
+  // the summary at the end.
+  const firstRoundWrong = useRef<number | null>(null);
   const bannerAnim = useRef(new Animated.Value(0)).current;
   const seenRoundRef = useRef(1);
 
@@ -201,6 +204,9 @@ function StudySessionOverlay({
     if (wrongItem) wrongThisRoundRef.current.push(wrongItem);
     const nextIndex = index + 1;
     if (nextIndex >= queue.length) {
+      if (roundNumber === 1 && firstRoundWrong.current === null) {
+        firstRoundWrong.current = wrongThisRoundRef.current.length;
+      }
       if (wrongThisRoundRef.current.length === 0) {
         setDone(true);
         return;
@@ -221,6 +227,7 @@ function StudySessionOverlay({
 
   function handleRestart() {
     wrongThisRoundRef.current = [];
+    firstRoundWrong.current = null;
     setRoundNumber(1);
     setQueue(shuffleCards ? shuffleArray(round1) : round1);
     setIndex(0);
@@ -309,6 +316,13 @@ function StudySessionOverlay({
             <Text style={{ fontSize: 40, color: colors.onPrimary }}>✓</Text>
           </View>
           <Text style={styles.doneTitle}>Done!</Text>
+          {!queue[0]?.guide && (
+            <Text style={styles.doneSummary}>
+              {round1.length} card{round1.length === 1 ? '' : 's'} · {round1.length - (firstRoundWrong.current ?? 0)} right first time
+              {(firstRoundWrong.current ?? 0) > 0 ? ` · ${firstRoundWrong.current} needed a retry` : ''}
+              {roundNumber > 1 ? ` · ${roundNumber} rounds` : ''}
+            </Text>
+          )}
           <Text style={styles.doneSub}>
             {queue[0]?.guide ? GUIDE_DONE_TEXT : 'Great job — you completed the session.'}
           </Text>
@@ -461,25 +475,30 @@ function StudySessionOverlay({
             </Pressable>
             <Text style={styles.hint}>Tap card to flip</Text>
 
-            <View style={styles.evalRow}>
-              <Pressable
-                disabled={!flipped}
-                onPress={() => advance(item)}
-                style={[styles.evalBtn, { backgroundColor: colors.evalWrong, opacity: flipped ? 1 : 0.4 }]}
-              >
-                <Text style={styles.evalBtnText}>✕ Wrong</Text>
-              </Pressable>
-              <Pressable
-                disabled={!flipped}
-                onPress={() => advance(null)}
-                style={[styles.evalBtn, { backgroundColor: colors.evalRight, opacity: flipped ? 1 : 0.4 }]}
-              >
-                <Text style={styles.evalBtnText}>✓ Right</Text>
-              </Pressable>
-            </View>
           </>
         )}
 
+      </ScrollView>
+
+      <View style={styles.bottomBar}>
+        {cardReady && card.mode === 'others' && (
+          <View style={styles.evalRow}>
+            <Pressable
+              disabled={!flipped}
+              onPress={() => advance(item)}
+              style={[styles.evalBtn, { backgroundColor: colors.evalWrong, opacity: flipped ? 1 : 0.4 }]}
+            >
+              <Text style={styles.evalBtnText}>✕ Wrong</Text>
+            </Pressable>
+            <Pressable
+              disabled={!flipped}
+              onPress={() => advance(null)}
+              style={[styles.evalBtn, { backgroundColor: colors.evalRight, opacity: flipped ? 1 : 0.4 }]}
+            >
+              <Text style={styles.evalBtnText}>✓ Right</Text>
+            </Pressable>
+          </View>
+        )}
         <View style={styles.footerRow}>
           {item?.guide ? <View style={{ width: 38 }} /> : <EditCircleButton onPress={handleEditCard} />}
           <Pressable onPress={handleSkip} style={styles.footerBtn}>
@@ -490,9 +509,9 @@ function StudySessionOverlay({
             <Text style={styles.skipNote}>counts as a slip</Text>
           </Pressable>
         </View>
-      </ScrollView>
+      </View>
 
-      <SnackbarLayer />
+      <SnackbarLayer bottom={cardReady && card.mode === 'others' ? 130 : 72} />
       {item?.guide && (
         <GuideCoach
           step={coachStepShown}
@@ -588,17 +607,24 @@ const styles = StyleSheet.create({
   },
   studyCardText: { color: colors.text, fontSize: 16, lineHeight: 24, alignSelf: 'stretch' },
   hint: { color: colors.textDim, fontSize: 12, textAlign: 'center', marginTop: 6 },
-  evalRow: { flexDirection: 'row', gap: 12, marginTop: 16 },
+  evalRow: { flexDirection: 'row', gap: 12, marginBottom: 6 },
   evalBtn: { flex: 1, borderRadius: radius.pill, paddingVertical: 14, alignItems: 'center' },
   evalBtnText: { color: 'white', fontSize: 15, fontWeight: '700' },
   footerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 18,
-    paddingTop: 14,
+    minHeight: 48
+  },
+  // Fixed below the scrolling card, so grading a card and Edit/Skip are always
+  // in reach however tall the card is.
+  bottomBar: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 4,
     borderTopWidth: 1,
-    borderTopColor: colors.border
+    borderTopColor: colors.border,
+    backgroundColor: colors.bg
   },
   footerBtn: { minHeight: 48, alignItems: 'flex-end', justifyContent: 'center', paddingHorizontal: 4 },
   skipRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -615,6 +641,7 @@ const styles = StyleSheet.create({
     marginBottom: 10
   },
   doneTitle: { color: colors.text, ...type.display },
+  doneSummary: { color: colors.text, fontSize: 16, fontWeight: '600', textAlign: 'center' },
   doneSub: { color: colors.textDim, marginBottom: 20, textAlign: 'center' },
   doneActions: { gap: 10, width: '100%', maxWidth: 280 },
   blockBtn: { borderRadius: radius.pill, paddingVertical: 13, alignItems: 'center' },
