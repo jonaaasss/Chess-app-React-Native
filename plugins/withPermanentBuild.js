@@ -11,10 +11,12 @@ const path = require('path');
 // - The permanent app keeps the original package name (and so the data that
 //   was already on the phone) and is called "Permanent" — its own app_name,
 //   which only the release build sees.
-// - The development app gets the package name suffix ".dev" and keeps the
-//   normal app name. Start it with `npm run android` (the --app-id there tells
-//   Expo which package to launch).
+// - The development app gets the package name suffix ".dev" and is called
+//   "Chess DEV", so the two can't be mistaken for each other on the phone. Open
+//   it from the phone (or `npm run android`, whose --app-id names the package
+//   to launch) — Metro's "a" key opens the other one.
 const DEV_SUFFIX = '.dev';
+const DEV_NAME = 'Chess DEV';
 const PERMANENT_NAME = 'Permanent';
 
 function withDevPackageSuffix(config) {
@@ -29,21 +31,27 @@ function withDevPackageSuffix(config) {
   });
 }
 
-function withPermanentName(config) {
+// A build type's own res/values/strings.xml overrides the app name from main.
+function writeAppName(config, buildType, name) {
+  const dir = path.join(config.modRequest.platformProjectRoot, 'app', 'src', buildType, 'res', 'values');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'strings.xml'),
+    `<resources>\n  <string name="app_name">${name}</string>\n</resources>\n`
+  );
+}
+
+function withAppNames(config) {
   return withDangerousMod(config, [
     'android',
     (config) => {
-      const dir = path.join(config.modRequest.platformProjectRoot, 'app', 'src', 'release', 'res', 'values');
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(
-        path.join(dir, 'strings.xml'),
-        `<resources>\n  <string name="app_name">${PERMANENT_NAME}</string>\n</resources>\n`
-      );
+      writeAppName(config, 'release', PERMANENT_NAME);
+      writeAppName(config, 'debug', DEV_NAME);
       return config;
     }
   ]);
 }
 
 module.exports = function withPermanentBuild(config) {
-  return withPermanentName(withDevPackageSuffix(config));
+  return withAppNames(withDevPackageSuffix(config));
 };

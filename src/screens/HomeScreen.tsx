@@ -4,10 +4,14 @@ import { useFocusEffect } from '@react-navigation/native';
 import {
   getExampleRepertoireHidden,
   getGroupStats,
+  getSetting,
   getShowFirstOpeningGuide,
+  getUserDataSummary,
   setExampleRepertoireHidden,
+  setSetting,
   setShowFirstOpeningGuide
 } from '../storage';
+import { useAccount } from '../account';
 import type { GroupId, PieceCode } from '../types';
 import { colors, radius, spacing, touchTarget, type } from '../theme';
 import { BigButton, Screen, SettingsCircleButton } from '../components/Common';
@@ -30,6 +34,10 @@ export function HomeScreen({
   onOpenSettings: () => void;
 }) {
   const tutorial = useTutorial();
+  const { user, ready: accountReady } = useAccount();
+  // A nudge to sign in and back up, once there's something worth backing up.
+  const [ownCards, setOwnCards] = useState(0);
+  const [reminderDismissed, setReminderDismissed] = useState(true);
   const whiteTileRef = useTutorialTarget('home.white');
   const [exampleHidden, setExampleHiddenState] = useState(false);
   const [showGuide, setShowGuide] = useState(true);
@@ -46,6 +54,8 @@ export function HomeScreen({
     const white = await getGroupStats('white');
     const black = await getGroupStats('black');
     setStats({ white, black });
+    setOwnCards((await getUserDataSummary()).cards);
+    setReminderDismissed(await getSetting<boolean>('backupReminderDismissed', false));
   }, []);
 
   // The native stack keeps this screen mounted while a repertoire/opening/
@@ -66,6 +76,11 @@ export function HomeScreen({
     const white = await getGroupStats('white');
     const black = await getGroupStats('black');
     setStats({ white, black });
+  }
+
+  async function dismissReminder() {
+    setReminderDismissed(true);
+    await setSetting('backupReminderDismissed', true);
   }
 
   async function hideGuide() {
@@ -110,6 +125,20 @@ export function HomeScreen({
           </Pressable>
         );
       })}
+
+      {accountReady && !user && ownCards >= 3 && !reminderDismissed && (
+        <View style={styles.reminder}>
+          <Text style={styles.reminderText}>Your cards are only on this phone. Sign in to back them up.</Text>
+          <View style={styles.reminderActions}>
+            <Pressable onPress={onOpenSettings} style={styles.reminderBtn}>
+              <Text style={styles.reminderBtnText}>Back up my cards</Text>
+            </Pressable>
+            <Pressable onPress={dismissReminder} style={styles.reminderDismiss}>
+              <Text style={styles.reminderDismissText}>Not now</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
 
       <Pressable onPress={toggleExampleHidden} style={styles.exampleBtn}>
         <Text style={styles.exampleBtnText}>{exampleHidden ? 'Show Example Repertoire' : 'Hide Example Repertoire'}</Text>
@@ -171,6 +200,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center'
   },
   tileChevron: { color: colors.text, fontSize: 18 },
+  reminder: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    marginBottom: spacing.md
+  },
+  reminderText: { color: colors.text, ...type.caption },
+  reminderActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginTop: spacing.sm },
+  reminderBtn: {
+    minHeight: touchTarget,
+    borderRadius: radius.pill,
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.lg,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  reminderBtnText: { color: colors.onPrimary, fontSize: 14, fontWeight: '700' },
+  reminderDismiss: { minHeight: touchTarget, paddingHorizontal: spacing.md, justifyContent: 'center' },
+  reminderDismissText: { color: colors.textDim, fontSize: 14, fontWeight: '600' },
   exampleBtn: { alignItems: 'center', justifyContent: 'center', minHeight: touchTarget, marginTop: spacing.md },
   exampleBtnText: { color: colors.textDim, ...type.caption, textDecorationLine: 'underline' }
 });

@@ -113,9 +113,71 @@ async function load(): Promise<Store> {
   return store;
 }
 
+// Told after every save, so the cloud backup can notice that something changed.
+const changeListeners = new Set<() => void>();
+
+export function onStoreChange(listener: () => void): () => void {
+  changeListeners.add(listener);
+  return () => {
+    changeListeners.delete(listener);
+  };
+}
+
 async function persist(): Promise<void> {
   if (!store) return;
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+  changeListeners.forEach((listener) => listener());
+}
+
+// ---------- Backup / restore of the whole store ----------
+
+// Where the data on the phone is kept just before a restore replaces it.
+const BEFORE_RESTORE_KEY = 'chess-flashcards-data.before-restore';
+
+export async function exportStoreJson(): Promise<string> {
+  return JSON.stringify(await load());
+}
+
+// Replaces everything on the phone with a backup made by `exportStoreJson`.
+// What was there is kept under a separate key first, for "Undo".
+export async function replaceStoreFromJson(json: string): Promise<void> {
+  const parsed = JSON.parse(json) as Store;
+  if (!Array.isArray(parsed.repertoires) || !Array.isArray(parsed.openings) || !Array.isArray(parsed.cards)) {
+    throw new Error('This backup is not valid.');
+  }
+  parsed.settings = parsed.settings ?? {};
+  migrate(parsed);
+  const current = await load();
+  await AsyncStorage.setItem(BEFORE_RESTORE_KEY, JSON.stringify(current));
+  store = parsed;
+  await persist();
+  await ensureSeeded();
+}
+
+export async function getBeforeRestoreJson(): Promise<string | null> {
+  return AsyncStorage.getItem(BEFORE_RESTORE_KEY);
+}
+
+// What the user has made themselves: the seeded example repertoire doesn't
+// count, so a phone with only that is "fresh".
+export async function getUserDataSummary(): Promise<{
+  repertoires: number;
+  openings: number;
+  cards: number;
+  hasUserData: boolean;
+}> {
+  const s = await load();
+  const ownRepertoires = s.repertoires.filter((r) => !r.isExample);
+  const ownRepertoireIds = new Set(ownRepertoires.map((r) => r.id));
+  const ownOpenings = s.openings.filter((o) => ownRepertoireIds.has(o.repertoireId));
+  const ownOpeningIds = new Set(ownOpenings.map((o) => o.id));
+  const cards = s.cards.filter((c) => ownOpeningIds.has(c.openingId)).length;
+  return {
+    repertoires: ownRepertoires.length,
+    openings: ownOpenings.length,
+    cards,
+    hasUserData: ownRepertoires.length > 0
+  };
 }
 
 export function uid(): string {

@@ -19,6 +19,7 @@ import type { GroupId } from './src/types';
 import { colors } from './src/theme';
 import { OverlayHost, SnackbarLayer } from './src/overlay';
 import { TutorialProvider } from './src/tutorial';
+import { startBackupService } from './src/autoBackup';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { RepertoiresScreen } from './src/screens/RepertoiresScreen';
 import { OpeningsScreen } from './src/screens/OpeningsScreen';
@@ -112,6 +113,12 @@ export default function App() {
   useEffect(() => {
     ensureSeeded().then(() => setDataReady(true));
   }, []);
+
+  // Automatic cloud backup (only does anything while signed in).
+  useEffect(() => {
+    if (!dataReady) return;
+    return startBackupService();
+  }, [dataReady]);
 
   const onLayoutRootView = useCallback(() => {
     if (ready) SplashScreen.hideAsync().catch(() => {});

@@ -326,6 +326,45 @@ export function confirmDialog(message: string, options: ConfirmOptions = {}): Pr
   return showOverlay<boolean>((close) => <ConfirmDialog message={message} options={options} close={close} />);
 }
 
+export interface Choice<T> {
+  label: string;
+  value: T;
+  variant?: 'primary' | 'secondary' | 'danger';
+}
+
+// A question with more than two answers, one button each; null when it's
+// dismissed (back button).
+function ChoiceDialog<T>({
+  message,
+  choices,
+  close
+}: {
+  message: string;
+  choices: Choice<T>[];
+  close: (result: T | null) => void;
+}) {
+  useOverlayBack(() => close(null));
+  return (
+    <Backdrop>
+      <Text style={styles.message}>{message}</Text>
+      <View style={{ gap: 8 }}>
+        {choices.map((choice) => (
+          <DialogButton
+            key={choice.label}
+            title={choice.label}
+            variant={choice.variant ?? 'secondary'}
+            onPress={() => close(choice.value)}
+          />
+        ))}
+      </View>
+    </Backdrop>
+  );
+}
+
+export function choiceDialog<T>(message: string, choices: Choice<T>[]): Promise<T | null> {
+  return showOverlay<T | null>((close) => <ChoiceDialog message={message} choices={choices} close={close} />);
+}
+
 export function alertDialog(message: string): Promise<void> {
   return showOverlay<void>((close) => <AlertDialog message={message} close={close} />);
 }
@@ -550,7 +589,7 @@ const styles = StyleSheet.create({
     fontSize: 15
   },
   row: { flexDirection: 'row', gap: 10, justifyContent: 'flex-end', marginTop: 16 },
-  btn: { borderRadius: radius.pill, paddingVertical: 12, paddingHorizontal: 18, backgroundColor: colors.panel2 },
+  btn: { borderRadius: radius.pill, paddingVertical: 12, paddingHorizontal: 18, backgroundColor: colors.panel2, alignItems: 'center' },
   btnPrimary: { backgroundColor: colors.accent },
   btnDanger: { backgroundColor: colors.danger },
   btnPressed: { opacity: 0.8 },
