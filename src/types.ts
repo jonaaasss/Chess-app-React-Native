@@ -8,10 +8,30 @@ export type PieceCode =
 
 export type PromotionPiece = 'Q' | 'R' | 'B' | 'N';
 
+// One "if they play X, then ..." entry on an arrow's notes. `kind` says how
+// it relates to the arrow's own move: 'reaction' = after you've played it
+// and they answer with `trigger`; 'exception' = instead of playing it, when
+// they've played `trigger` (so you do something else).
+export interface ArrowResponse {
+  trigger: string; // the opponent's move, free text e.g. "Nf6"
+  text: string;
+  kind: 'reaction' | 'exception';
+}
+
+// Plan boards only — structured notes attached to one arrow, shown as a
+// popup in Study once the arrow is drawn/revealed. Every part is optional;
+// a note with none of them filled in doesn't exist (see arrowNotes.ts).
+export interface ArrowNotes {
+  reason?: string; // why this move
+  next?: string; // the follow-up plan
+  responses?: ArrowResponse[];
+}
+
 export interface Arrow {
   from: string; // square e.g. "e4"
   to: string;
   color: ArrowColor;
+  notes?: ArrowNotes;
 }
 
 export interface Circle {
@@ -73,6 +93,12 @@ export interface BoardMove {
   turnAfter: 'w' | 'b';
   castlingAfter: CastlingRights;
   enPassantAfter: string | null;
+  // What's drawn on the position reached by this move — its own, fixed
+  // annotations, never touched by playing a later move (see
+  // chess.ts's faceAnnotationsAt). The face's own `arrows`/`circles` are
+  // this same idea for position 0, before any move.
+  arrowsAfter: Arrow[];
+  circlesAfter: Circle[];
 }
 
 // One side of a board — its own position, its own annotations, its own
@@ -127,6 +153,14 @@ export interface ReactionBoard {
   enPassant: string | null;
   arrows: Arrow[];
   circles: Circle[];
+  // The moves played during "setup" (before Play) to reach `pieces` from the
+  // standard starting position — kept only so the notation panel can show
+  // them; unlike `recording`, undoing/redoing during setup is a whole-board
+  // snapshot swap (see ReactionBoardEditorOverlay's undo/redo stacks), so
+  // this list rides along with those snapshots for free. Boards migrated
+  // from the old freeform piece-map editor may start from a non-standard
+  // position with no setup moves at all — an empty array either way.
+  setupMoves: BoardMove[];
   // The recorded game tree's root-level moves — a list (not a single node)
   // so branching works the same way at the very first move as it does
   // anywhere deeper in the line: recording[0] is the move originally played
@@ -154,11 +188,31 @@ export interface Repertoire {
   isExample?: boolean;
 }
 
+// What every new board created within an opening starts from, chosen once
+// when the opening itself is created (see OpeningStartPositionOverlay.tsx) —
+// there's no later "change the default" option, so this never changes after
+// that. Unset means the plain starting position, same as before this
+// existed. `setupMoves` is kept (not just the final position) purely so a
+// new Reactions board's notation panel can show how it was reached, the
+// same way its own `setupMoves` already works.
+export interface OpeningStartPosition {
+  pieces: Partial<Record<string, PieceCode>>;
+  turn: 'w' | 'b';
+  castling: CastlingRights;
+  enPassant: string | null;
+  setupMoves: BoardMove[];
+}
+
 export interface Opening {
   id: string;
   repertoireId: string;
   name: string;
   order: number;
+  startPosition?: OpeningStartPosition;
+  // Optional free-text summary of the opening, written on the Cards screen.
+  // Shown (blurred until "Show") as the first thing when you study the
+  // opening. Unset/blank means no summary — nothing is shown.
+  summary?: string;
 }
 
 export interface Card {
@@ -170,4 +224,10 @@ export interface Card {
   // Always has at least one board — study text lives on each board's
   // front/back now, not on the card itself.
   boards: ReactionBoard[];
+  // Only shown in Study once you've gone through every board (see
+  // CardEditorOverlay's defaultOverviewText) — pointless with just one.
+  // Unset/blank means: auto-generate "1) ...\n2) ..." from each board's own
+  // description, recomputed live rather than stored, so editing a board's
+  // description keeps this in sync until you actually write your own.
+  overviewText?: string;
 }

@@ -2,13 +2,26 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, PanResponder, PanResponderInstance, ScrollView, ActivityIndicator } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { allSquares, cloneBoardFace, flipIndex, squareFromIndex, squareIndex, startingPosition, toFen } from '../chess';
-import { legalMovesFrom, makeMove, isPromotionMove, type GameState } from '../chessEngine';
+import {
+  allSquares,
+  cloneBoardFace,
+  faceAnnotations,
+  faceAnnotationsAt,
+  flipIndex,
+  squareFromIndex,
+  squareIndex,
+  startingPosition,
+  toFen,
+  withFaceAnnotationsAt
+} from '../chess';
+import { legalMovesFrom, makeMove, isPromotionMove, sansForBoardMoves, type GameState } from '../chessEngine';
 import type { Arrow, ArrowColor, BoardFace, BoardMove, CardMode, Circle, MoveNode, PieceCode, PromotionPiece, ReactionBoard } from '../types';
 import { arrowColors, boardStyles, colors, engineColors, radius, spacing, type, variationColor } from '../theme';
-import { CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, type NumberedArrow } from '../components/ChessBoard';
+import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, type NumberedArrow } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts } from '../components/PieceAnimation';
 import { alertDialog, confirmDialog, dismissSnackbar, showOverlay, showSnackbar, SnackbarLayer, useOverlayBack } from '../overlay';
+import { hasArrowNotes } from '../arrowNotes';
+import { openArrowNotesDialog } from './ArrowNotesOverlay';
 import { getBoardEditorTipHidden, setBoardEditorTipHidden, uid } from '../storage';
 import { ModeTip } from '../components/ModeTip';
 import { TutorialLayer, useTutorial, useTutorialTarget } from '../tutorial';
@@ -47,6 +60,18 @@ function findPath(nodes: MoveNode[], id: string, path: MoveNode[] = []): MoveNod
     if (n.id === id) return next;
     const found = findPath(n.children, id, next);
     if (found) return found;
+  }
+  return null;
+}
+
+// The "jump further back" button's Reactions logic: the nearest ancestor
+// of the cursor (root-to-cursor `path`, from findPath) that has more than
+// one child — i.e. a point where a variation branches off. Walks from the
+// cursor's parent upward, excluding the cursor itself. `null` means no such
+// ancestor exists (cursor sits on a plain, unbranched line back to the root).
+function findPreviousBranch(path: MoveNode[]): string | null {
+  for (let i = path.length - 2; i >= 0; i--) {
+    if (path[i].children.length > 1) return path[i].id;
   }
   return null;
 }
@@ -161,17 +186,11 @@ function EngineEvalBar({
     if (best.mate !== null) whiteShare = best.mate > 0 ? 1 : 0;
     else if (best.cp !== null) whiteShare = 1 / (1 + Math.exp(-best.cp / 300));
   }
-  // W and B mark the ends of the bar; each is dark on the white fill and light
-  // on the dark track, whichever it happens to sit on.
-  const whiteLetter = whiteShare > 0.12 ? '#0f172a' : '#cbd5e1';
-  const blackLetter = whiteShare < 0.88 ? '#cbd5e1' : '#0f172a';
   return (
     <View style={[evalBarStyles.wrap, { height }, stale && { opacity: 0.5 }]}>
       <Text style={evalBarStyles.label}>{best ? evalLabel(best) : '—'}</Text>
       <View style={[evalBarStyles.track, { height, justifyContent: flipped ? 'flex-start' : 'flex-end' }]}>
         <View style={{ width: '100%', height: `${whiteShare * 100}%`, backgroundColor: '#e7e9ee' }} />
-        <Text style={[evalBarStyles.endLetter, { top: 2, color: flipped ? whiteLetter : blackLetter }]}>{flipped ? 'W' : 'B'}</Text>
-        <Text style={[evalBarStyles.endLetter, { bottom: 2, color: flipped ? blackLetter : whiteLetter }]}>{flipped ? 'B' : 'W'}</Text>
         {/* Marks the 0.0/even point at the bar's actual midpoint — always
             here regardless of `flipped`, since that only changes which end
             is White's, not where "even" sits. */}
@@ -201,8 +220,7 @@ const evalBarStyles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: '#2b2f36'
   },
-  centerLine: { position: 'absolute', left: 0, right: 0, top: '50%', height: 1, backgroundColor: 'rgba(148,163,184,0.9)' },
-  endLetter: { position: 'absolute', left: 0, right: 0, textAlign: 'center', fontSize: 10, fontWeight: '800' }
+  centerLine: { position: 'absolute', left: 0, right: 0, top: '50%', height: 1, backgroundColor: 'rgba(148,163,184,0.9)' }
 });
 
 // Same circular-arrow glyph as Study's RewindIcon (just smaller) — signals
@@ -216,6 +234,17 @@ function FlipIcon({ size, color }: { size: number; color: string }) {
         d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"
         fill={color}
       />
+    </Svg>
+  );
+}
+
+// The description-badge glyph — a plain "+" when an arrow has no note yet, a
+// small filled dot (see ArrowNoteBadges below) once it does, so the two
+// states read as distinct at a glance rather than just a color change.
+function PlusIcon({ size, color }: { size: number; color: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z" fill={color} />
     </Svg>
   );
 }
@@ -308,6 +337,126 @@ const engineMovesStyles = StyleSheet.create({
   evalBest: { color: engineColors.best }
 });
 
+// Plan mode only: one tappable badge per arrow, offset to the side near the
+// start (same side/perpendicular-offset math as ChessBoard's own
+// NumberedArrowBadges, just closer to `from` so it doesn't collide with a
+// same-color-group number badge further along the same arrow). A plain "+"
+// means no note yet; a filled dot means one's already there — tap either way
+// to open/edit it.
+interface ArrowNoteTarget {
+  id: string;
+  from: string;
+  to: string;
+  hasDescription: boolean;
+  onPress: () => void;
+}
+
+// Shared by ArrowNoteBadges (to draw the badge) and the board's own
+// PanResponder (to know when a touch has landed on one, so it can let go and
+// let the badge's own Pressable handle it instead of claiming the gesture
+// for arrow-drawing/piece-moving).
+const NOTE_BADGE_RADIUS = 11;
+
+function noteBadgeCenter(from: string, to: string, size: number, flipped: boolean) {
+  const cell = size / 8;
+  function centerPx(square: string) {
+    const raw = squareIndex(square);
+    const file = flipIndex(raw.file, flipped);
+    const rank = flipIndex(raw.rank, flipped);
+    return { x: file * cell + cell / 2, y: rank * cell + cell / 2 };
+  }
+  const a = centerPx(from);
+  const b = centerPx(to);
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const px = a.x + dx * 0.35;
+  const py = a.y + dy * 0.35;
+  const nx = -dy / len;
+  const ny = dx / len;
+  const offset = 12;
+  return { x: px + nx * offset, y: py + ny * offset };
+}
+
+// Nudges any badges that ended up overlapping apart from each other — two
+// arrows starting close together (or nearly parallel) otherwise land their
+// badges right on top of one another. A handful of relaxation passes:
+// each overlapping pair is pushed apart along the line between their
+// centers, repeated until nothing overlaps any more (or the pass limit
+// runs out, for a pathological cluster of many badges at once).
+const NOTE_BADGE_MIN_DIST = NOTE_BADGE_RADIUS * 2 + 6;
+
+function separateNoteBadgeCenters(centers: { x: number; y: number }[]): { x: number; y: number }[] {
+  const points = centers.map((c) => ({ ...c }));
+  for (let iter = 0; iter < 8; iter++) {
+    let moved = false;
+    for (let i = 0; i < points.length; i++) {
+      for (let j = i + 1; j < points.length; j++) {
+        const dx = points[j].x - points[i].x;
+        const dy = points[j].y - points[i].y;
+        const dist = Math.hypot(dx, dy);
+        if (dist >= NOTE_BADGE_MIN_DIST) continue;
+        moved = true;
+        // Coincident centers have no direction to push apart along — pick
+        // an arbitrary one rather than dividing by zero.
+        const ux = dist > 0.01 ? dx / dist : 1;
+        const uy = dist > 0.01 ? dy / dist : 0;
+        const push = (NOTE_BADGE_MIN_DIST - dist) / 2;
+        points[i].x -= ux * push;
+        points[i].y -= uy * push;
+        points[j].x += ux * push;
+        points[j].y += uy * push;
+      }
+    }
+    if (!moved) break;
+  }
+  return points;
+}
+
+function noteBadgeCenters(arrows: { from: string; to: string }[], size: number, flipped: boolean): { x: number; y: number }[] {
+  return separateNoteBadgeCenters(arrows.map((a) => noteBadgeCenter(a.from, a.to, size, flipped)));
+}
+
+function ArrowNoteBadges({ arrows, size, flipped }: { arrows: ArrowNoteTarget[]; size: number; flipped: boolean }) {
+  const centers = useMemo(() => noteBadgeCenters(arrows, size, flipped), [arrows, size, flipped]);
+  return (
+    <>
+      {arrows.map((a, i) => {
+        const { x: bx, y: by } = centers[i];
+        return (
+          <Pressable
+            key={a.id}
+            onPress={a.onPress}
+            hitSlop={8}
+            style={[
+              noteStyles.badge,
+              { left: bx - NOTE_BADGE_RADIUS, top: by - NOTE_BADGE_RADIUS },
+              a.hasDescription ? noteStyles.badgeFilled : noteStyles.badgeEmpty
+            ]}
+          >
+            {a.hasDescription ? <View style={noteStyles.dot} /> : <PlusIcon size={12} color={colors.textDim} />}
+          </Pressable>
+        );
+      })}
+    </>
+  );
+}
+
+const noteStyles = StyleSheet.create({
+  badge: {
+    position: 'absolute',
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1
+  },
+  badgeEmpty: { backgroundColor: colors.panel2, borderColor: colors.border },
+  badgeFilled: { backgroundColor: colors.gold, borderColor: colors.gold },
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.onGold }
+});
+
 // ---------- The overlay ----------
 
 function ReactionBoardEditorOverlay({
@@ -315,12 +464,18 @@ function ReactionBoardEditorOverlay({
   mode,
   yourColor,
   boardStyle,
+  initialCursorId,
   close
 }: {
   initial: ReactionBoard;
   mode: CardMode;
   yourColor: 'w' | 'b';
   boardStyle: number;
+  // Opened from Study: the move it was actually showing, so the editor
+  // lands there instead of at the mainline's end. `undefined` (opened from
+  // the card list, or Study wasn't reviewing a Reactions card) keeps the
+  // old default.
+  initialCursorId?: string | null;
   close: (result: ReactionBoard | null) => void;
 }) {
   const isReactions = mode === 'reactions';
@@ -336,7 +491,7 @@ function ReactionBoardEditorOverlay({
   if (!initialJson.current) initialJson.current = JSON.stringify(initial);
   const [phase, setPhase] = useState<'setup' | 'playing'>(initial.recording.length > 0 ? 'playing' : 'setup');
   const [cursorId, setCursorId] = useState<string | null>(
-    initial.recording.length > 0 ? mainLineLeafId(initial.recording) : null
+    initial.recording.length > 0 ? (initialCursorId !== undefined ? initialCursorId : mainLineLeafId(initial.recording)) : null
   );
   // Others only — which side of the board you're currently editing (a real
   // flip, front and back independently viewable). Plan always edits `back`
@@ -352,12 +507,23 @@ function ReactionBoardEditorOverlay({
   const [selected, setSelected] = useState<string | null>(null);
   const [tempArrow, setTempArrow] = useState<{ from: string; to: string } | null>(null);
   const [pendingPromotion, setPendingPromotion] = useState<{ from: string; to: string } | null>(null);
-  // Reactions setup-phase step back/forward only: undo/redo stacks of
-  // whole-board snapshots, for the brief pre-Play position-building step.
-  // Reactions' playing phase walks the recorded tree instead (`cursorId`);
-  // Others/Plan use `historyIndex` below, a permanent, per-face history.
-  const [undoStack, setUndoStack] = useState<ReactionBoard[]>([]);
-  const [redoStack, setRedoStack] = useState<ReactionBoard[]>([]);
+  // Reactions' setup line's own "historyIndex" — how many of
+  // `board.setupMoves` are applied/viewed, same idea as Others/Plan's
+  // `historyIndex` over `activeFace.moves` below. Also doubles as the
+  // "peek before Play" position once phase is 'playing' and cursorId is
+  // null (see `setupPeeking`): a read-only look back at the setup line,
+  // since the recording tree only ever branches off `cursorId`, never off
+  // this index.
+  const [setupIndex, setSetupIndex] = useState(initial.setupMoves.length);
+  // If a peek back into the setup line (cursorId null, setupIndex behind
+  // head) is interrupted by tapping straight into a recording move —
+  // possible since the notation's setup segment and recording tree are
+  // both always tappable — snap the peek back to head so a later Back from
+  // the recording's own start resumes there, not from that stale index.
+  useEffect(() => {
+    if (isReactions && cursorId !== null) setSetupIndex(board.setupMoves.length);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cursorId]);
   const arrowStartRef = useRef<string | null>(null);
   const gridOrigin = useRef({ x: 0, y: 0 });
   // The board is also the tutorial's spotlight target, hence this hook rather
@@ -437,16 +603,47 @@ function ReactionBoardEditorOverlay({
   // `activeFace.pieces` below instead of indexing off the end of `moves`.
   const atHead = historyIndex >= activeFace.moves.length;
 
+  // SAN isn't stored on BoardMove (unlike Reactions' MoveNode) — Others/Plan
+  // always starts from the standard position and only ever advances via
+  // legal moves, so it's always re-derivable by replaying `.moves` through
+  // the engine. Doing it here instead of storing it means old saved cards
+  // (from before this notation existed) display correctly with no migration.
+  const activeFaceSans = useMemo(() => sansForBoardMoves(activeFace.moves), [activeFace.moves]);
+  // Reactions only — the moves played before "Play", shown ahead of the
+  // recording in the notation panel so the pre-Play line isn't invisible.
+  const setupSans = useMemo(() => sansForBoardMoves(board.setupMoves), [board.setupMoves]);
+
   const path = useMemo(
     () => (isReactions && cursorId ? findPath(board.recording, cursorId) ?? [] : []),
     [isReactions, board.recording, cursorId]
   );
   const cursorNode = path.length > 0 ? path[path.length - 1] : null;
 
+  // Reactions only. `setupAtHead` mirrors Others/Plan's `atHead`, but over
+  // `board.setupMoves`/`board.pieces` instead of a face's own `.moves`.
+  // Drives both phase==='setup' navigation and, at the recording root
+  // (cursorId null) during phase==='playing', the read-only "peek before
+  // Play" (`setupPeeking`) — moving a piece is disabled while peeking (see
+  // finishMove/onPointerDown) since there's no sensible place for a new
+  // move to go: not a step in `setupMoves` (that line already continued
+  // into a recording), not a recording node (there's no cursor here).
+  const setupAtHead = setupIndex >= board.setupMoves.length;
+  const setupEngineState: GameState = setupAtHead
+    ? { pieces: board.pieces, turn: board.turn, castling: board.castling, enPassant: board.enPassant }
+    : setupIndex === 0
+      ? { pieces: startingPosition(), turn: 'w', castling: { wK: true, wQ: true, bK: true, bQ: true }, enPassant: null }
+      : {
+          pieces: board.setupMoves[setupIndex - 1].piecesAfter,
+          turn: board.setupMoves[setupIndex - 1].turnAfter,
+          castling: board.setupMoves[setupIndex - 1].castlingAfter,
+          enPassant: board.setupMoves[setupIndex - 1].enPassantAfter
+        };
+  const setupPeeking = isReactions && phase === 'playing' && cursorId === null && !setupAtHead;
+
   const engineState: GameState = isReactions
     ? cursorNode
       ? { pieces: cursorNode.piecesAfter, turn: cursorNode.turnAfter, castling: cursorNode.castlingAfter, enPassant: cursorNode.enPassantAfter }
-      : { pieces: board.pieces, turn: board.turn, castling: board.castling, enPassant: board.enPassant }
+      : setupEngineState
     : atHead
       ? { pieces: activeFace.pieces, turn: activeFace.turn, castling: activeFace.castling, enPassant: activeFace.enPassant }
       : historyIndex === 0
@@ -458,15 +655,14 @@ function ReactionBoardEditorOverlay({
             enPassant: activeFace.moves[historyIndex - 1].enPassantAfter
           };
 
-  // Annotations aren't tied to individual moves for Others/Plan (unlike
-  // Reactions' per-node add/remove) — they're just the face's current, flat
-  // arrows/circles, which only make sense drawn on top of the live head.
-  // Stepping back to review earlier moves hides them rather than showing
-  // them mismatched against a position they don't belong to.
+  // Others/Plan: each position in the (linear) history keeps its own
+  // arrows/circles now (see chess.ts's faceAnnotationsAt) — stepping back
+  // shows exactly what was drawn there, same idea as Reactions' per-node
+  // add/remove for its tree.
   const { arrows: visibleArrows, circles: visibleCircles } = useMemo(() => {
-    if (!isReactions) return atHead ? { arrows: activeFace.arrows, circles: activeFace.circles } : { arrows: [], circles: [] };
+    if (!isReactions) return faceAnnotationsAt(activeFace, historyIndex);
     return activeAnnotations(board, path);
-  }, [isReactions, activeFace, board, path, atHead]);
+  }, [isReactions, activeFace, historyIndex, board, path]);
 
   const numberedArrows = useMemo(
     () => toEditorNumberedArrows(tempArrow ? [...visibleArrows, { ...tempArrow, color: annotateColor }] : visibleArrows),
@@ -547,20 +743,26 @@ function ReactionBoardEditorOverlay({
   const styleSet = boardStyles[boardStyle] ?? boardStyles[0];
   const { hiddenSquares, ghosts } = usePieceAnimation(engineState.pieces, CELL, flipped);
 
-  function pushHistory() {
-    setUndoStack((s) => [...s, board].slice(-40));
-    setRedoStack([]);
-  }
-
+  // While playing, plain Back only steps back within the recording itself
+  // now (see handleBack) — reaching the setup line from here takes the "«"
+  // button (see canBigBack below) or a direct tap in the notation instead.
   const canBack = isReactions
     ? phase === 'playing'
       ? path.length > 0
-      : undoStack.length > 0
+      : setupIndex > 0
+    : historyIndex > 0;
+  // "«" can still reach the setup line from the recording's own start
+  // (handleBigBack warns first — see confirmPeekBeforeRecording), so it
+  // stays enabled there even though plain Back no longer is.
+  const canBigBack = isReactions
+    ? phase === 'playing'
+      ? path.length > 0 || setupIndex > 0
+      : setupIndex > 0
     : historyIndex > 0;
   const canForward = isReactions
     ? phase === 'playing'
-      ? (cursorNode ? cursorNode.children.length : board.recording.length) > 0
-      : redoStack.length > 0
+      ? (cursorNode ? cursorNode.children.length : board.recording.length) > 0 || setupIndex < board.setupMoves.length
+      : setupIndex < board.setupMoves.length
     : historyIndex < activeFace.moves.length;
 
   function measureGrid(cb?: () => void) {
@@ -628,7 +830,13 @@ function ReactionBoardEditorOverlay({
         piecesAfter: result.next.pieces,
         turnAfter: result.next.turn,
         castlingAfter: result.next.castling,
-        enPassantAfter: result.next.enPassant
+        enPassantAfter: result.next.enPassant,
+        // A brand-new position — nothing's been drawn on it yet. Whatever
+        // was drawn on the position this move is played from is untouched:
+        // it lives on that earlier move (or the face itself, for position 0),
+        // neither of which this touches.
+        arrowsAfter: [],
+        circlesAfter: []
       };
       setBoard((prev) => {
         const movedFace = (old: BoardFace): BoardFace => ({
@@ -637,11 +845,6 @@ function ReactionBoardEditorOverlay({
           turn: result.next.turn,
           castling: result.next.castling,
           enPassant: result.next.enPassant,
-          // Arrows/circles are annotations on THIS position — a fresh move
-          // means a new position, so stale markings from the last one
-          // shouldn't linger on top of it.
-          arrows: [],
-          circles: [],
           // Rewinding (historyIndex < old.moves.length) and then playing a
           // different move truncates the rest of the line rather than
           // branching — this history is linear, unlike Reactions' tree.
@@ -662,8 +865,31 @@ function ReactionBoardEditorOverlay({
       return;
     }
 
-    if (phase === 'setup') {
-      pushHistory();
+    if (phase === 'setup' || setupPeeking) {
+      // Peeking back before Play and then playing a different move here
+      // means the whole recording — built on top of the setup line as it
+      // was — no longer has a position to stand on. It's left alone for now
+      // rather than wiped immediately (so a peek that turns out not to lead
+      // anywhere doesn't cost you anything): Play is what actually commits
+      // to it, discarding the stale recording at that point (see handlePlay).
+      if (setupPeeking) setPhase('setup');
+      const setupMove: BoardMove = {
+        from,
+        to,
+        promotion,
+        piecesAfter: result.next.pieces,
+        turnAfter: result.next.turn,
+        castlingAfter: result.next.castling,
+        enPassantAfter: result.next.enPassant,
+        // setupMoves never carries per-position annotations (unlike
+        // BoardFace.moves for Others/Plan) — the same BoardMove shape is
+        // reused here, so these are just always empty.
+        arrowsAfter: [],
+        circlesAfter: []
+      };
+      // Rewinding (setupIndex < setupMoves.length) and then playing a
+      // different move truncates the rest of the line, same as Others/Plan's
+      // own `.moves` — this list is linear, not a branching tree.
       setBoard((prev) => ({
         ...prev,
         pieces: result.next.pieces,
@@ -671,8 +897,10 @@ function ReactionBoardEditorOverlay({
         castling: result.next.castling,
         enPassant: result.next.enPassant,
         arrows: [],
-        circles: []
+        circles: [],
+        setupMoves: [...prev.setupMoves.slice(0, setupIndex), setupMove]
       }));
+      setSetupIndex((i) => i + 1);
       setSelected(null);
       tutorial.event('moved');
       return;
@@ -764,24 +992,43 @@ function ReactionBoardEditorOverlay({
 
   // ---------- Arrows / circles ----------
 
+  // Reactions' arrows/circles can only ever be drawn once the recording has
+  // actually started — never during setup at all (not even at its own
+  // head), and not while peeking back into the setup line from inside a
+  // recording either. There's no per-position storage for them the way
+  // Others/Plan's history (or the recording tree) has, so they're only ever
+  // "whatever's on the recording's own starting position" — drawing earlier
+  // than that would silently land on that one shared field regardless of
+  // which position is actually on screen.
+  async function ensureSetupHeadForDrawing(): Promise<boolean> {
+    if (phase === 'playing' && setupAtHead) return true;
+    await alertDialog(
+      phase === 'setup'
+        ? 'Arrows and circles can only be drawn once the recording has started — press Play first.'
+        : "You're viewing an earlier position. Arrows and circles only belong to the recording's own starting position — step forward to it first."
+    );
+    return false;
+  }
+
   // Drawing the same arrow (same from/to) again toggles it off if the color
   // matches, or replaces it if the color differs — same rule toggleCircle
   // already uses for circles on a square.
-  function addArrow(arrow: Arrow) {
+  async function addArrow(arrow: Arrow) {
     const existing = visibleArrows.find((a) => sameArrowSpan(a, arrow));
     const isSameColor = existing?.color === arrow.color;
 
     if (!isReactions) {
-      if (!atHead) return;
       setBoard((prev) => {
-        let arrows = prev[side].arrows.filter((a) => !sameArrowSpan(a, arrow));
+        const at = faceAnnotationsAt(prev[side], historyIndex);
+        let arrows = at.arrows.filter((a) => !sameArrowSpan(a, arrow));
         if (!isSameColor) arrows = [...arrows, arrow];
-        return { ...prev, [side]: { ...prev[side], arrows } };
+        return { ...prev, [side]: withFaceAnnotationsAt(prev[side], historyIndex, arrows, at.circles) };
       });
       return;
     }
 
     if (cursorId === null) {
+      if (!(await ensureSetupHeadForDrawing())) return;
       setBoard((prev) => {
         let arrows = prev.arrows.filter((a) => !sameArrowSpan(a, arrow));
         if (!isSameColor) arrows = [...arrows, arrow];
@@ -806,17 +1053,34 @@ function ReactionBoardEditorOverlay({
     }));
   }
 
+  // Plan mode only — the "+"/note badge's popup. Matched by from/to span
+  // rather than array index, since a span is unique within one face's arrow
+  // list (see addArrow above) and stays stable across re-renders.
+  async function handleArrowNote(arrow: Arrow) {
+    const result = await openArrowNotesDialog(arrow.notes);
+    if (result === null) return;
+    setBoard((prev) => {
+      const at = faceAnnotationsAt(prev[side], historyIndex);
+      const arrows = at.arrows.map((a) => (sameArrowSpan(a, arrow) ? { ...a, notes: result.notes } : a));
+      return { ...prev, [side]: withFaceAnnotationsAt(prev[side], historyIndex, arrows, at.circles) };
+    });
+  }
+
   function clearAnnotations() {
     if (visibleArrows.length === 0 && visibleCircles.length === 0) return;
 
     if (!isReactions) {
-      if (!atHead) return;
-      setBoard((prev) => ({ ...prev, [side]: { ...prev[side], arrows: [], circles: [] } }));
+      setBoard((prev) => ({ ...prev, [side]: withFaceAnnotationsAt(prev[side], historyIndex, [], []) }));
       return;
     }
 
-    pushHistory();
     if (cursorId === null) {
+      // Same restriction as drawing (see ensureSetupHeadForDrawing) — arrows/
+      // circles only ever belong to the recording's own starting position.
+      // Silent no-op rather than an error: unlike drawing something new,
+      // there's no action here that could reasonably surprise you by
+      // silently doing nothing.
+      if (!(phase === 'playing' && setupAtHead)) return;
       setBoard((prev) => ({ ...prev, arrows: [], circles: [] }));
       return;
     }
@@ -836,21 +1100,22 @@ function ReactionBoardEditorOverlay({
     }));
   }
 
-  function toggleCircle(square: string) {
+  async function toggleCircle(square: string) {
     const existing = visibleCircles.find((c) => c.square === square);
     const isSameColor = existing?.color === annotateColor;
 
     if (!isReactions) {
-      if (!atHead) return;
       setBoard((prev) => {
-        let circles = prev[side].circles.filter((c) => c.square !== square);
+        const at = faceAnnotationsAt(prev[side], historyIndex);
+        let circles = at.circles.filter((c) => c.square !== square);
         if (!isSameColor) circles = [...circles, { square, color: annotateColor }];
-        return { ...prev, [side]: { ...prev[side], circles } };
+        return { ...prev, [side]: withFaceAnnotationsAt(prev[side], historyIndex, at.arrows, circles) };
       });
       return;
     }
 
     if (cursorId === null) {
+      if (!(await ensureSetupHeadForDrawing())) return;
       setBoard((prev) => {
         let circles = prev.circles.filter((c) => c.square !== square);
         if (!isSameColor) circles = [...circles, { square, color: annotateColor }];
@@ -877,10 +1142,36 @@ function ReactionBoardEditorOverlay({
 
   // ---------- Pan responder: move (tap), annotate (tap = circle, drag = arrow) ----------
 
+  // A touch landing on a Plan arrow's "+"/note badge has to be left for that
+  // badge's own Pressable — this responder otherwise always wants a Plan
+  // touch (same `!setupPeeking` fallback below, which is always true outside
+  // Reactions) and would claim it first, so the badge's onPress never fires.
+  function hitsArrowNoteBadge(pageX: number, pageY: number): boolean {
+    if (!isPlan || !atHead) return false;
+    const localX = pageX - gridOrigin.current.x;
+    const localY = pageY - gridOrigin.current.y;
+    // Same centers ArrowNoteBadges actually renders at (post-separation) —
+    // not the raw per-arrow ones — so the exclusion zone lines up with
+    // wherever a badge visually ended up after overlap avoidance.
+    return noteBadgeCenters(visibleArrows, BOARD_SIZE, flipped).some(
+      (center) => Math.hypot(localX - center.x, localY - center.y) <= NOTE_BADGE_RADIUS + 8
+    );
+  }
+
   const panResponder = useMemo<PanResponderInstance>(() => {
     return PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
+      // Peeking at the setup line (before Play, viewed from the recording
+      // root) allows playing a different move there (see finishMove/
+      // handlePlay) — but not drawing, since a setup move carries no
+      // annotations of its own to attach one to (see `setupPeeking`).
+      onStartShouldSetPanResponder: (evt) => {
+        if (hitsArrowNoteBadge(evt.nativeEvent.pageX, evt.nativeEvent.pageY)) return false;
+        return tool === 'move' || !setupPeeking;
+      },
+      onMoveShouldSetPanResponder: (evt) => {
+        if (hitsArrowNoteBadge(evt.nativeEvent.pageX, evt.nativeEvent.pageY)) return false;
+        return tool === 'move' || !setupPeeking;
+      },
       // In the move tool, dragging across the board never does anything —
       // only a tap (select) followed by another tap (destination) moves a
       // piece — so a drag that turns out to be a scroll gesture can safely
@@ -944,7 +1235,7 @@ function ReactionBoardEditorOverlay({
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tool, annotateColor, board, cursorId, selected, pendingPromotion, branchChoices, phase, side, historyIndex, atHead, expectMove?.from, expectMove?.to, expectArrow?.from, expectArrow?.to, expectArrow?.color]);
+  }, [tool, annotateColor, board, cursorId, selected, pendingPromotion, branchChoices, phase, side, historyIndex, setupIndex, atHead, setupPeeking, expectMove?.from, expectMove?.to, expectArrow?.from, expectArrow?.to, expectArrow?.color]);
 
   // "Arrows cleared" + Undo. Undo only puts the arrows back while nothing else
   // has changed on the board since; the moment something has, it goes away
@@ -987,13 +1278,12 @@ function ReactionBoardEditorOverlay({
 
   async function handleReset() {
     const hasData = isReactions
-      ? board.recording.length > 0
+      ? board.recording.length > 0 || board.setupMoves.length > 0
       : true;
     if (hasData) {
       const ok = await confirmDialog('Reset board? All recorded moves/notation for this board will be lost.');
       if (!ok) return;
     }
-    if (isReactions) pushHistory();
     // Resets position/annotations/history only — each face's own text is
     // untouched, it isn't part of what "reset the board" means.
     const resetPosition = {
@@ -1013,6 +1303,7 @@ function ReactionBoardEditorOverlay({
       enPassant: null,
       arrows: [],
       circles: [],
+      setupMoves: [],
       recording: [],
       front: { ...prev.front, ...resetPosition },
       back: { ...prev.back, ...resetPosition }
@@ -1021,9 +1312,36 @@ function ReactionBoardEditorOverlay({
     setCursorId(null);
     setSelected(null);
     setHistoryIndex(0);
+    setSetupIndex(0);
   }
 
+  // Pressable at any point in the setup line, not just its head — pressing
+  // it while reviewing an earlier point commits right there: everything
+  // after it (in the setup line, and any recording, which was necessarily
+  // built on a head this call is about to move) is discarded, same as
+  // playing a move elsewhere already truncates-and-replaces rather than
+  // branching. There's no per-position storage for the setup line's own
+  // arrows/circles (unlike Others/Plan's history, or the recording tree),
+  // so whatever was drawn is only ever the *current* head's — pressing Play
+  // here also means starting that fresh, blank, at the new head.
   function handlePlay() {
+    setBoard((prev) =>
+      setupAtHead
+        ? prev.recording.length > 0
+          ? { ...prev, recording: [] }
+          : prev
+        : {
+            ...prev,
+            pieces: setupEngineState.pieces,
+            turn: setupEngineState.turn,
+            castling: setupEngineState.castling,
+            enPassant: setupEngineState.enPassant,
+            arrows: [],
+            circles: [],
+            setupMoves: prev.setupMoves.slice(0, setupIndex),
+            recording: []
+          }
+    );
     setPhase('playing');
     setCursorId(null);
     setSelected(null);
@@ -1063,38 +1381,129 @@ function ReactionBoardEditorOverlay({
     setSelected(null);
   }
 
+  // Others/Plan equivalent of handleDeleteMove/handleDeleteRecording above —
+  // `.moves` is a flat, non-branching list (no tree, no ids), so a target is
+  // just "how many moves to keep" rather than a node id. `keepCount === 0`
+  // is the same "wipe everything, keep the starting position" case as
+  // handleDeleteRecording. Plan's two faces share one history (kept in sync
+  // wherever moves are made, e.g. finishMove), so both are truncated
+  // together; Others' faces are independent, so only the active side is.
+  // Shared by the "Delete from here" action and the drawing wizard below —
+  // the actual truncation, with no confirmation of its own (each caller
+  // shows its own, worded for what it's actually about to do).
+  function truncateActiveFaceMoves(keepCount: number) {
+    const prevState =
+      keepCount === 0
+        ? { pieces: startingPosition(), turn: 'w' as const, castling: { wK: true, wQ: true, bK: true, bQ: true }, enPassant: null }
+        : {
+            pieces: activeFace.moves[keepCount - 1].piecesAfter,
+            turn: activeFace.moves[keepCount - 1].turnAfter,
+            castling: activeFace.moves[keepCount - 1].castlingAfter,
+            enPassant: activeFace.moves[keepCount - 1].enPassantAfter
+          };
+    const truncatedFace = (old: BoardFace): BoardFace => ({
+      ...old,
+      ...prevState,
+      arrows: [],
+      circles: [],
+      moves: old.moves.slice(0, keepCount)
+    });
+    setBoard((prev) =>
+      mode === 'plan'
+        ? { ...prev, front: truncatedFace(prev.front), back: truncatedFace(prev.back) }
+        : { ...prev, [side]: truncatedFace(prev[side]) }
+    );
+    setHistoryIndex(keepCount);
+    setSelected(null);
+  }
+
+  async function deleteFaceMovesFrom(keepCount: number) {
+    const ok = await confirmDialog(
+      keepCount === 0
+        ? 'Delete all recorded moves? The starting position stays. This cannot be undone.'
+        : 'Delete this move and everything after it? This cannot be undone.'
+    );
+    if (!ok) return;
+    truncateActiveFaceMoves(keepCount);
+  }
+
+  // Shared by the "«" jump-to-start button and tapping a setup move directly
+  // in the notation — the two remaining, deliberate ways to look at the
+  // setup line from inside a recording (repeatedly pressing plain Back no
+  // longer gets you there at all, see handleBack).
+  function confirmPeekBeforeRecording(): Promise<boolean> {
+    return confirmDialog("You're about to view moves from before this recording started. Continue?", {
+      confirmLabel: 'View setup',
+      cancelLabel: 'Stay here'
+    });
+  }
+
   function handleBack() {
     setSelected(null);
     if (isReactions) {
       if (phase === 'playing') {
-        if (path.length === 0) return;
-        setCursorId(path.length >= 2 ? path[path.length - 2].id : null);
-        tutorial.event('backPressed');
+        if (cursorId !== null) {
+          if (path.length === 0) return;
+          setCursorId(path.length >= 2 ? path[path.length - 2].id : null);
+          tutorial.event('backPressed');
+          return;
+        }
+        // At the recording's own start — Back stops here. Viewing the setup
+        // line from this point on is a deliberate act (tap a move in the
+        // notation, or the "«" jump-to-start button below), never something
+        // repeated presses land you in by accident.
         return;
       }
-      if (undoStack.length === 0) return;
-      setRedoStack((r) => [...r, board]);
-      setBoard(undoStack[undoStack.length - 1]);
-      setUndoStack((s) => s.slice(0, -1));
+      if (setupIndex === 0) return;
+      setSetupIndex((i) => i - 1);
       return;
     }
     if (historyIndex === 0) return;
     setHistoryIndex((i) => i - 1);
   }
 
+  // "Jump further back": for Reactions this steps straight back to the
+  // previous branch point, or the recording's own start, or — one more
+  // press — all the way back to the very start of the setup line. Others/
+  // Plan have no branches to stop at, so it's just "go to the start".
+  async function handleBigBack() {
+    setSelected(null);
+    if (isReactions) {
+      if (phase === 'playing' && cursorId !== null) {
+        setCursorId(findPreviousBranch(path));
+        tutorial.event('backPressed');
+        return;
+      }
+      // Reached here with cursorId already null: jumping to setupIndex 0
+      // means leaving the recording (whose own start you're already at) for
+      // moves from before it — a deliberate step, not something to land in
+      // silently. Nothing to warn about if there's no recording yet at all,
+      // or no setup line before it to see.
+      if (phase === 'playing' && setupIndex > 0 && !(await confirmPeekBeforeRecording())) return;
+      setSetupIndex(0);
+      return;
+    }
+    setHistoryIndex(0);
+  }
+
   function handleForward() {
     setSelected(null);
     if (isReactions) {
       if (phase === 'playing') {
-        const children = cursorNode ? cursorNode.children : board.recording;
-        if (children.length === 0) return;
-        setCursorId(children[0].id);
+        if (cursorId !== null || setupAtHead) {
+          const children = cursorNode ? cursorNode.children : board.recording;
+          if (children.length === 0) return;
+          setCursorId(children[0].id);
+          return;
+        }
+        // Stepping forward through the setup peek, back toward the
+        // recording's own start (and, past that, into the recording itself
+        // on the next press, via the branch above).
+        setSetupIndex((i) => i + 1);
         return;
       }
-      if (redoStack.length === 0) return;
-      setUndoStack((s) => [...s, board]);
-      setBoard(redoStack[redoStack.length - 1]);
-      setRedoStack((r) => r.slice(0, -1));
+      if (setupIndex >= board.setupMoves.length) return;
+      setSetupIndex((i) => i + 1);
       return;
     }
     if (historyIndex >= activeFace.moves.length) return;
@@ -1136,7 +1545,7 @@ function ReactionBoardEditorOverlay({
   }
 
   async function handleSave() {
-    if (mode === 'plan' && board.back.arrows.length === 0) {
+    if (mode === 'plan' && faceAnnotations(board.back).arrows.length === 0) {
       await alertDialog(
         'A Plan board needs at least one arrow on its back — that arrow is the plan you\'ll have to reproduce in Study. If you don\'t want to use arrows here, switch this card to "Front & back" mode instead.'
       );
@@ -1250,6 +1659,7 @@ function ReactionBoardEditorOverlay({
               );
             })}
           </View>
+          <BoardCoords size={BOARD_SIZE} flipped={flipped} styleSet={styleSet} />
           <View style={StyleSheet.absoluteFill} pointerEvents="none">
             <NumberedArrowsSvg arrows={engineArrows} size={BOARD_SIZE} flipped={flipped} />
             <NumberedArrowsSvg arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} />
@@ -1259,6 +1669,21 @@ function ReactionBoardEditorOverlay({
             <NumberedArrowBadges arrows={branchArrows} size={BOARD_SIZE} flipped={flipped} />
             <PieceAnimationGhosts ghosts={ghosts} cell={CELL} />
           </View>
+          {isPlan && atHead && (
+            <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+              <ArrowNoteBadges
+                arrows={visibleArrows.map((a) => ({
+                  id: `${a.from}-${a.to}`,
+                  from: a.from,
+                  to: a.to,
+                  hasDescription: hasArrowNotes(a),
+                  onPress: () => handleArrowNote(a)
+                }))}
+                size={BOARD_SIZE}
+                flipped={flipped}
+              />
+            </View>
+          )}
         </View>
         {!hideEngine && <EngineEvalBar lines={panelLines} stale={engineStale} flipped={flipped} height={BOARD_SIZE} />}
         </View>
@@ -1278,6 +1703,19 @@ function ReactionBoardEditorOverlay({
           <Pressable ref={playRef} collapsable={false} onPress={handlePlay} style={styles.playBtn}>
             <Text style={styles.playBtnText}>▶ Play</Text>
           </Pressable>
+        )}
+
+        {mode === 'reactions' && phase === 'setup' && setupSans.length > 0 && (
+          <View style={notationStyles.wrap}>
+            <SetupLine
+              sans={setupSans}
+              setupIndex={setupIndex}
+              onJump={(i) => {
+                setSetupIndex(i);
+                setSelected(null);
+              }}
+            />
+          </View>
         )}
 
         {/* Everything below is deliberately just above Reset, not at the
@@ -1331,6 +1769,17 @@ function ReactionBoardEditorOverlay({
             <View ref={notationRef} collapsable={false}>
             <Notation
               recording={board.recording}
+              setupSans={setupSans}
+              setupIndex={setupIndex}
+              onJumpSetup={async (i) => {
+                // Only a "leaving the recording" moment while one exists —
+                // plain setup-line browsing (phase 'setup', no Play yet)
+                // needs no warning at all.
+                if (phase === 'playing' && !(await confirmPeekBeforeRecording())) return;
+                setSetupIndex(i);
+                setCursorId(null);
+                setSelected(null);
+              }}
               cursorId={cursorId}
               yourColor={yourColor}
               onJump={(id) => {
@@ -1340,6 +1789,36 @@ function ReactionBoardEditorOverlay({
               onDelete={handleDeleteMove}
             />
             </View>
+            <Text style={styles.notationHint}>Tap a move to jump to it. Long-press to delete it and everything after it.</Text>
+          </>
+        )}
+
+        {!isReactions && activeFace.moves.length > 0 && (
+          <>
+            <View style={styles.notationHeaderRow}>
+              <Text style={styles.notationHeaderText}>Moves</Text>
+              <View style={styles.notationHeaderActions}>
+                {historyIndex > 0 ? (
+                  <Pressable onPress={() => deleteFaceMovesFrom(historyIndex - 1)} style={styles.notationAction}>
+                    <Text style={styles.deleteRecordingText}>Delete from here</Text>
+                  </Pressable>
+                ) : (
+                  <Pressable onPress={() => deleteFaceMovesFrom(0)} style={styles.notationAction}>
+                    <Text style={styles.deleteRecordingText}>Delete recording</Text>
+                  </Pressable>
+                )}
+              </View>
+            </View>
+            <LinearNotation
+              moves={activeFace.moves}
+              sans={activeFaceSans}
+              historyIndex={historyIndex}
+              onJump={(i) => {
+                setHistoryIndex(i);
+                setSelected(null);
+              }}
+              onDelete={deleteFaceMovesFrom}
+            />
             <Text style={styles.notationHint}>Tap a move to jump to it. Long-press to delete it and everything after it.</Text>
           </>
         )}
@@ -1380,6 +1859,9 @@ function ReactionBoardEditorOverlay({
         </View>
         <View style={{ flex: 1 }} />
         <View style={styles.navGroup}>
+          <Pressable onPress={handleBigBack} disabled={!canBigBack} style={[styles.toolBtn, !canBigBack && styles.stepBtnDisabled]}>
+            <Text style={styles.toolBtnText}>«</Text>
+          </Pressable>
           <Pressable ref={backRef} collapsable={false} onPress={handleBack} disabled={!canBack} style={[styles.toolBtn, !canBack && styles.stepBtnDisabled]}>
             <Text style={styles.toolBtnText}>‹</Text>
           </Pressable>
@@ -1394,20 +1876,55 @@ function ReactionBoardEditorOverlay({
   );
 }
 
+// Tappable "1. e4 e5 2. Nf3 ..." line for the setup moves (before Play) —
+// same flat-list approach as LinearNotation below (Others/Plan), since
+// `setupMoves` is linear too, no branching. Tapping a move jumps the
+// editor's `setupIndex` there (a read-only peek once phase is 'playing' —
+// see `setupPeeking`); `setupIndex` itself highlights the current one.
+function SetupLine({ sans, setupIndex, onJump }: { sans: string[]; setupIndex: number; onJump: (index: number) => void }) {
+  const out: React.ReactNode[] = [];
+  let moveNumber = 1;
+  let whiteToMove = true;
+  for (let i = 0; i < sans.length; i++) {
+    const prefix = whiteToMove ? `${moveNumber}. ` : '';
+    out.push(
+      <Text
+        key={i}
+        onPress={() => onJump(i + 1)}
+        style={[notationStyles.move, notationStyles.setupMove, setupIndex === i + 1 && notationStyles.moveActive]}
+      >
+        {prefix}
+        {sans[i]}{' '}
+      </Text>
+    );
+    if (!whiteToMove) moveNumber += 1;
+    whiteToMove = !whiteToMove;
+  }
+  return <View style={notationStyles.mainLine}>{out}</View>;
+}
+
 // Flat, indented PGN-style notation: the main line reads left to right;
 // each variation (a node that isn't its parent's first child) starts a new
 // indented "(...)" line directly under the move it branches from. Tap a
 // move to jump to it; long-press to delete it and everything after it in
 // that branch (a destructive action gated behind its own confirmation, so
-// a long-press alone can't accidentally lose recorded work).
+// a long-press alone can't accidentally lose recorded work). `setupSans` (the
+// moves played before Play) render above a "Recording" divider when present,
+// read-only — they're not part of `recording` and have no node id.
 function Notation({
   recording,
+  setupSans,
+  setupIndex,
+  onJumpSetup,
   cursorId,
   yourColor,
   onJump,
   onDelete
 }: {
   recording: MoveNode[];
+  setupSans: string[];
+  setupIndex: number;
+  onJumpSetup: (index: number) => void;
   cursorId: string | null;
   yourColor: 'w' | 'b';
   onJump: (id: string | null) => void;
@@ -1461,27 +1978,90 @@ function Notation({
     return out;
   }
 
-  if (recording.length === 0) return null;
+  if (recording.length === 0 && setupSans.length === 0) return null;
 
   // recording[0].turnAfter === 'b' means White just moved, so the line
   // starts on White's move ("1. ..."); otherwise it starts on Black
   // ("1... ...") — depends on how many set-up moves preceded Play.
-  const startsWithWhite = recording[0].turnAfter === 'b';
+  const startsWithWhite = recording.length > 0 && recording[0].turnAfter === 'b';
 
   return (
     <View style={notationStyles.wrap}>
+      {setupSans.length > 0 && (
+        <>
+          <SetupLine sans={setupSans} setupIndex={setupIndex} onJump={onJumpSetup} />
+          <Text style={notationStyles.recordingDivider}>Recording</Text>
+        </>
+      )}
       <Text onPress={() => onJump(null)} style={[notationStyles.move, cursorId === null && notationStyles.moveActive]}>
         Start{'  '}
       </Text>
-      <View style={notationStyles.mainLine}>{renderLine(recording[0], 1, startsWithWhite, 0)}</View>
-      {recording.length > 1 &&
-        recording.slice(1).map((alt, i) => (
-          <View key={`root-var-${i}`} style={[notationStyles.variation, { marginLeft: 14 }]}>
-            <Text style={notationStyles.varOpen}>(</Text>
-            {renderLine(alt, 1, startsWithWhite, 1)}
-            <Text style={notationStyles.varOpen}>)</Text>
-          </View>
-        ))}
+      {recording.length > 0 && (
+        <>
+          <View style={notationStyles.mainLine}>{renderLine(recording[0], 1, startsWithWhite, 0)}</View>
+          {recording.length > 1 &&
+            recording.slice(1).map((alt, i) => (
+              <View key={`root-var-${i}`} style={[notationStyles.variation, { marginLeft: 14 }]}>
+                <Text style={notationStyles.varOpen}>(</Text>
+                {renderLine(alt, 1, startsWithWhite, 1)}
+                <Text style={notationStyles.varOpen}>)</Text>
+              </View>
+            ))}
+        </>
+      )}
+    </View>
+  );
+}
+
+// Others/Plan's equivalent of Notation above — `.moves` is a flat,
+// non-branching list (no ids, no variations), so it's a plain left-to-right
+// PGN line rather than a recursive tree walk. `historyIndex` doubles as both
+// "how many moves are applied" and "the cursor", same as `cursorId` does for
+// Reactions: index i's move is highlighted when `historyIndex === i + 1`.
+// Always starts on White's move — Others/Plan has no Reactions-style setup
+// phase before recording begins, so `.moves[0]` is always the game's first
+// ply from the standard starting position.
+function LinearNotation({
+  moves,
+  sans,
+  historyIndex,
+  onJump,
+  onDelete
+}: {
+  moves: BoardMove[];
+  sans: string[];
+  historyIndex: number;
+  onJump: (index: number) => void;
+  onDelete: (index: number) => void;
+}) {
+  if (moves.length === 0) return null;
+
+  const out: React.ReactNode[] = [];
+  let moveNumber = 1;
+  let whiteToMove = true;
+  for (let i = 0; i < moves.length; i++) {
+    const prefix = whiteToMove ? `${moveNumber}. ` : '';
+    out.push(
+      <Text
+        key={i}
+        onPress={() => onJump(i + 1)}
+        onLongPress={() => onDelete(i)}
+        style={[notationStyles.move, historyIndex === i + 1 && notationStyles.moveActive]}
+      >
+        {prefix}
+        {sans[i]}{' '}
+      </Text>
+    );
+    if (!whiteToMove) moveNumber += 1;
+    whiteToMove = !whiteToMove;
+  }
+
+  return (
+    <View style={notationStyles.wrap}>
+      <Text onPress={() => onJump(0)} style={[notationStyles.move, historyIndex === 0 && notationStyles.moveActive]}>
+        Start{'  '}
+      </Text>
+      <View style={notationStyles.mainLine}>{out}</View>
     </View>
   );
 }
@@ -1490,11 +2070,19 @@ export function openReactionBoardEditor(
   board: ReactionBoard,
   mode: CardMode = 'reactions',
   yourColor: 'w' | 'b' = 'w',
-  boardStyle = 0
+  boardStyle = 0,
+  initialCursorId?: string | null
 ): Promise<ReactionBoard | null> {
   return showOverlay<ReactionBoard | null>(
     (close) => (
-      <ReactionBoardEditorOverlay initial={board} mode={mode} yourColor={yourColor} boardStyle={boardStyle} close={close} />
+      <ReactionBoardEditorOverlay
+        initial={board}
+        mode={mode}
+        yourColor={yourColor}
+        boardStyle={boardStyle}
+        initialCursorId={initialCursorId}
+        close={close}
+      />
     ),
     { animation: 'none' }
   );
@@ -1619,6 +2207,11 @@ const notationStyles = StyleSheet.create({
   // Orange, not colors.accent (identical to moveYours' green) — the cursor
   // needs to stand out from "a move I played", not blend into it.
   moveActive: { color: colors.gold, fontWeight: '700' },
-  variation: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 4 },
-  varOpen: { color: colors.textDim, fontSize: 13 }
+  // `alignItems: 'center'` keeps the "(" / ")" (no vertical padding) level
+  // with the moves next to them (which have paddingVertical for a bigger
+  // tap target) instead of sitting above them.
+  variation: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 4, alignItems: 'center' },
+  varOpen: { color: colors.textDim, fontSize: 13 },
+  setupMove: { color: colors.textDim },
+  recordingDivider: { color: colors.textDim, fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 8, marginBottom: 4 }
 });

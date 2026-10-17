@@ -28,6 +28,8 @@ export const colors = {
   primaryPressed: '#166534',
 
   gold: '#d97706',
+  // The gold of the app logo — used to pick out chess moves in note text.
+  logoGold: '#ee9a28',
   onGold: '#000000',
   goldPressed: '#b45309',
 
@@ -45,6 +47,13 @@ export const colors = {
   // single mid-tone badge — lighter than the app's near-black surfaces,
   // darker than white — reads both pieces clearly instead of favoring one.
   pieceBadgeBg: '#454c5c',
+
+  // A popup card's own background where the board behind it should still
+  // read through (the Plan arrow-note popup, the end-of-card Overview
+  // popup) — same base as `panel`, just translucent. Shared here so the two
+  // always match exactly instead of two copies of the same rgba drifting
+  // apart.
+  popupCard: 'rgba(25,33,52,0.9)',
 
   // Deprecated aliases kept during migration; prefer the names above.
   panel: '#192134',

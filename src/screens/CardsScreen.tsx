@@ -8,21 +8,23 @@ import {
   useWindowDimensions
 } from 'react-native';
 import {
-  addCard,
   deleteCard,
   getCards,
   getOpening,
   getRepertoire,
   renameCard,
   renameOpening,
-  restoreCard
+  restoreCard,
+  setOpeningSummary
 } from '../storage';
-import { promptDialog, anchoredMenu, showSnackbar } from '../overlay';
+import { promptDialog, showSnackbar } from '../overlay';
 import type { Card, GroupId, Opening, PieceCode, Repertoire } from '../types';
-import { Screen, TopBar, Breadcrumb, BigButton, PieceBadge } from '../components/Common';
+import { Screen, TopBar, Breadcrumb, BigButton, PieceBadge, RowMenu, type RowAction } from '../components/Common';
 import { colors, radius, spacing, type } from '../theme';
-import { openCardEditor } from './CardEditorOverlay';
-import { startStudySession } from './StudySessionOverlay';
+import { openCardEditor, openNewCardEditor } from './CardEditorOverlay';
+import { openOpeningSummaryDialog } from './OpeningSummaryOverlay';
+import { MoveText } from '../components/MoveText';
+import { askStudyPreview, startStudySession } from './StudySessionOverlay';
 import { useTutorial } from '../tutorial';
 
 function cardPreviewText(card: Card): string {
@@ -46,8 +48,8 @@ function cardSubtitle(card: Card): string {
   return `${MODE_LABELS[card.mode]} · ${n} board${n === 1 ? '' : 's'}`;
 }
 
-// Same "⋮" treatment as the opening/repertoire rows: a plain-text popover
-// pinned under the button, and "Rename" edits the name in place.
+// Same "⋮" treatment as the opening/repertoire rows: icon actions
+// slide out on the same line, and "Rename" edits the name in place.
 function CardRow({
   card,
   idx,
@@ -63,11 +65,15 @@ function CardRow({
   onRename: (newName: string) => void;
   onDelete: () => void;
 }) {
-  const menuRef = useRef<View>(null);
   const inputRef = useRef<TextInput>(null);
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(card.name);
-  const label = card.name || cardPreviewText(card);
+  // The renamed name stays on screen until the list reloads with it, so the
+  // old name doesn't flash back in between.
+  const [pendingName, setPendingName] = useState<string | null>(null);
+  useEffect(() => setPendingName(null), [card.name]);
+  const shownName = pendingName ?? card.name;
+  const label = shownName || cardPreviewText(card);
 
   useEffect(() => {
     if (!editing) return;
@@ -76,23 +82,23 @@ function CardRow({
   }, [editing]);
 
   function startEdit() {
-    setValue(card.name);
+    setValue(shownName);
     setEditing(true);
   }
 
   function commitEdit() {
     setEditing(false);
     const trimmed = value.trim();
-    if (trimmed && trimmed !== card.name) onRename(trimmed);
+    if (trimmed && trimmed !== shownName) {
+      setPendingName(trimmed);
+      onRename(trimmed);
+    }
   }
 
-  function openMenu() {
-    menuRef.current?.measureInWindow(async (x, y, width, height) => {
-      const action = await anchoredMenu(['Rename', 'Delete'], { x, y, width, height });
-      if (action === 'Rename') startEdit();
-      else if (action === 'Delete') onDelete();
-    });
-  }
+  const actions: RowAction[] = [
+    { key: 'rename', icon: 'edit', label: 'Rename', onPress: startEdit },
+    { key: 'delete', icon: 'trash', label: 'Delete', onPress: onDelete }
+  ];
 
   return (
     <View style={styles.row}>
@@ -118,18 +124,14 @@ function CardRow({
         <Pressable onPress={onOpen} style={styles.main}>
           <PieceBadge code={piece} size={52} />
           <View style={styles.mainCol}>
-            <Text style={styles.mainText} numberOfLines={1}>
-              {idx + 1}. {label}
-            </Text>
+            <MoveText text={`${idx + 1}. ${label}`} style={styles.mainText} numberOfLines={1} />
             <Text style={styles.subtitle} numberOfLines={1}>
               {cardSubtitle(card)}
             </Text>
           </View>
         </Pressable>
       )}
-      <Pressable ref={menuRef} onPress={openMenu} style={styles.menuBtn}>
-        <Text style={{ color: colors.textDim, fontSize: 18 }}>⋮</Text>
-      </Pressable>
+      <RowMenu actions={actions} />
     </View>
   );
 }
@@ -182,9 +184,19 @@ export function CardsScreen({
     load();
   }
 
+  async function handleEditSummary() {
+    if (!opening) return;
+    const result = await openOpeningSummaryDialog(opening.summary);
+    if (!result) return;
+    await setOpeningSummary(opening.id, result.summary);
+    load();
+  }
+
   async function handleStudy() {
     if (cards.length === 0) return;
-    await startStudySession([openingId], { shuffleOpenings: false });
+    const preview = await askStudyPreview();
+    if (preview === null) return;
+    await startStudySession([openingId], { shuffleOpenings: false, preview });
     load();
   }
 
@@ -207,9 +219,9 @@ export function CardsScreen({
     tutorial.event('addPressed');
     const name = await promptDialog('New card', prefill ?? '', 'e.g. Italian — main line');
     if (!name) return;
-    const card = await addCard(openingId, name);
-    tutorial.remember({ cardId: card.id });
-    const result = await openCardEditor(card.id);
+    // The card isn't created yet — openNewCardEditor shows the type picker
+    // first and only calls addCard once one is actually chosen.
+    const result = await openNewCardEditor(openingId, name);
     if (result.deletedCard) offerUndo(result.deletedCard);
     load();
   }
@@ -247,6 +259,17 @@ export function CardsScreen({
         piece={cardPiece}
       />
       <TopBar title={opening.name} onBack={onBack} onRename={handleRenameOpening} backTargetId="cards.back" />
+
+      {opening.summary ? (
+        <Pressable onPress={handleEditSummary} style={styles.summaryBox}>
+          <Text style={styles.summaryLabel}>Summary</Text>
+          <MoveText text={opening.summary} style={styles.summaryText} numberOfLines={3} />
+        </Pressable>
+      ) : (
+        <Pressable onPress={handleEditSummary} style={styles.summaryAdd}>
+          <Text style={styles.summaryAddText}>+ Add summary (optional)</Text>
+        </Pressable>
+      )}
 
       <BigButton title="+ Add card" onPress={handleAddCard} targetId="cards.add" />
       <View style={{ height: spacing.lg }} />
@@ -301,5 +324,27 @@ const styles = StyleSheet.create({
   mainText: { color: colors.text, fontSize: 15, fontWeight: '500' },
   subtitle: { color: colors.textSecondary, ...type.caption, marginTop: 3 },
   mainInput: { padding: 0, borderBottomWidth: 1, borderBottomColor: colors.accent },
-  menuBtn: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }
+  menuBtn: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  summaryBox: {
+    backgroundColor: colors.panel,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.lg,
+    gap: 4,
+    marginBottom: 10
+  },
+  summaryLabel: { color: colors.text, fontSize: 14, fontWeight: '700' },
+  summaryText: { color: colors.textSecondary, fontSize: 13, lineHeight: 19 },
+  summaryAdd: {
+    minHeight: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.border,
+    marginBottom: 10
+  },
+  summaryAddText: { color: colors.textSecondary, fontSize: 14 }
 });

@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, Animated, Easing } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import { colors, radius, spacing, type, touchTarget } from '../theme';
 import { PieceGlyph } from './ChessBoard';
+import { MoveText } from './MoveText';
 import type { PieceCode } from '../types';
 import { useFocusEffect } from '@react-navigation/native';
 import { TutorialLayer, useTutorial, useTutorialTarget } from '../tutorial';
@@ -217,9 +218,7 @@ export function TopBar({
           returnKeyType="done"
         />
       ) : (
-        <Text style={styles.title} numberOfLines={1}>
-          {title}
-        </Text>
+        <MoveText text={title} style={styles.title} numberOfLines={1} />
       )}
       {onRename && !editing && (
         <IconButton
@@ -290,14 +289,10 @@ export function Breadcrumb({ segments, piece }: { segments: BreadcrumbSegment[];
             {segment.onPress ? (
               // hitSlop brings the 18px-tall text up to a 48dp touch target.
               <Pressable onPress={segment.onPress} hitSlop={{ top: 15, bottom: 15, left: 6, right: 6 }} style={{ flexShrink: 1 }}>
-                <Text style={[styles.breadcrumb, styles.breadcrumbLink]} numberOfLines={1}>
-                  {segment.label}
-                </Text>
+                <MoveText text={segment.label} style={[styles.breadcrumb, styles.breadcrumbLink]} numberOfLines={1} />
               </Pressable>
             ) : (
-              <Text style={[styles.breadcrumb, { flexShrink: 1 }]} numberOfLines={1}>
-                {segment.label}
-              </Text>
+              <MoveText text={segment.label} style={[styles.breadcrumb, { flexShrink: 1 }]} numberOfLines={1} />
             )}
           </View>
         ))}
@@ -353,6 +348,126 @@ export function BigButton({
     </Pressable>
   );
 }
+
+function TrashIcon({ size, color }: { size: number; color: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill={color} />
+    </Svg>
+  );
+}
+
+// Same circular-arrow glyph family as Study's RewindIcon.
+function RestoreIcon({ size, color }: { size: number; color: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path
+        d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"
+        fill={color}
+      />
+    </Svg>
+  );
+}
+
+export interface RowAction {
+  key: string;
+  icon: 'edit' | 'trash' | 'restore';
+  label: string;
+  onPress: () => void;
+}
+
+// Only one row's actions are open at a time: opening one closes the last.
+let closeOpenRowMenu: (() => void) | null = null;
+
+// The "⋮" on a list row: tapping it slides the row's actions out as icons on
+// the same line (instead of a dropdown); the ⋮ turns into a ✕ to fold them
+// away again. Choosing an action folds it away too.
+export function RowMenu({ actions }: { actions: RowAction[] }) {
+  const [open, setOpen] = useState(false);
+  const anim = useRef(new Animated.Value(0)).current;
+  const closeRef = useRef<() => void>(() => {});
+
+  const run = useCallback(
+    (toOpen: boolean) => {
+      setOpen(toOpen);
+      Animated.timing(anim, {
+        toValue: toOpen ? 1 : 0,
+        duration: 180,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: false
+      }).start();
+    },
+    [anim]
+  );
+  closeRef.current = () => run(false);
+
+  useEffect(
+    () => () => {
+      if (closeOpenRowMenu === closeRef.current) closeOpenRowMenu = null;
+    },
+    []
+  );
+
+  function toggle() {
+    if (open) {
+      run(false);
+      if (closeOpenRowMenu === closeRef.current) closeOpenRowMenu = null;
+      return;
+    }
+    closeOpenRowMenu?.();
+    closeOpenRowMenu = closeRef.current;
+    run(true);
+  }
+
+  function choose(action: RowAction) {
+    run(false);
+    if (closeOpenRowMenu === closeRef.current) closeOpenRowMenu = null;
+    action.onPress();
+  }
+
+  const fullWidth = actions.length * touchTarget;
+  return (
+    <View style={rowMenuStyles.wrap}>
+      <Animated.View
+        pointerEvents={open ? 'auto' : 'none'}
+        style={[
+          rowMenuStyles.actions,
+          {
+            width: anim.interpolate({ inputRange: [0, 1], outputRange: [0, fullWidth] }),
+            opacity: anim
+          }
+        ]}
+      >
+        {actions.map((a) => (
+          <Pressable
+            key={a.key}
+            onPress={() => choose(a)}
+            accessibilityLabel={a.label}
+            style={({ pressed }) => [rowMenuStyles.btn, pressed && { opacity: 0.6 }]}
+          >
+            {a.icon === 'edit' && <EditPencilIcon size={22} color={colors.textSecondary} />}
+            {a.icon === 'trash' && <TrashIcon size={22} color={colors.dangerText} />}
+            {a.icon === 'restore' && <RestoreIcon size={22} color={colors.textSecondary} />}
+          </Pressable>
+        ))}
+      </Animated.View>
+      <Pressable
+        onPress={toggle}
+        hitSlop={4}
+        accessibilityLabel={open ? 'Close actions' : 'Show actions'}
+        style={({ pressed }) => [rowMenuStyles.btn, pressed && { opacity: 0.7 }]}
+      >
+        <Text style={{ color: colors.textSecondary, fontSize: open ? 20 : 18 }}>{open ? '✕' : '⋮'}</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const rowMenuStyles = StyleSheet.create({
+  wrap: { flexDirection: 'row', alignItems: 'center' },
+  actions: { flexDirection: 'row', overflow: 'hidden' },
+  btn: { width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center' }
+});
 
 export function ListRow({
   title,

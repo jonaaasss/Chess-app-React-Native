@@ -5,9 +5,10 @@ import { allSquares, flipIndex, mainLineNodes, squareFromIndex } from '../chess'
 import { legalMovesFrom, makeMove, type GameState } from '../chessEngine';
 import type { Arrow, Card, Circle, MoveNode, PieceCode, ReactionBoard } from '../types';
 import { boardStyles, colors, radius, touchTarget } from '../theme';
-import { ArrowsSvg, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, type NumberedArrow } from '../components/ChessBoard';
+import { BoardCoords, ArrowsSvg, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, type NumberedArrow } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts, PIECE_ANIM_DURATION_MS } from '../components/PieceAnimation';
 import type { GuideTargets } from '../components/GuideCoach';
+import { MoveText } from '../components/MoveText';
 import type { CoachEvent } from '../guideContent';
 
 // Opponent auto-play, board-to-board transitions, and the variant
@@ -74,6 +75,25 @@ function formatNotationParts(sans: string[], firstIsWhite: boolean, yourColor: '
 // Standard "refresh" glyph (a single circular-arrow path, arrowhead flush
 // with the arc's end) — swapped in for a hand-built arc+triangle that left
 // a visible gap between the circle and its arrowhead.
+// Drawn, not the '⏸'/'▶' text glyphs — Android renders those as colour
+// emoji (inconsistently between the two), overriding whatever text color is
+// set. A path always comes out exactly `color`, matching between both.
+function PauseIcon({ size, color }: { size: number; color: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path d="M6 5h4v14H6zM14 5h4v14h-4z" fill={color} />
+    </Svg>
+  );
+}
+
+function PlayIcon({ size, color }: { size: number; color: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path d="M8 5v14l11-7z" fill={color} />
+    </Svg>
+  );
+}
+
 function RewindIcon({ size, color }: { size: number; color: string }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24">
@@ -114,7 +134,10 @@ export function ReactionStudy({
   boardStyle,
   onResult,
   boardRef,
+  cursorRef,
   paused,
+  preview,
+  onTogglePause,
   guideTargets,
   onGuideEvent
 }: {
@@ -123,11 +146,22 @@ export function ReactionStudy({
   boardStyle: number;
   onResult: (correct: boolean) => void;
   boardRef?: React.MutableRefObject<ReactionBoard | null>;
+  // Which recorded move is currently on screen — lets Edit (in the parent's
+  // chrome) reopen the board editor at this exact point.
+  cursorRef?: React.MutableRefObject<string | null>;
   // Guide coach hooks (all optional): `paused` freezes the automatic parts
   // (opponent auto-play, variant walkthrough) while a popup is up;
   // `guideTargets` are where the popups' spotlights go; `onGuideEvent`
   // reports the moments/presses the popups wait on.
   paused?: boolean;
+  // Passive preview: every move — yours as well as the opponent's — plays
+  // itself at the same pace, including every variation (already walked
+  // automatically as each branch is reached, preview or not). No taps, no
+  // Hint/Show solution; Continue fires itself once the card is done.
+  // `onTogglePause` backs the preview-only Pause/Play button — `paused`
+  // stays parent-owned (the guide coach already drives it the same way).
+  preview?: boolean;
+  onTogglePause?: () => void;
   guideTargets?: GuideTargets;
   onGuideEvent?: (event: CoachEvent) => void;
 }) {
@@ -315,6 +349,22 @@ export function ReactionStudy({
   // until you step back to the live position (or it catches back up to you).
   const isReviewing = !inVariant && viewPly !== ply;
 
+  // Which recorded move Study is actually showing right now — written
+  // synchronously (same reasoning as `boardRef` above) so Edit can open the
+  // board editor at this exact point instead of always at the mainline's
+  // end. `null` means "Start" (nothing played yet).
+  if (cursorRef) {
+    cursorRef.current = inVariant
+      ? variantSubPly > 0
+        ? variantLine[variantSubPly - 1].id
+        : branchPly > 0
+          ? line[branchPly - 1].id
+          : null
+      : viewPly > 0
+        ? line[viewPly - 1].id
+        : null;
+  }
+
   // Guide coach: the two moments its popups can wait on.
   const yourTurnNow =
     activeIsYourTurn && !activeLineDone && !isReviewing && (!inVariant || variantStage === 'playing');
@@ -363,16 +413,17 @@ export function ReactionStudy({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inVariant, activeLineDone, ply, board]);
 
-  // Auto-play the opponent's moves on the main line.
+  // Auto-play the opponent's moves on the main line — and, in preview,
+  // yours too (there's no one to find them, you're just watching).
   useEffect(() => {
-    if (inVariant || activeLineDone || activeIsYourTurn || paused) return;
+    if (inVariant || activeLineDone || (activeIsYourTurn && !preview) || paused) return;
     const t = setTimeout(() => {
       setPly((p) => p + 1);
       setSelected(null);
       setHintOn(false);
     }, AUTO_ADVANCE_DELAY_MS);
     return () => clearTimeout(t);
-  }, [inVariant, ply, activeIsYourTurn, activeLineDone, paused]);
+  }, [inVariant, ply, activeIsYourTurn, activeLineDone, paused, preview]);
 
   // Board finished → next board, or the whole card is done. Held off
   // entirely while reviewing (see `isReviewing`) — stepping back to look at
@@ -425,7 +476,7 @@ export function ReactionStudy({
       const t = setTimeout(() => setVariantStage('rewinding'), VARIANT_REWIND_PAUSE_MS);
       return () => clearTimeout(t);
     }
-    if (!activeIsYourTurn) {
+    if (!activeIsYourTurn || preview) {
       const t = setTimeout(() => {
         setVariantSubPly((p) => p + 1);
         setSelected(null);
@@ -433,7 +484,7 @@ export function ReactionStudy({
       }, AUTO_ADVANCE_DELAY_MS);
       return () => clearTimeout(t);
     }
-  }, [variantStage, activeLineDone, activeIsYourTurn, showingMainline, branchPly, variantLine.length, paused]);
+  }, [variantStage, activeLineDone, activeIsYourTurn, showingMainline, branchPly, variantLine.length, paused, preview]);
 
   // Spin the rewind icon for as long as the whole rewinding stage lasts —
   // kept in its own effect, keyed only on variantStage, so the loop plays
@@ -477,6 +528,7 @@ export function ReactionStudy({
   }, [variantStage, variantSubPly, variantIdx, walkableVariants.length, branchPly]);
 
   function handleSquareTap(sq: string) {
+    if (preview) return;
     if (inVariant && variantStage !== 'playing') return;
     if (isReviewing || !activeIsYourTurn || activeLineDone || wrongMove) return;
     if (!selected) {
@@ -619,7 +671,7 @@ export function ReactionStudy({
 
   return (
     <View style={{ alignItems: 'center', gap: 10 }}>
-      {board.front.text ? <Text style={styles.boardText}>{board.front.text}</Text> : null}
+      {board.front.text ? <MoveText text={board.front.text} style={styles.boardText} /> : null}
       <Text style={[styles.status, { color: statusColorShown }]}>
         {boards.length > 1 ? `Board ${boardIdx + 1} / ${boards.length} — ` : ''}
         {statusShown}
@@ -655,6 +707,7 @@ export function ReactionStudy({
               );
             })}
           </View>
+          <BoardCoords size={BOARD_SIZE} flipped={flipped} styleSet={styleSet} />
           <View style={StyleSheet.absoluteFill} pointerEvents="none">
             {showVariantArrows ? (
               <>
@@ -692,6 +745,11 @@ export function ReactionStudy({
         <Pressable onPress={handlePrevMove} disabled={!canGoPrev} style={[styles.navBtn, !canGoPrev && styles.navBtnDisabled]}>
           <Text style={styles.navBtnText}>‹</Text>
         </Pressable>
+        {preview && (
+          <Pressable onPress={() => onTogglePause?.()} style={styles.navBtn}>
+            {paused ? <PlayIcon size={18} color={colors.gold} /> : <PauseIcon size={18} color={colors.gold} />}
+          </Pressable>
+        )}
         <Pressable onPress={handleNextMove} disabled={!canGoNext} style={[styles.navBtn, !canGoNext && styles.navBtnDisabled]}>
           <Text style={styles.navBtnText}>›</Text>
         </Pressable>
@@ -707,7 +765,21 @@ export function ReactionStudy({
         </Text>
       ) : null}
 
-      {!allDone ? (
+      {allDone ? (
+        <Pressable
+          ref={guideTargets?.continue}
+          collapsable={false}
+          onPress={() => {
+            onGuideEvent?.('continue');
+            onResult(preview || mistakes === 0);
+          }}
+          style={styles.continueBtn}
+        >
+          <Text style={styles.continueText}>
+            {preview ? 'Continue' : mistakes === 0 ? '✓ Perfect — continue' : `Continue (${mistakes} slip${mistakes === 1 ? '' : 's'})`}
+          </Text>
+        </Pressable>
+      ) : preview ? null : (
         <>
           <View style={styles.actionRow}>
             <Pressable
@@ -734,18 +806,6 @@ export function ReactionStudy({
           </View>
           <Text style={styles.slipNote}>Show solution counts as a slip.</Text>
         </>
-      ) : (
-        <Pressable
-          ref={guideTargets?.continue}
-          collapsable={false}
-          onPress={() => {
-            onGuideEvent?.('continue');
-            onResult(mistakes === 0);
-          }}
-          style={styles.continueBtn}
-        >
-          <Text style={styles.continueText}>{mistakes === 0 ? '✓ Perfect — continue' : `Continue (${mistakes} slip${mistakes === 1 ? '' : 's'})`}</Text>
-        </Pressable>
       )}
     </View>
   );

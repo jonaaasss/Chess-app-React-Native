@@ -1,4 +1,4 @@
-import type { BoardFace, BoardState, CastlingRights, MoveNode, PieceCode, ReactionBoard } from './types';
+import type { Arrow, BoardFace, BoardState, CardMode, CastlingRights, Circle, MoveNode, OpeningStartPosition, PieceCode, ReactionBoard } from './types';
 
 export const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 export const RANKS = ['8', '7', '6', '5', '4', '3', '2', '1'];
@@ -92,8 +92,66 @@ export function cloneBoardFace(face: BoardFace): BoardFace {
     arrows: face.arrows.map((a) => ({ ...a })),
     circles: face.circles.map((c) => ({ ...c })),
     text: face.text,
-    moves: face.moves.map((m) => ({ ...m, piecesAfter: { ...m.piecesAfter }, castlingAfter: { ...m.castlingAfter } }))
+    moves: face.moves.map((m) => ({
+      ...m,
+      piecesAfter: { ...m.piecesAfter },
+      castlingAfter: { ...m.castlingAfter },
+      arrowsAfter: m.arrowsAfter.map((a) => ({ ...a })),
+      circlesAfter: m.circlesAfter.map((c) => ({ ...c }))
+    }))
   };
+}
+
+// A face's arrows/circles are tied to a specific position in its move
+// history, not just "whatever's currently drawn" — position 0 (before any
+// move) keeps them on the face itself; every move after that carries its
+// own in `arrowsAfter`/`circlesAfter`, so replaying a move never disturbs
+// what was drawn on an earlier position, and stepping back through history
+// shows exactly what was there at each step (same idea as Reactions'
+// per-node addedArrows/addedCircles, just for a plain list instead of a
+// tree). `historyIndex` counts moves played, same meaning as the editor's
+// own state of that name (0 = the starting position).
+export function faceAnnotationsAt(face: BoardFace, historyIndex: number): { arrows: Arrow[]; circles: Circle[] } {
+  if (historyIndex <= 0) return { arrows: face.arrows, circles: face.circles };
+  const move = face.moves[historyIndex - 1];
+  return move ? { arrows: move.arrowsAfter, circles: move.circlesAfter } : { arrows: face.arrows, circles: face.circles };
+}
+
+// The annotations on a face's current (i.e. final) position — what Study
+// actually quizzes on for Others/Plan, regardless of how many moves built
+// up to it.
+export function faceAnnotations(face: BoardFace): { arrows: Arrow[]; circles: Circle[] } {
+  return faceAnnotationsAt(face, face.moves.length);
+}
+
+// Returns `face` with its position-`historyIndex` annotations replaced —
+// the write side of `faceAnnotationsAt`.
+export function withFaceAnnotationsAt(face: BoardFace, historyIndex: number, arrows: Arrow[], circles: Circle[]): BoardFace {
+  if (historyIndex <= 0) return { ...face, arrows, circles };
+  return {
+    ...face,
+    moves: face.moves.map((m, i) => (i === historyIndex - 1 ? { ...m, arrowsAfter: arrows, circlesAfter: circles } : m))
+  };
+}
+
+// Which face holds "the" single description for a mode that isn't Others
+// (Others keeps two independent ones): Reactions shows it throughout
+// Study, Plan alongside the plan — both live on the board editor's single
+// Description field, just backed by a different face internally.
+export function descriptionFace(mode: CardMode): 'front' | 'back' {
+  return mode === 'plan' ? 'back' : 'front';
+}
+
+// The auto-generated overview text (see Card.overviewText) — every board's
+// own description, numbered in board order. A board with no description of
+// its own still gets a line (a bare "N)"), so the numbering never silently
+// skips one and leaves you unsure which board a later entry refers to.
+export function defaultOverviewText(mode: CardMode, boards: ReactionBoard[]): string {
+  const face = descriptionFace(mode);
+  return [...boards]
+    .sort((a, b) => a.order - b.order)
+    .map((board, i) => `${i + 1}) ${board[face].text.trim()}`.trim())
+    .join('\n');
 }
 
 export function newReactionBoard(id: string, order: number): ReactionBoard {
@@ -106,9 +164,41 @@ export function newReactionBoard(id: string, order: number): ReactionBoard {
     enPassant: null,
     arrows: [],
     circles: [],
+    setupMoves: [],
     recording: [],
     front: freshFace(),
     back: freshFace()
+  };
+}
+
+// Same as `newReactionBoard`, but starting from an opening's own starting
+// position (see types.ts's OpeningStartPosition) instead of the plain one —
+// falls back to `newReactionBoard` when the opening has none set.
+export function newReactionBoardFromStart(id: string, order: number, start: OpeningStartPosition | undefined): ReactionBoard {
+  if (!start) return newReactionBoard(id, order);
+  const face: BoardFace = {
+    pieces: { ...start.pieces },
+    turn: start.turn,
+    castling: { ...start.castling },
+    enPassant: start.enPassant,
+    arrows: [],
+    circles: [],
+    text: '',
+    moves: []
+  };
+  return {
+    id,
+    order,
+    pieces: { ...start.pieces },
+    turn: start.turn,
+    castling: { ...start.castling },
+    enPassant: start.enPassant,
+    arrows: [],
+    circles: [],
+    setupMoves: start.setupMoves.map((m) => ({ ...m, piecesAfter: { ...m.piecesAfter }, castlingAfter: { ...m.castlingAfter } })),
+    recording: [],
+    front: cloneBoardFace(face),
+    back: cloneBoardFace(face)
   };
 }
 
@@ -135,6 +225,7 @@ export function boardStateToReactionBoard(bs: BoardState, id: string, order: num
     enPassant: face.enPassant,
     arrows: face.arrows.map((a) => ({ ...a })),
     circles: face.circles.map((c) => ({ ...c })),
+    setupMoves: [],
     recording: [],
     front: cloneBoardFace(face),
     back: cloneBoardFace(face)
@@ -151,6 +242,7 @@ export function cloneReactionBoard(board: ReactionBoard, id: string): ReactionBo
     enPassant: board.enPassant,
     arrows: board.arrows.map((a) => ({ ...a })),
     circles: board.circles.map((c) => ({ ...c })),
+    setupMoves: (board.setupMoves ?? []).map((m) => ({ ...m })),
     recording: board.recording.map(cloneMoveNode),
     front: cloneBoardFace(board.front),
     back: cloneBoardFace(board.back)

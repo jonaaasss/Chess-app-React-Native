@@ -6,7 +6,7 @@
 // plus SAN notation, since Reactions cards record and replay a real PGN-like
 // game tree.
 import type { CastlingRights, PieceCode, PromotionPiece } from './types';
-import { FILES, RANKS, pieceColor, squareFromIndex, squareIndex } from './chess';
+import { FILES, RANKS, pieceColor, squareFromIndex, squareIndex, startingPosition } from './chess';
 
 export type PieceType = 'K' | 'Q' | 'R' | 'B' | 'N' | 'P';
 export type Color = 'w' | 'b';
@@ -447,4 +447,19 @@ export function makeMove(state: GameState, from: string, to: string, promotion?:
     isCheckmate,
     isStalemate
   };
+}
+
+// SAN isn't stored on Others/Plan's `BoardFace.moves` (unlike Reactions'
+// MoveNode) — those boards only ever advance via legal moves from the
+// standard starting position, so it's always re-derivable by replaying them
+// through the engine rather than persisting it redundantly.
+export function sansForBoardMoves(moves: Move[]): string[] {
+  let state = createGameState(startingPosition(), 'w');
+  const out: string[] = [];
+  for (const m of moves) {
+    const result = makeMove(state, m.from, m.to, m.promotion);
+    out.push(result.san);
+    state = result.next;
+  }
+  return out;
 }

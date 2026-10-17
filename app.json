@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Chess Opening Flashcards",
+    "name": "Chess Playbook",
     "slug": "chess-opening-flashcards",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -12,10 +12,8 @@
     "android": {
       "package": "com.jonas.chessopeningflashcards",
       "adaptiveIcon": {
-        "backgroundColor": "#0c0f12",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#0f172a",
+        "foregroundImage": "./assets/android-icon-foreground.png"
       },
       "predictiveBackGestureEnabled": false
     },

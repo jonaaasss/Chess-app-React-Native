@@ -11,10 +11,11 @@ import {
   restoreExampleRepertoire,
   restoreRepertoire
 } from '../storage';
-import { confirmDialog, promptDialog, anchoredMenu, showSnackbar } from '../overlay';
+import { confirmDialog, promptDialog, showSnackbar } from '../overlay';
 import type { GroupId, PieceCode, Repertoire } from '../types';
-import { Screen, TopBar, BigButton, Breadcrumb, PieceBadge, rowStyles } from '../components/Common';
+import { Screen, TopBar, BigButton, Breadcrumb, PieceBadge, rowStyles, RowMenu, type RowAction } from '../components/Common';
 import { colors, spacing, type } from '../theme';
+import { MoveText } from '../components/MoveText';
 import { useTutorial, useTutorialTarget } from '../tutorial';
 
 // Same pattern as OpeningsScreen's row: the "⋮" opens a small plain-text
@@ -41,11 +42,15 @@ function RepertoireRow({
   onDelete: () => void;
   onRestore: () => void;
 }) {
-  const menuRef = useRef<View>(null);
   const rowRef = useTutorialTarget(targetId);
   const inputRef = useRef<TextInput>(null);
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(title);
+  // The renamed title stays on screen until the list reloads with it, so the
+  // old name doesn't flash back in between.
+  const [pendingTitle, setPendingTitle] = useState<string | null>(null);
+  useEffect(() => setPendingTitle(null), [title]);
+  const shownTitle = pendingTitle ?? title;
 
   useEffect(() => {
     if (!editing) return;
@@ -54,27 +59,28 @@ function RepertoireRow({
   }, [editing]);
 
   function startEdit() {
-    setValue(title);
+    setValue(shownTitle);
     setEditing(true);
   }
 
   function commitEdit() {
     setEditing(false);
     const trimmed = value.trim();
-    if (trimmed && trimmed !== title) onRename(trimmed);
+    if (trimmed && trimmed !== shownTitle) {
+      setPendingTitle(trimmed);
+      onRename(trimmed);
+    }
   }
 
   // The example repertoire is fully editable, but it's shown/hidden as a
-  // pair via the Home screen toggle rather than deleted here — "Restore
-  // original content" takes Delete's place instead.
-  function openMenu() {
-    const secondOption = isExample ? 'Restore original content' : 'Delete';
-    menuRef.current?.measureInWindow(async (x, y, width, height) => {
-      const action = await anchoredMenu(['Rename', secondOption], { x, y, width, height });
-      if (action === 'Rename') startEdit();
-      else if (action === secondOption) (isExample ? onRestore : onDelete)();
-    });
-  }
+  // pair via the Home screen toggle rather than deleted here — a restore
+  // action takes Delete's place instead.
+  const actions: RowAction[] = [
+    { key: 'rename', icon: 'edit', label: 'Rename', onPress: startEdit },
+    isExample
+      ? { key: 'restore', icon: 'restore', label: 'Restore original content', onPress: onRestore }
+      : { key: 'delete', icon: 'trash', label: 'Delete', onPress: onDelete }
+  ];
 
   return (
     <View ref={rowRef} collapsable={false} style={rowStyles.row}>
@@ -100,23 +106,14 @@ function RepertoireRow({
         <Pressable onPress={onPress} style={({ pressed }) => [rowStyles.main, pressed && { opacity: 0.7 }]}>
           <PieceBadge code={piece} size={52} />
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={rowStyles.title} numberOfLines={1}>
-              {title}
-            </Text>
+            <MoveText text={shownTitle} style={rowStyles.title} numberOfLines={1} />
             <Text style={rowStyles.subtitle} numberOfLines={1}>
               {subtitle}
             </Text>
           </View>
         </Pressable>
       )}
-      <Pressable
-        ref={menuRef}
-        onPress={openMenu}
-        hitSlop={4}
-        style={({ pressed }) => [rowStyles.menuBtn, pressed && { opacity: 0.7 }]}
-      >
-        <Text style={{ color: colors.textSecondary, fontSize: 18 }}>⋮</Text>
-      </Pressable>
+      <RowMenu actions={actions} />
     </View>
   );
 }

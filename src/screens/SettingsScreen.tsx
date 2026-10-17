@@ -9,12 +9,18 @@ import {
   getBoardStyle,
   setBoardStyle,
   getShowFirstOpeningGuide,
-  setShowFirstOpeningGuide
+  setShowFirstOpeningGuide,
+  getDevExportEnabled,
+  setDevExportEnabled
 } from '../storage';
 import { boardStyles, colors, touchTarget, type } from '../theme';
 import { Screen, TopBar } from '../components/Common';
 import { ToggleRow } from '../components/ToggleRow';
 import { AccountSection } from './AccountSection';
+import { openDevExportDialog } from './DevExportOverlay';
+
+const DEV_EXPORT_DESCRIPTION =
+  'Adds an "Export repertoire..." action below that dumps a repertoire as plain text, to copy out of the app.';
 
 const SHUFFLE_DESCRIPTION =
   'Shuffles the cards within each opening while you study. In a whole-repertoire session the openings are always shuffled.';
@@ -33,12 +39,14 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
   const [showMultiple, setShowMultiple] = useState(false);
   const [showGuide, setShowGuide] = useState(true);
   const [boardStyle, setBoardStyleState] = useState(0);
+  const [devExportOn, setDevExportOn] = useState(false);
 
   const load = useCallback(async () => {
     setShuffleOn(await getSetting<boolean>('shuffle', false));
     setShowGuide(await getShowFirstOpeningGuide());
     setShowMultiple(await getShowMultipleRepertoires());
     setBoardStyleState(await getBoardStyle());
+    setDevExportOn(await getDevExportEnabled());
   }, []);
 
   useFocusEffect(
@@ -68,6 +76,12 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
   async function pickBoardStyle(idx: number) {
     setBoardStyleState(idx);
     await setBoardStyle(idx);
+  }
+
+  async function toggleDevExport() {
+    const next = !devExportOn;
+    setDevExportOn(next);
+    await setDevExportEnabled(next);
   }
 
   return (
@@ -105,6 +119,19 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
           </Pressable>
         ))}
       </View>
+
+      <Text style={[styles.label, { marginTop: 20 }]}>Developer</Text>
+      <ToggleRow
+        label="Enable data export"
+        value={devExportOn}
+        onToggle={toggleDevExport}
+        description={DEV_EXPORT_DESCRIPTION}
+      />
+      {devExportOn && (
+        <Pressable onPress={() => openDevExportDialog()} style={styles.devExportBtn}>
+          <Text style={styles.devExportBtnText}>Export repertoire...</Text>
+        </Pressable>
+      )}
     </Screen>
   );
 }
@@ -126,5 +153,15 @@ const styles = StyleSheet.create({
   },
   styleSwatchActive: { borderColor: colors.accent },
   swatchName: { color: colors.textDim, ...type.caption },
-  swatchNameActive: { color: colors.text }
+  swatchNameActive: { color: colors.text },
+  devExportBtn: {
+    backgroundColor: colors.panel,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingVertical: 13,
+    alignItems: 'center',
+    marginTop: 4
+  },
+  devExportBtnText: { color: colors.text, fontSize: 15, fontWeight: '600' }
 });

@@ -9,15 +9,15 @@ const path = require('path');
 // both changes are re-applied here rather than edited into android/ by hand.
 //
 // - The permanent app keeps the original package name (and so the data that
-//   was already on the phone) and is called "Permanent" — its own app_name,
-//   which only the release build sees.
+//   was already on the phone) and is called "Chess Playbook" — its own
+//   app_name, which only the release build sees.
 // - The development app gets the package name suffix ".dev" and is called
-//   "Chess DEV", so the two can't be mistaken for each other on the phone. Open
-//   it from the phone (or `npm run android`, whose --app-id names the package
-//   to launch) — Metro's "a" key opens the other one.
+//   "Chess Playbook DEV", so the two can't be mistaken for each other on the
+//   phone. Open it from the phone (or `npm run android`, whose --app-id names
+//   the package to launch) — Metro's "a" key opens the other one.
 const DEV_SUFFIX = '.dev';
-const DEV_NAME = 'Chess DEV';
-const PERMANENT_NAME = 'Permanent';
+const DEV_NAME = 'Chess Playbook DEV';
+const PERMANENT_NAME = 'Chess Playbook';
 
 function withDevPackageSuffix(config) {
   return withAppBuildGradle(config, (config) => {

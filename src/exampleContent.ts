@@ -5,7 +5,7 @@
 // piece maps, so the recorded data is guaranteed internally consistent.
 import { startingPosition } from './chess';
 import { createGameState, makeMove, type GameState } from './chessEngine';
-import type { BoardFace, CardMode, GroupId, MoveNode, Opening, PromotionPiece, ReactionBoard, Card } from './types';
+import type { Arrow, ArrowColor, BoardFace, BoardMove, CardMode, Circle, GroupId, MoveNode, Opening, PromotionPiece, ReactionBoard, Card } from './types';
 
 // Reactions boards don't use front/back for position — only for their
 // study text (`.moves` stays empty, no shared position to speak of).
@@ -27,6 +27,25 @@ interface PlyDef {
   to: string;
   promotion?: PromotionPiece;
   children?: PlyDef[];
+  // Annotations drawn on this ply, like the editor's per-move arrows/circles.
+  arrows?: Arrow[];
+  circles?: Circle[];
+}
+
+// Compact notation for the hand-authored cards below: moves as "e2e4 e7e5",
+// annotations as "c3d5g d5c7o" (from+to+colour letter) / "c5g e7o" (square+colour).
+const COLOR_OF: Record<string, ArrowColor> = { g: 'green', o: 'orange', r: 'red', b: 'blue' };
+function mv(s: string): { from: string; to: string; promotion?: PromotionPiece }[] {
+  return s.split(' ').filter(Boolean).map((t) => ({ from: t.slice(0, 2), to: t.slice(2, 4) }));
+}
+function arrowsOf(s: string): Arrow[] {
+  return s.split(' ').filter(Boolean).map((t) => ({ from: t.slice(0, 2), to: t.slice(2, 4), color: COLOR_OF[t[4]] }));
+}
+function circlesOf(s: string): Circle[] {
+  return s.split(' ').filter(Boolean).map((t) => ({ square: t.slice(0, 2), color: COLOR_OF[t[2]] }));
+}
+function ply(m: string, children: PlyDef[] = [], arrows = '', circles = ''): PlyDef {
+  return { from: m.slice(0, 2), to: m.slice(2, 4), children, arrows: arrowsOf(arrows), circles: circlesOf(circles) };
 }
 
 function buildNodes(state: GameState, defs: PlyDef[], idFactory: () => string): MoveNode[] {
@@ -42,8 +61,8 @@ function buildNodes(state: GameState, defs: PlyDef[], idFactory: () => string): 
       turnAfter: result.next.turn,
       castlingAfter: result.next.castling,
       enPassantAfter: result.next.enPassant,
-      addedArrows: [],
-      addedCircles: [],
+      addedArrows: def.arrows ?? [],
+      addedCircles: def.circles ?? [],
       removedArrows: [],
       removedCircles: [],
       children: def.children ? buildNodes(result.next, def.children, idFactory) : []
@@ -57,24 +76,96 @@ function playLine(moves: { from: string; to: string; promotion?: PromotionPiece 
   return state;
 }
 
+// Same replay as `playLine`, but keeps each intermediate result — the shape
+// a ReactionBoard's `setupMoves` needs so the notation panel can show the
+// pre-Play line (see sansForBoardMoves in chessEngine.ts, which re-derives
+// SAN from exactly this).
+function toBoardMoves(moves: { from: string; to: string; promotion?: PromotionPiece }[]): BoardMove[] {
+  let state = createGameState(startingPosition(), 'w');
+  const out: BoardMove[] = [];
+  for (const m of moves) {
+    const result = makeMove(state, m.from, m.to, m.promotion);
+    out.push({
+      from: m.from,
+      to: m.to,
+      promotion: m.promotion,
+      piecesAfter: result.next.pieces,
+      turnAfter: result.next.turn,
+      castlingAfter: result.next.castling,
+      enPassantAfter: result.next.enPassant,
+      // setupMoves never carries per-position annotations (unlike
+      // BoardFace.moves for Others/Plan) — the same BoardMove shape is
+      // reused here, so these are just always empty.
+      arrowsAfter: [],
+      circlesAfter: []
+    });
+    state = result.next;
+  }
+  return out;
+}
+
+interface ReactionsBoardSpec {
+  text: string;
+  setup: string;
+  circles: string;
+  line: PlyDef[];
+}
+
+function reactionsBoard(idFactory: () => string, order: number, spec: ReactionsBoardSpec): ReactionBoard {
+  const setup = mv(spec.setup);
+  const setupState = playLine(setup);
+  return {
+    id: idFactory(),
+    order,
+    pieces: { ...setupState.pieces },
+    turn: setupState.turn,
+    castling: { ...setupState.castling },
+    enPassant: setupState.enPassant,
+    arrows: [],
+    circles: circlesOf(spec.circles),
+    setupMoves: toBoardMoves(setup),
+    recording: buildNodes(setupState, spec.line, idFactory),
+    front: reactionsFace(spec.text),
+    back: reactionsFace('')
+  };
+}
+
+function reactionsCard(idFactory: () => string, openingId: string, order: number, name: string, specs: ReactionsBoardSpec[]): Card {
+  return {
+    id: idFactory(),
+    openingId,
+    order,
+    name,
+    mode: 'reactions' as CardMode,
+    boards: specs.map((spec, i) => reactionsBoard(idFactory, i, spec))
+  };
+}
+
 function newReactionsCard(
   idFactory: () => string,
   openingId: string,
   order: number,
   name: string,
   frontText: string,
-  line: PlyDef[]
+  line: PlyDef[],
+  // Un-recorded moves played before "Play" — same idea as the real editor's
+  // setup phase, replayed via the engine to reach any pre-Play position
+  // rather than the standard start (defaults to it, for cards that don't
+  // need a custom setup).
+  setupMoves: { from: string; to: string; promotion?: PromotionPiece }[] = []
 ): Card {
+  const setupState = playLine(setupMoves);
   const board: ReactionBoard = {
     id: idFactory(),
     order: 0,
-    pieces: startingPosition(),
-    turn: 'w',
-    castling: { wK: true, wQ: true, bK: true, bQ: true },
-    enPassant: null,
+    pieces: { ...setupState.pieces },
+    turn: setupState.turn,
+    castling: { ...setupState.castling },
+    enPassant: setupState.enPassant,
     arrows: [],
     circles: [],
-    recording: buildNodes(createGameState(startingPosition(), 'w'), line, idFactory),
+    setupMoves: toBoardMoves(setupMoves),
+    recording: buildNodes(setupState, line, idFactory),
     front: reactionsFace(frontText),
     back: reactionsFace('')
   };
@@ -133,6 +224,7 @@ function newOthersCard(
     enPassant: state.enPassant,
     arrows: [],
     circles: [],
+    setupMoves: [],
     recording: [],
     front,
     back
@@ -144,6 +236,61 @@ function newOthersCard(
     name,
     mode: 'others' as CardMode,
     boards: [board]
+  };
+}
+
+// Plan mode has no front/back split — both faces share one position (kept
+// in sync), and only `back` carries the plan's arrow(s) and the
+// description text; `front` is never shown, per `descriptionFace` in
+// CardEditorOverlay.tsx. A Plan board also can't be saved with zero arrows
+// on `back`, so callers always pass at least one.
+interface PlanBoardSpec {
+  moves: string;
+  arrows: string;
+  circles: string;
+  text: string;
+}
+
+function planBoard(idFactory: () => string, order: number, spec: PlanBoardSpec): ReactionBoard {
+  const state = playLine(mv(spec.moves));
+  const position = {
+    pieces: { ...state.pieces },
+    turn: state.turn,
+    castling: { ...state.castling },
+    enPassant: state.enPassant
+  };
+  const front: BoardFace = { ...position, arrows: [], circles: [], text: '', moves: [] };
+  const back: BoardFace = {
+    ...position,
+    arrows: arrowsOf(spec.arrows),
+    circles: circlesOf(spec.circles),
+    text: spec.text,
+    moves: []
+  };
+  return {
+    id: idFactory(),
+    order,
+    pieces: state.pieces,
+    turn: state.turn,
+    castling: state.castling,
+    enPassant: state.enPassant,
+    arrows: [],
+    circles: [],
+    setupMoves: [],
+    recording: [],
+    front,
+    back
+  };
+}
+
+function planCard(idFactory: () => string, openingId: string, order: number, name: string, specs: PlanBoardSpec[]): Card {
+  return {
+    id: idFactory(),
+    openingId,
+    order,
+    name,
+    mode: 'plan' as CardMode,
+    boards: specs.map((spec, i) => planBoard(idFactory, i, spec))
   };
 }
 
@@ -221,7 +368,161 @@ export function buildExampleContent(
         'd4'
       )
     ];
-    return { openings: [{ id: openingId, repertoireId, name: 'Italian Game', order: 0 }], cards };
+    // Vienna Game cards, taken from cards authored in the app itself (via the
+    // dev export) and re-expressed in the compact notation above — positions
+    // and SAN are derived by replaying the moves through the engine.
+    const viennaOpeningId = idFactory();
+    const viennaCards = [
+      planCard(idFactory, viennaOpeningId, 0, "Bc5 Qf6", [
+        { moves: "e2e4 e7e5 b1c3 b8c6 f1c4 f8c5 d1g4 d8f6", arrows: "c3d5g d5c7o g4g7o g1h3r g1f3r h1f1b", circles: "", text: "Nf3 only if !BW can take it" }
+      ]),
+      reactionsCard(idFactory, viennaOpeningId, 1, "Na5", [
+        {
+          text: "",
+          setup: "e2e4 e7e5 b1c3 g8f6 f1c4 b8c6 d2d3",
+          circles: "",
+          line: [
+          ply("c6a5", [
+            ply("c4b3", [
+              ply("a5b3", [
+                ply("a2b3")
+              ])
+            ])
+          ])
+          ]
+        }
+      ]),
+      reactionsCard(idFactory, viennaOpeningId, 2, "Bg4", [
+        {
+          text: "Bishop on c5",
+          setup: "e2e4 e7e5 b1c3 g8f6 f1c4 b8c6 d2d3 f8c5 f2f4 d7d6 g1f3",
+          circles: "",
+          line: [
+          ply("c8g4", [
+            ply("c3a4", [
+              ply("c6d4", [
+                ply("a4c5", [
+                  ply("d6c5", [
+                    ply("c2c3", [
+                      ply("d4f3", [
+                        ply("g2f3", [
+                          ply("g4h3", [
+                            ply("f4f5")
+                          ])
+                        ])
+                      ])
+                    ])
+                  ])
+                ])
+              ]),
+              ply("c5b6", [
+                ply("a4b6", [
+                  ply("a7b6", [
+                    ply("c2c3")
+                  ])
+                ])
+              ])
+            ])
+          ], "", "c5o")
+          ]
+        },
+        {
+          text: "Bishop not on c5",
+          setup: "e2e4 e7e5 b1c3 g8f6 f1c4 b8c6 d2d3 f8e7 f2f4 d7d6 g1f3 c8g4",
+          circles: "e7o c5r",
+          line: [
+          ply("e1g1", [
+            ply("c6d4", [
+              ply("f4e5", [
+                ply("d6e5", [
+                  ply("c4f7", [
+                    ply("e8f7", [
+                      ply("f3e5")
+                    ])
+                  ])
+                ])
+              ])
+            ]),
+            ply("e5f4", [
+              ply("c1f4", [
+                ply("c6d4", [
+                  ply("g1h1", [
+                    ply("d4f3", [
+                      ply("g2f3")
+                    ]),
+                    ply("e8g8", [
+                      ply("d1d2")
+                    ])
+                  ])
+                ])
+              ])
+            ])
+          ])
+          ]
+        }
+      ]),
+      planCard(idFactory, viennaOpeningId, 3, "No bishop developped", [
+        { moves: "e2e4 e7e5 b1c3 b8c6 f1c4 g8f6 d2d3 f8c5 f2f4 d7d6 g1f3 e8g8", arrows: "f4f5g c1g5o g5h4o c3d5r", circles: "f3g c3g c4g d3g", text: "Play this after Nf3 played and no light-squared bishop of black is developped" }
+      ]),
+      reactionsCard(idFactory, viennaOpeningId, 4, "!Ng4 attack", [
+        {
+          text: "Don't take f7\nInstead f5 to attack the knight\n!Bf2 => Kf1\n!Nf2 => Qh5",
+          setup: "e2e4 e7e5 b1c3 g8f6 f1c4 b8c6 d2d3 f8c5 f2f4 d7d6 g1f3 f6g4",
+          circles: "",
+          line: [
+          ply("f3g5", [
+            ply("e8g8", [
+              ply("f4f5", [], "d1g4r", "")
+            ]),
+            ply("h7h6", [
+              ply("f4f5", [], "d1g4r", "")
+            ]),
+            ply("c5f2", [
+              ply("e1f1", [
+                ply("e8g8", [
+                  ply("h2h3", [
+                    ply("g4e3", [
+                      ply("c1e3", [
+                        ply("f2e3", [
+                          ply("d1h5", [
+                            ply("h7h6", [
+                              ply("g5f7")
+                            ])
+                          ])
+                        ])
+                      ])
+                    ])
+                  ])
+                ])
+              ])
+            ]),
+            ply("g4f2", [
+              ply("d1h5", [
+                ply("g7g6", [
+                  ply("h5h6", [], "c4f7g h6g7o", "")
+                ])
+              ])
+            ])
+          ])
+          ]
+        }
+      ]),
+      planCard(idFactory, viennaOpeningId, 5, "!Exf", [
+        { moves: "e2e4 e7e5 b1c3 b8c6 f1c4 g8f6 d2d3 f8c5 f2f4 d7d6 g1f3 e5f4", arrows: "c1f4g d3d4o f4g5r g5f6r", circles: "e5r", text: "Bxf6 bcs O-O with tempo" }
+      ]),
+      planCard(idFactory, viennaOpeningId, 6, "Complete plan", [
+        { moves: "e2e4 e7e5 b1c3 b8c6 f1c4 g8f6 d2d3 f8c5 f2f4 d7d6 g1f3 c8g4", arrows: "c3a4g a4b6g c2c3g e1g1o h2h3o", circles: "c5g e7o", text: "!Bishop on c5 => Na4 c3\n!Bishop not on c5 => O-O h3" },
+        { moves: "e2e4 e7e5 b1c3 b8c6 f1c4 g8f6 d2d3 f8c5 f2f4 d7d6 g1f3 c8g4", arrows: "e1g1g", circles: "", text: "!Bishop on c5 => Na4 c3\n!Bishop not on c5 => O-O h3" }
+      ])
+    ];
+
+    return {
+      openings: [
+        { id: openingId, repertoireId, name: 'Italian Game', order: 0 },
+        { id: viennaOpeningId, repertoireId, name: 'Vienna Game', order: 1 }
+      ],
+      cards: [...cards, ...viennaCards]
+    };
   }
 
   // Black: 1.e4 c5 2.<White's two common replies: Nf3 main line, Nc3 variation>.

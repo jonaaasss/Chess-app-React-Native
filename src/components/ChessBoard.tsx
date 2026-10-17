@@ -199,6 +199,28 @@ export function PieceGlyph({ code, cell }: { code: PieceCode; cell: number }) {
   );
 }
 
+// a-h / 1-8 labels drawn inside the squares of the left column and bottom
+// row (like chess.com), following the board's orientation. Decorative only.
+export function BoardCoords({ size, flipped = false, styleSet }: { size: number; flipped?: boolean; styleSet: { light: string; dark: string } }) {
+  const cell = size / 8;
+  const fs = Math.max(8, Math.round(cell * 0.24));
+  const labelColor = (row: number, col: number) => ((row + col) % 2 === 0 ? styleSet.dark : styleSet.light);
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+      {Array.from({ length: 8 }, (_, r) => (
+        <Text key={`r${r}`} style={{ position: 'absolute', left: 2, top: r * cell + 1, fontSize: fs, fontWeight: '700', color: labelColor(r, 0) }}>
+          {flipped ? r + 1 : 8 - r}
+        </Text>
+      ))}
+      {Array.from({ length: 8 }, (_, c) => (
+        <Text key={`f${c}`} style={{ position: 'absolute', left: c * cell, width: cell - 3, textAlign: 'right', top: size - fs - 3, fontSize: fs, fontWeight: '700', color: labelColor(7, c) }}>
+          {String.fromCharCode((flipped ? 104 - c : 97 + c))}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
 export function ChessBoardView({ board, size, flipped = false }: { board: BoardState; size: number; flipped?: boolean }) {
   const cell = size / 8;
   const squares = flipped ? [...allSquares()].reverse() : allSquares();

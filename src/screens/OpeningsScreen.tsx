@@ -3,6 +3,7 @@ import { View, Text, TextInput, Pressable, useWindowDimensions } from 'react-nat
 import {
   addOpening,
   deleteOpening,
+  getBoardStyle,
   getCards,
   getOpenings,
   getRepertoire,
@@ -10,12 +11,17 @@ import {
   renameRepertoire,
   restoreOpening
 } from '../storage';
-import { promptDialog, anchoredMenu, showSnackbar } from '../overlay';
+import { confirmDialog, promptDialog, showSnackbar, simpleMenu, alertDialog } from '../overlay';
 import type { GroupId, Opening, PieceCode, Repertoire } from '../types';
-import { Screen, TopBar, Breadcrumb, BigButton, PieceBadge, rowStyles } from '../components/Common';
+import { Screen, TopBar, Breadcrumb, BigButton, PieceBadge, rowStyles, RowMenu, type RowAction } from '../components/Common';
 import { useTutorial, useTutorialTarget } from '../tutorial';
 import { colors, spacing, type } from '../theme';
-import { startStudySession } from './StudySessionOverlay';
+import { MoveText } from '../components/MoveText';
+import { askStudyPreview, startStudySession } from './StudySessionOverlay';
+import { openOpeningStartPositionPicker } from './OpeningStartPositionOverlay';
+import { openImportPgnDialog } from './ImportPgnOverlay';
+import { openAiImportDialog } from './AiImportOverlay';
+import { importOpening } from '../importOpening';
 
 // Used only on this screen: the opening row's "⋮" opens a small plain-text
 // popover pinned right under the button (no card/backdrop) instead of the
@@ -39,11 +45,15 @@ function OpeningRow({
   onRename: (newName: string) => void;
   onDelete: () => void;
 }) {
-  const menuRef = useRef<View>(null);
   const rowRef = useTutorialTarget(targetId);
   const inputRef = useRef<TextInput>(null);
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(title);
+  // The renamed title stays on screen until the list reloads with it, so the
+  // old name doesn't flash back in between.
+  const [pendingTitle, setPendingTitle] = useState<string | null>(null);
+  useEffect(() => setPendingTitle(null), [title]);
+  const shownTitle = pendingTitle ?? title;
 
   useEffect(() => {
     if (!editing) return;
@@ -52,23 +62,23 @@ function OpeningRow({
   }, [editing]);
 
   function startEdit() {
-    setValue(title);
+    setValue(shownTitle);
     setEditing(true);
   }
 
   function commitEdit() {
     setEditing(false);
     const trimmed = value.trim();
-    if (trimmed && trimmed !== title) onRename(trimmed);
+    if (trimmed && trimmed !== shownTitle) {
+      setPendingTitle(trimmed);
+      onRename(trimmed);
+    }
   }
 
-  function openMenu() {
-    menuRef.current?.measureInWindow(async (x, y, width, height) => {
-      const action = await anchoredMenu(['Rename', 'Delete'], { x, y, width, height });
-      if (action === 'Rename') startEdit();
-      else if (action === 'Delete') onDelete();
-    });
-  }
+  const actions: RowAction[] = [
+    { key: 'rename', icon: 'edit', label: 'Rename', onPress: startEdit },
+    { key: 'delete', icon: 'trash', label: 'Delete', onPress: onDelete }
+  ];
 
   return (
     <View ref={rowRef} collapsable={false} style={rowStyles.row}>
@@ -94,23 +104,14 @@ function OpeningRow({
         <Pressable onPress={onPress} style={({ pressed }) => [rowStyles.main, pressed && { opacity: 0.7 }]}>
           <PieceBadge code={piece} size={52} />
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={rowStyles.title} numberOfLines={1}>
-              {title}
-            </Text>
+            <MoveText text={shownTitle} style={rowStyles.title} numberOfLines={1} />
             <Text style={rowStyles.subtitle} numberOfLines={1}>
               {subtitle}
             </Text>
           </View>
         </Pressable>
       )}
-      <Pressable
-        ref={menuRef}
-        onPress={openMenu}
-        hitSlop={4}
-        style={({ pressed }) => [rowStyles.menuBtn, pressed && { opacity: 0.7 }]}
-      >
-        <Text style={{ color: colors.textSecondary, fontSize: 18 }}>⋮</Text>
-      </Pressable>
+      <RowMenu actions={actions} />
     </View>
   );
 }
@@ -174,19 +175,60 @@ export function OpeningsScreen({
   async function handleStudy() {
     const openings = await getOpenings(repertoireId);
     if (openings.length === 0) return;
-    await startStudySession(openings.map((o) => o.id), { shuffleOpenings: true });
+    const preview = await askStudyPreview();
+    if (preview === null) return;
+    await startStudySession(openings.map((o) => o.id), { shuffleOpenings: true, preview });
     load();
   }
 
   async function handleAddOpening() {
     // While the tutorial is on this button, the name comes pre-filled.
+    const inTutorial = tutorial.step?.id === 'openings.add';
     const prefill = tutorial.step?.id === 'openings.add' ? tutorial.step.promptPrefill : undefined;
     tutorial.event('addPressed');
     const name = await promptDialog('New opening', prefill ?? '', 'e.g. Italian');
-    if (name) {
-      const created = await addOpening(repertoireId, name);
+    if (name && rep) {
+      // The tutorial only knows the "make your own cards" path, so it skips this choice.
+      const how = inTutorial ? 'Make your own cards' : await simpleMenu(['Make your own cards', 'Import PGN', 'Import PGN with AI'], 'How do you want to start?');
+      if (how === null) return;
+      if (how === 'Import PGN' || how === 'Import PGN with AI') {
+        await handleImportOpening(name, how === 'Import PGN with AI');
+        return;
+      }
+      // Never persisted until the starting position is confirmed too —
+      // cancelling that screen means no opening gets created at all, same
+      // as picking a mode is what actually commits a brand-new card.
+      const boardStyle = await getBoardStyle();
+      const picked = await openOpeningStartPositionPicker(name, rep.group === 'black' ? 'b' : 'w', boardStyle);
+      if (picked === null) return;
+      const created = await addOpening(repertoireId, name, picked.setupMoves.length > 0 ? picked : undefined);
       tutorial.remember({ openingId: created.id });
-      load();
+      await load();
+      // Straight into the new (still empty) opening — except mid-tutorial,
+      // which needs to stay here a moment longer to spotlight the new row
+      // (see `targetId` below) before it leads you in itself.
+      if (!tutorial.step) onOpenOpening(created.id);
+    }
+  }
+
+  // Nothing is created until the pasted text has passed every check and you
+  // have confirmed the card count; a failure while saving removes the
+  // half-made opening again (see importOpening).
+  async function handleImportOpening(name: string, withAi: boolean) {
+    const imported = withAi ? await openAiImportDialog(rep?.group === 'black' ? 'Black' : 'White') : await openImportPgnDialog();
+    if (imported === null) return;
+    const cardCount = imported.value.cards.length;
+    const ok = await confirmDialog(
+      `Create "${name}" with ${cardCount} card${cardCount === 1 ? '' : 's'} (${imported.boardCount} board${imported.boardCount === 1 ? '' : 's'})?`,
+      { confirmLabel: 'Create', cancelLabel: 'Cancel' }
+    );
+    if (!ok) return;
+    try {
+      const created = await importOpening(repertoireId, name, imported.value);
+      await load();
+      onOpenOpening(created.id);
+    } catch {
+      await alertDialog('The import failed and nothing was saved. Please try again.');
     }
   }
 

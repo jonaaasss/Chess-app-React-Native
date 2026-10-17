@@ -346,7 +346,10 @@ function ChoiceDialog<T>({
   useOverlayBack(() => close(null));
   return (
     <Backdrop>
-      <Text style={styles.message}>{message}</Text>
+      <View style={choiceStyles.header}>
+        <Text style={[styles.message, choiceStyles.headerMessage]}>{message}</Text>
+        <CloseCircleButton onPress={() => close(null)} />
+      </View>
       <View style={{ gap: 8 }}>
         {choices.map((choice) => (
           <DialogButton
@@ -360,6 +363,11 @@ function ChoiceDialog<T>({
     </Backdrop>
   );
 }
+
+const choiceStyles = StyleSheet.create({
+  header: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
+  headerMessage: { flex: 1 }
+});
 
 export function choiceDialog<T>(message: string, choices: Choice<T>[]): Promise<T | null> {
   return showOverlay<T | null>((close) => <ChoiceDialog message={message} choices={choices} close={close} />);

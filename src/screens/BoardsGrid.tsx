@@ -1,12 +1,12 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { newReactionBoard, cloneReactionBoard } from '../chess';
+import { View, Text, TextInput, Pressable, StyleSheet } from 'react-native';
+import { newReactionBoardFromStart, cloneReactionBoard, defaultOverviewText, faceAnnotations } from '../chess';
 import { uid } from '../storage';
 import { ChessBoardView } from '../components/ChessBoard';
 import { ModeTip } from '../components/ModeTip';
 import { useTutorial, useTutorialTarget } from '../tutorial';
 import { CloseCircleButton, dismissSnackbar, showSnackbar } from '../overlay';
-import type { CardMode, ReactionBoard } from '../types';
+import type { CardMode, OpeningStartPosition, ReactionBoard } from '../types';
 import { colors, radius, spacing } from '../theme';
 import { openReactionBoardEditor } from './ReactionBoardEditorOverlay';
 
@@ -22,12 +22,26 @@ export function BoardsGrid({
   boards,
   yourColor,
   boardStyle,
+  startPosition,
+  overviewText,
+  onOverviewChange,
   onChange
 }: {
   mode: CardMode;
   boards: ReactionBoard[];
   yourColor: 'w' | 'b';
   boardStyle: number;
+  // The opening's own starting position (see types.ts's OpeningStartPosition)
+  // — a brand-new board starts here instead of the plain starting position,
+  // when the opening has one set. Duplicate never uses this: it deliberately
+  // carries over the source board's own position instead (see
+  // handleDuplicate below).
+  startPosition?: OpeningStartPosition;
+  // Card.overviewText — lives here (above the boards, below the mode tip)
+  // rather than below the grid, so it's still on screen once the keyboard
+  // is up and you're actually typing into it.
+  overviewText?: string;
+  onOverviewChange?: (text: string) => void;
   onChange: (boards: ReactionBoard[]) => void;
 }) {
   const sorted = [...boards].sort((a, b) => a.order - b.order);
@@ -48,14 +62,24 @@ export function BoardsGrid({
     return list.map((b, i) => ({ ...b, order: i }));
   }
 
-  function handleAdd() {
+  async function handleAdd() {
     if (boards.length >= MAX_BOARDS) return;
-    onChange([...boards, newReactionBoard(uid(), boards.length)]);
+    const created = newReactionBoardFromStart(uid(), boards.length, startPosition);
+    const next = [...boards, created];
+    onChange(next);
+    await handleOpen(created, next);
   }
 
-  function handleDuplicate(board: ReactionBoard) {
+  async function handleDuplicate(board: ReactionBoard) {
     if (boards.length >= MAX_BOARDS) return;
-    onChange(renumber([...boards, cloneReactionBoard(board, uid())]));
+    // The setup position (and its setupMoves) carries over — that's the
+    // point of duplicating — but the recorded line doesn't, since a
+    // duplicate is for recording a *different* continuation from the same
+    // starting point, not a second copy of the same line.
+    const clone = { ...cloneReactionBoard(board, uid()), recording: [] };
+    const next = renumber([...boards, clone]);
+    onChange(next);
+    await handleOpen(clone, next);
   }
 
   function handleDelete(board: ReactionBoard) {
@@ -77,19 +101,41 @@ export function BoardsGrid({
     });
   }
 
-  async function handleOpen(board: ReactionBoard) {
+  // `currentBoards` defaults to the `boards` prop, but handleAdd/
+  // handleDuplicate pass the list they just built explicitly instead —
+  // `boards` itself is still the pre-update array at the point they call
+  // this (onChange's effect on the prop hasn't landed yet), so falling back
+  // to it there would try to update a board that, as far as this closure
+  // knows, doesn't exist yet.
+  async function handleOpen(board: ReactionBoard, currentBoards: ReactionBoard[] = boards) {
     // All three modes share the same editor (forced move order, circles,
     // numbered arrows) — "Others"/"Plan" just never get offered the Play
-    // button, so `recording` stays empty for them.
+    // button, so `recording` stays empty for them. `null` for Reactions
+    // means: land on the recording's own start, not the end of its main
+    // line — irrelevant for Others/Plan, which have no recording at all.
     tutorial.event('openBoardEditor');
-    const updated = await openReactionBoardEditor(board, mode, yourColor, boardStyle);
+    const updated = await openReactionBoardEditor(board, mode, yourColor, boardStyle, null);
     if (!updated) return;
-    onChange(boards.map((b) => (b.id === board.id ? updated : b)));
+    onChange(currentBoards.map((b) => (b.id === board.id ? updated : b)));
   }
 
   return (
     <View>
       <ModeTip mode={mode} />
+
+      {boards.length > 1 && onOverviewChange && (
+        <>
+          <Text style={styles.overviewLabel}>Overview (shown once, after every board)</Text>
+          <TextInput
+            style={styles.overviewInput}
+            value={overviewText ?? ''}
+            onChangeText={onOverviewChange}
+            multiline
+            placeholder={defaultOverviewText(mode, boards)}
+            placeholderTextColor={colors.textDim}
+          />
+        </>
+      )}
 
       <View style={styles.grid}>
         {sorted.map((board, tileIdx) => {
@@ -98,10 +144,17 @@ export function BoardsGrid({
           // Reactions' own fields, Others' front, or Plan's single face
           // (`back`, where its position/arrows actually live).
           const previewFace = mode === 'plan' ? board.back : board.front;
-          const previewBoard =
-            mode === 'reactions'
-              ? { pieces: board.pieces, style: boardStyle, arrows: board.arrows, circles: board.circles }
-              : { pieces: previewFace.pieces, style: boardStyle, arrows: previewFace.arrows, circles: previewFace.circles };
+          // Others/Plan keep each position's own arrows/circles now (see
+          // chess.ts's faceAnnotations) — the preview shows the face's
+          // current (final) position, so it needs that position's own
+          // annotations, not whatever's on position 0.
+          const previewAnnotations = mode === 'reactions' ? { arrows: board.arrows, circles: board.circles } : faceAnnotations(previewFace);
+          const previewBoard = {
+            pieces: mode === 'reactions' ? board.pieces : previewFace.pieces,
+            style: boardStyle,
+            arrows: previewAnnotations.arrows,
+            circles: previewAnnotations.circles
+          };
           return (
           <View key={board.id} style={styles.tile}>
             <Pressable
@@ -150,6 +203,21 @@ export function BoardsGrid({
 }
 
 const styles = StyleSheet.create({
+  overviewLabel: { color: colors.textDim, fontSize: 12.5, marginBottom: 6 },
+  overviewInput: {
+    backgroundColor: colors.panel2,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    color: colors.text,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    minHeight: 44,
+    maxHeight: 140,
+    textAlignVertical: 'top',
+    marginBottom: 12
+  },
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
   tile: { width: '50%', padding: spacing.xs, alignItems: 'center' },
   tileCaption: { color: colors.textDim, fontSize: 12, marginTop: 6, width: PREVIEW_SIZE },

@@ -1,10 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { deleteCard, getBoardStyle, getCard, getOpening, getRepertoire, saveCard } from '../storage';
+import { addCard, deleteCard, getBoardStyle, getCard, getOpening, getRepertoire, saveCard } from '../storage';
+import { descriptionFace, faceAnnotations } from '../chess';
 import { confirmDialog, showOverlay, SnackbarLayer, useOverlayBack } from '../overlay';
-import type { BoardFace, Card, CardMode, ReactionBoard } from '../types';
+import type { BoardFace, Card, CardMode, OpeningStartPosition, ReactionBoard } from '../types';
 import { colors, type } from '../theme';
+import { MoveText } from '../components/MoveText';
 import { openMoveDuplicateDialog } from './MoveDuplicateOverlay';
 import { BoardsGrid } from './BoardsGrid';
 import { TutorialLayer, useTutorial, useTutorialTarget } from '../tutorial';
@@ -14,14 +16,6 @@ export interface CardEditorResult {
   deleted: boolean;
   // Set when the card was deleted, so whoever opened the editor can offer Undo.
   deletedCard?: Card;
-}
-
-// Which face holds "the" single description for a mode that isn't Others
-// (Others keeps two independent ones): Reactions shows it throughout
-// Study, Plan alongside the plan — both live on the board editor's single
-// Description field, just backed by a different face internally.
-function descriptionFace(mode: CardMode): 'front' | 'back' {
-  return mode === 'plan' ? 'back' : 'front';
 }
 
 // Reconciles a board's data when the card's mode changes:
@@ -62,14 +56,18 @@ function migrateBoardForMode(board: ReactionBoard, fromMode: CardMode, toMode: C
       back: { ...board.back, ...position, arrows: [...position.arrows], circles: [...position.circles] }
     };
   } else if (!fromReactions && toReactions) {
+    // The front's *current* (final) position's annotations — not position
+    // 0's — since that's what was actually visible on the board being
+    // converted (see chess.ts's faceAnnotations).
+    const finalAnnotations = faceAnnotations(board.front);
     next = {
       ...board,
       pieces: { ...board.front.pieces },
       turn: board.front.turn,
       castling: { ...board.front.castling },
       enPassant: board.front.enPassant,
-      arrows: board.front.arrows.map((a) => ({ ...a })),
-      circles: board.front.circles.map((c) => ({ ...c })),
+      arrows: finalAnnotations.arrows.map((a) => ({ ...a })),
+      circles: finalAnnotations.circles.map((c) => ({ ...c })),
       recording: []
     };
   } else if (!fromReactions && !toReactions && toMode === 'plan') {
@@ -82,7 +80,13 @@ function migrateBoardForMode(board: ReactionBoard, fromMode: CardMode, toMode: C
         turn: board.front.turn,
         castling: { ...board.front.castling },
         enPassant: board.front.enPassant,
-        moves: board.front.moves.map((m) => ({ ...m, piecesAfter: { ...m.piecesAfter }, castlingAfter: { ...m.castlingAfter } }))
+        moves: board.front.moves.map((m) => ({
+          ...m,
+          piecesAfter: { ...m.piecesAfter },
+          castlingAfter: { ...m.castlingAfter },
+          arrowsAfter: m.arrowsAfter.map((a) => ({ ...a })),
+          circlesAfter: m.circlesAfter.map((c) => ({ ...c }))
+        }))
       }
     };
   } else {
@@ -100,17 +104,27 @@ function migrateBoardForMode(board: ReactionBoard, fromMode: CardMode, toMode: C
   return next;
 }
 
+// A brand-new card is never persisted until a type is actually chosen — no
+// popup, and no orphaned "others"-by-default card if the picker is
+// cancelled. `cardId` XOR `newCard`: editing an existing card vs. starting
+// one from scratch.
 function CardEditorOverlay({
   cardId,
+  newCard,
   close
 }: {
-  cardId: string;
+  cardId?: string;
+  newCard?: { openingId: string; name: string };
   close: (result: CardEditorResult) => void;
 }) {
   const [card, setCard] = useState<Card | null>(null);
   // Which color this card's repertoire plays — drives both the board
   // orientation and which side's moves get highlighted in the editor.
   const [yourColor, setYourColor] = useState<'w' | 'b'>('w');
+  // The opening's own starting position (see types.ts's OpeningStartPosition),
+  // threaded down to BoardsGrid so a brand-new board starts there instead of
+  // the plain starting position.
+  const [openingStartPosition, setOpeningStartPosition] = useState<OpeningStartPosition | undefined>(undefined);
   // Board style is a single global setting now (Settings screen) — fetched
   // once here and threaded down to every board preview/editor.
   const [boardStyle, setBoardStyle] = useState(0);
@@ -127,6 +141,13 @@ function CardEditorOverlay({
 
   useEffect(() => {
     (async () => {
+      setBoardStyle(await getBoardStyle());
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!cardId) return;
+    (async () => {
       const original = await getCard(cardId);
       if (!original) {
         close({ changed: false, deleted: false });
@@ -137,15 +158,70 @@ function CardEditorOverlay({
       const opening = await getOpening(original.openingId);
       const rep = opening ? await getRepertoire(opening.repertoireId) : undefined;
       setYourColor(rep?.group === 'black' ? 'b' : 'w');
-      setBoardStyle(await getBoardStyle());
+      setOpeningStartPosition(opening?.startPosition);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cardId]);
 
+  useEffect(() => {
+    if (!newCard) return;
+    (async () => {
+      const opening = await getOpening(newCard.openingId);
+      const rep = opening ? await getRepertoire(opening.repertoireId) : undefined;
+      setYourColor(rep?.group === 'black' ? 'b' : 'w');
+      setOpeningStartPosition(opening?.startPosition);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newCard?.openingId]);
+
   useOverlayBack(() => handleCancel());
 
+  // A new card is never created until a type is chosen — pick one, or
+  // Cancel/back and nothing was ever added.
+  async function handlePickMode(pickedMode: CardMode) {
+    if (!newCard) return;
+    const created = await addCard(newCard.openingId, newCard.name, pickedMode);
+    originalRef.current = JSON.stringify(created);
+    changedRef.current = true;
+    setCard(created);
+    tutorial.remember({ cardId: created.id });
+    tutorial.event(`mode:${pickedMode}`);
+  }
+
   if (!card) {
-    return <SafeAreaView style={styles.overlay} />;
+    if (!newCard) return <SafeAreaView style={styles.overlay} />;
+    return (
+      <SafeAreaView style={styles.overlay}>
+        <View style={styles.header}>
+          <Pressable onPress={handleCancel} style={styles.headerCancel}>
+            <Text style={styles.topBarBtn}>Cancel</Text>
+          </Pressable>
+          <MoveText text={newCard.name || 'New card'} style={styles.title} />
+          <View style={{ width: 64 }} />
+        </View>
+        <ScrollView contentContainerStyle={styles.content}>
+          <Text style={styles.fieldLabel}>What kind of card is this?</Text>
+          <Pressable
+            ref={modeRefs.reactions}
+            collapsable={false}
+            onPress={() => handlePickMode('reactions')}
+            style={styles.modeTile}
+          >
+            <Text style={styles.modeTileTitle}>Reactions</Text>
+            <Text style={styles.modeTileDesc}>A line you play, with branches for how they might reply.</Text>
+          </Pressable>
+          <Pressable ref={modeRefs.plan} collapsable={false} onPress={() => handlePickMode('plan')} style={styles.modeTile}>
+            <Text style={styles.modeTileTitle}>Plan</Text>
+            <Text style={styles.modeTileDesc}>A position with one arrow to reproduce.</Text>
+          </Pressable>
+          <Pressable ref={modeRefs.others} collapsable={false} onPress={() => handlePickMode('others')} style={styles.modeTile}>
+            <Text style={styles.modeTileTitle}>Front & back</Text>
+            <Text style={styles.modeTileDesc}>A question side and an answer side.</Text>
+          </Pressable>
+        </ScrollView>
+        <TutorialLayer surface="cardEditor" />
+      </SafeAreaView>
+    );
   }
 
   async function handleSave() {
@@ -262,6 +338,9 @@ function CardEditorOverlay({
           boards={card.boards}
           yourColor={yourColor}
           boardStyle={boardStyle}
+          startPosition={openingStartPosition}
+          overviewText={card.overviewText}
+          onOverviewChange={(overviewText) => setCard((prev) => (prev ? { ...prev, overviewText } : prev))}
           onChange={(boards) => setCard((prev) => (prev ? { ...prev, boards } : prev))}
         />
 
@@ -280,6 +359,12 @@ function CardEditorOverlay({
 
 export function openCardEditor(cardId: string): Promise<CardEditorResult> {
   return showOverlay<CardEditorResult>((close) => <CardEditorOverlay cardId={cardId} close={close} />, {
+    animation: 'none'
+  });
+}
+
+export function openNewCardEditor(openingId: string, name: string): Promise<CardEditorResult> {
+  return showOverlay<CardEditorResult>((close) => <CardEditorOverlay newCard={{ openingId, name }} close={close} />, {
     animation: 'none'
   });
 }
@@ -317,6 +402,16 @@ const styles = StyleSheet.create({
   modeBtnActive: { backgroundColor: colors.accent },
   modeBtnText: { color: colors.textDim, fontSize: 13, fontWeight: '600' },
   modeBtnTextActive: { color: colors.onPrimary },
+  modeTile: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.panel,
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 12
+  },
+  modeTileTitle: { color: colors.text, ...type.h2, marginBottom: 4 },
+  modeTileDesc: { color: colors.textDim, ...type.body },
   blockBtn: { width: '100%', borderRadius: 10, paddingVertical: 13, alignItems: 'center', marginTop: 12 },
   secondaryBtn: { backgroundColor: 'transparent', borderWidth: 1, borderColor: colors.textDim },
   secondaryBtnText: { color: colors.text },

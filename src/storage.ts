@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { boardStateToReactionBoard, cloneBoardFace, cloneReactionBoard, newReactionBoard } from './chess';
+import { boardStateToReactionBoard, cloneBoardFace, cloneReactionBoard, newReactionBoard, newReactionBoardFromStart } from './chess';
 import { buildExampleContent } from './exampleContent';
-import type { Card, CardMode, GroupId, Opening, Repertoire } from './types';
+import type { Card, CardMode, GroupId, Opening, OpeningStartPosition, Repertoire } from './types';
 
 const EXAMPLE_HIDDEN_KEY = 'exampleRepertoireHidden';
 const SHOW_MULTIPLE_REPERTOIRES_KEY = 'showMultipleRepertoires';
@@ -75,6 +75,47 @@ function migrate(s: Store): void {
         const legacyFace = face as unknown as { text?: string; moves?: unknown };
         if (legacyFace.text === undefined) legacyFace.text = '';
         if (!legacyFace.moves) legacyFace.moves = [];
+      }
+    }
+
+    // Backfills faces saved before each move carried its own arrows/circles
+    // (see BoardMove.arrowsAfter/circlesAfter). Before this, a face's
+    // `arrows`/`circles` were always whatever's currently drawn — i.e. on
+    // its *final* position, not position 0 — so that's exactly where they
+    // move to: onto the last move (if there is one), leaving every earlier
+    // move blank (what used to be drawn there, if anything, was already
+    // lost the moment a later move was made, back when a move cleared the
+    // face's one shared arrows/circles). A face with no moves needed no
+    // migration at all — its arrows/circles already meant position 0.
+    for (const board of card.boards) {
+      for (const face of [board.front, board.back]) {
+        const legacyFace = face as unknown as { moves: Array<{ arrowsAfter?: unknown; circlesAfter?: unknown }> };
+        if (legacyFace.moves.length === 0 || legacyFace.moves[legacyFace.moves.length - 1].arrowsAfter) continue;
+        legacyFace.moves.forEach((move, i) => {
+          const isLast = i === legacyFace.moves.length - 1;
+          move.arrowsAfter = isLast ? face.arrows : [];
+          move.circlesAfter = isLast ? face.circles : [];
+        });
+        face.arrows = [];
+        face.circles = [];
+      }
+    }
+
+    // An arrow's single free-text `description` became structured `notes`
+    // (see types.ts's ArrowNotes) — whatever was written there was an
+    // explanation of the move, so it carries over as the "reason".
+    for (const board of card.boards) {
+      for (const face of [board.front, board.back]) {
+        const lists = [face.arrows, ...face.moves.map((m) => m.arrowsAfter)];
+        for (const arrows of lists) {
+          for (const arrow of arrows) {
+            const legacyArrow = arrow as unknown as { description?: string };
+            if (legacyArrow.description === undefined) continue;
+            const text = legacyArrow.description.trim();
+            if (text && !arrow.notes) arrow.notes = { reason: text };
+            delete legacyArrow.description;
+          }
+        }
       }
     }
 
@@ -304,10 +345,10 @@ export async function getOpening(id: string): Promise<Opening | undefined> {
   return s.openings.find((o) => o.id === id);
 }
 
-export async function addOpening(repertoireId: string, name: string): Promise<Opening> {
+export async function addOpening(repertoireId: string, name: string, startPosition?: OpeningStartPosition): Promise<Opening> {
   const s = await load();
   const existing = await getOpenings(repertoireId);
-  const opening: Opening = { id: uid(), repertoireId, name, order: existing.length };
+  const opening: Opening = { id: uid(), repertoireId, name, order: existing.length, startPosition };
   s.openings.push(opening);
   await persist();
   return opening;
@@ -318,6 +359,17 @@ export async function renameOpening(id: string, name: string): Promise<void> {
   const o = s.openings.find((x) => x.id === id);
   if (!o) return;
   o.name = name;
+  await persist();
+}
+
+// Blank clears it (the key is dropped, same as an opening that never had one).
+export async function setOpeningSummary(id: string, summary: string | undefined): Promise<void> {
+  const s = await load();
+  const o = s.openings.find((x) => x.id === id);
+  if (!o) return;
+  const trimmed = summary?.trim();
+  if (trimmed) o.summary = trimmed;
+  else delete o.summary;
   await persist();
 }
 
@@ -340,16 +392,17 @@ export async function getCard(id: string): Promise<Card | undefined> {
   return s.cards.find((c) => c.id === id);
 }
 
-export async function addCard(openingId: string, name = ''): Promise<Card> {
+export async function addCard(openingId: string, name: string, mode: CardMode): Promise<Card> {
   const s = await load();
   const existing = await getCards(openingId);
+  const opening = s.openings.find((o) => o.id === openingId);
   const card: Card = {
     id: uid(),
     openingId,
     order: existing.length,
     name,
-    mode: 'others',
-    boards: [newReactionBoard(uid(), 0)]
+    mode,
+    boards: [newReactionBoardFromStart(uid(), 0, opening?.startPosition)]
   };
   s.cards.push(card);
   await persist();
@@ -536,4 +589,18 @@ export async function setBoardStyle(style: number): Promise<void> {
 
 export async function setShowMultipleRepertoires(show: boolean): Promise<void> {
   await setSetting(SHOW_MULTIPLE_REPERTOIRES_KEY, show);
+}
+
+// Temporary developer aid: dumps a repertoire's content as plain text (see
+// DevExportOverlay.tsx) so it can be copied out and turned into
+// exampleContent.ts by hand, without needing to hand-type move lists.
+// Off by default (Settings' "Developer" section) in both Dev and Permanent.
+const DEV_EXPORT_ENABLED_KEY = 'devExportEnabled';
+
+export async function getDevExportEnabled(): Promise<boolean> {
+  return getSetting<boolean>(DEV_EXPORT_ENABLED_KEY, false);
+}
+
+export async function setDevExportEnabled(enabled: boolean): Promise<void> {
+  await setSetting(DEV_EXPORT_ENABLED_KEY, enabled);
 }
