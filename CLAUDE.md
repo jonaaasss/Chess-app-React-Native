@@ -5,6 +5,7 @@
 # Werkafspraken
 
 - Antwoord in het Nederlands, maximaal 10 zinnen (code, tabellen, JSON en PGN tellen niet mee), in alinea's. Bij een oplossing: stappenplan.
+- Instructies voor Jonas zijn ultraspecifiek: een genummerd stappenplan met elke knop, elk menu, elk veld en elk vinkje dat hij moet aanklikken of invullen, met de exacte naam zoals op het scherm (een stappenplan telt niet mee voor het zinnenmaximum).
 - Maak geen aannames over setup of data: vraag bij onduidelijkheid.
 - Zet alle vragen aan Jonas genummerd aan het einde van het antwoord, nooit midden in de tekst.
 - Stel wijzigingen eerst voor (oud/nieuw in een tabel) en wacht op akkoord, tenzij Jonas zegt dat het meteen mag.
