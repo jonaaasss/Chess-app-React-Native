@@ -34,8 +34,12 @@ Read this before creating, importing or reviewing opening cards. The app checks 
 
 ## Card styles (as in "Anti Scandinavian")
 
-- **"Reactions: first move"** (`fastRevision`): one board per trigger, a red circle on the triggering piece, one green arrow, text "If !X => Y".
-- **"Key: !..."** (`fastRevision`): board 1 holds the plan (green = now, orange = numbered multi-step plan with `reason` "(k/n)", red = second choice, blue = later/optional). The opponent's reactions are `responses` on the arrow.
+- **"Reactions: first move"** (`fastRevision`): one board per trigger, a red circle on the triggering piece, one green arrow, text "If !X => Y". Only for real threats: positions where one exact move is needed and anything else leaves Jonas clearly worse (e.g. a gambit pawn, a centre break, a pin). Quiet developing moves are not reactions.
+- **"Key: !..."** (`fastRevision`): board 1 holds the plan (green = now, orange = the plan moves, red = second choice, blue = later/optional). The opponent's reactions are `responses` on the arrow.
+- Cards describe **general plans**, not every White option at move 4 and every option at move 5. One plan card can cover several White moves that lead to the same kind of position.
+- A Key board shows the whole plan with several arrows. A board with a single arrow is a rare exception and never true for all boards of a card. Don't fuss over the exact move order inside a plan.
+- An arrow's `reason` says **why** the move is played (e.g. a6: "Room for Ba7, so the bishop survives !Na4"). Never write counters like "Plan (3/5)", and leave out obvious conditions (e.g. "after !cxd4" for ...Bb4+).
+- Every `responses` trigger that refers to a piece or square needs the matching arrow on the board (e.g. "!Bxe6" only on the arrow that puts a piece on e6).
 - **"Reaction: !X"** (not fast): the boards are the position right after the trigger in different situations; no follow-up boards. Continuations go in the text or in `responses`.
 
 ## Arrow rules
