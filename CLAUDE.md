@@ -12,4 +12,5 @@
 - Commit en push alleen op verzoek.
 - Gebruik geen bash-heredocs met backticks: schrijf scripts met de Write-tool.
 - Lees bij het maken of importeren van openingen eerst `docs/IMPORT_REGELS.md`.
+- Lees bij het zoeken van bronnen (Lichess-studies, auteurs, explorer) eerst `docs/LICHESS_BRONNEN.md`.
 - Werk `STATUS.md` bij als Jonas dat vraagt (aan het eind van een chat).
