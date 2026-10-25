@@ -19,6 +19,14 @@ Read this before researching an opening to make cards from sources. Jonas's rule
 3. **Web search** limited to `lichess.org`, on the line name. Finds only part of the studies.
 4. **Links from Jonas**: he can search on lichess.org himself and paste links. In a local session on his PC, Claude in Chrome can use the Lichess search in his own browser.
 
+## Asking Jonas about moves
+
+- At most 5 questions per round, numbered at the end of the answer.
+- Ask only about big choices: a line with its own name (e.g. Max Lange Attack, Scotch Gambit) or a clearly more aggressive option. No questions about details deep in a line (e.g. move 9).
+- Decide small choices yourself: the source's recommendation, otherwise the calmer move. List those decisions in a short table so Jonas can overrule them.
+
+Jonas's choices for the Italian as Black (3...Bc5), 2026-10-25: 4.c3 Nf6 5.d4 exd4 6.cxd4 Bb4+; 4.c3 Nf6 5.O-O d6; 4.d3 Pianissimo setup (...d6, ...a6, ...Ba7, ...O-O); 4.b4 Bxb4 5.c3 Ba5 6.d4 d6; 4.O-O Nf6 5.d4 Bxd4; 4.d4 Bxd4.
+
 ## Judging authors
 
 `scripts/lichess_authors.py` measures criteria 1–5 for a list of usernames (`python3 -I scripts/lichess_authors.py out.json name1 name2 ...`; output in a scratch folder, not in the repo).
