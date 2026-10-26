@@ -38,7 +38,7 @@ Read this before creating, importing or reviewing opening cards. The app checks 
 - **"Key: !..."** (`fastRevision`): board 1 holds the plan (green = now, orange = the plan moves, red = second choice, blue = later/optional). The opponent's reactions are `responses` on the arrow.
 - Cards describe **general plans**, not every White option at move 4 and every option at move 5. One plan card can cover several White moves that lead to the same kind of position.
 - A Key board shows the whole plan with several arrows. A board with a single arrow is a rare exception and never true for all boards of a card. Don't fuss over the exact move order inside a plan.
-- An arrow's `reason` says **why** the move is played (e.g. a6: "Room for Ba7, so the bishop survives !Na4"). Never write counters like "Plan (3/5)", and leave out obvious conditions (e.g. "after !cxd4" for ...Bb4+).
+- An arrow's `reason` says **why** the move is played (e.g. a6: "Room for Ba7, so the bishop survives !Na4"). Never write counters like "Plan (3/5)", and leave out obvious conditions (e.g. "after !cxd4" for ...Bb4+). Not every arrow needs a reason: skip it for obvious moves (e.g. ...d6 in a quiet setup, castling, plain development).
 - Every `responses` trigger that refers to a piece or square needs the matching arrow on the board (e.g. "!Bxe6" only on the arrow that puts a piece on e6).
 - **"Reaction: !X"** (not fast): the boards are the position right after the trigger in different situations; no follow-up boards. Continuations go in the text or in `responses`.
 
