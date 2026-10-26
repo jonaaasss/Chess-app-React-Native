@@ -34,7 +34,8 @@ Read this before creating, importing or reviewing opening cards. The app checks 
 
 ## Card styles (as in "Anti Scandinavian")
 
-- **"Reactions: first move"** (`fastRevision`): one board per trigger, a red circle on the triggering piece, one green arrow, text "If !X => Y". Only for real threats: positions where one exact move is needed and anything else leaves Jonas clearly worse (e.g. a gambit pawn, a centre break, a pin). Quiet developing moves are not reactions.
+- **"Reactions: first move"** (`fastRevision`): one board per trigger, a red circle on the triggering piece, one green arrow, text "If !X => Y". Only for real threats: positions where one exact move is needed and anything else leaves Jonas clearly worse (e.g. a gambit pawn, a centre break, a pin). Quiet developing moves are not reactions. Always include: a move that attacks a piece (e.g. !d4 or !b4 against a bishop), a piece that lands on Jonas's half of the board (e.g. !Bg5), and a trade offer (e.g. !Be3).
+- A move Jonas plays against (almost) everything (e.g. ...Nf6 in the Italian) is already on the board of every Key position; the Key board starts after it.
 - **"Key: !..."** (`fastRevision`): board 1 holds the plan (green = now, orange = the plan moves, red = second choice, blue = later/optional). The opponent's reactions are `responses` on the arrow.
 - Cards describe **general plans**, not every White option at move 4 and every option at move 5. One plan card can cover several White moves that lead to the same kind of position.
 - A Key board shows the whole plan with several arrows. A board with a single arrow is a rare exception and never true for all boards of a card. Don't fuss over the exact move order inside a plan.
