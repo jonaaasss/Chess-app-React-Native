@@ -38,6 +38,7 @@ Read this before creating, importing or reviewing opening cards. The app checks 
 - A move Jonas plays against (almost) everything (e.g. ...Nf6 in the Italian) is already on the board of every Key position; the Key board starts after it.
 - **"Key: !..."** (`fastRevision`): board 1 holds the plan. The opponent's reactions are `responses` on the arrow.
 - **Arrow colors group moves that belong together** (e.g. a6 + Ba7 green, d6 + Be6 orange, h6 + O-O red, Re8 + d5 blue). Use a new color for each group, so a plan with several groups uses all 4 colors; green is the group to play first. Never put unrelated moves in one color.
+- **Rules of thumb** that hold in many positions (e.g. !Be3 => Bxe3; !Bg5 => h6, g5, h5; ...Na5 when White has no c3/a3/a4 and d6 is played) go in the summary's Piece table, not as arrows on every board. "Reactions: first move" gets one board per trigger, never two boards with the same answer; the matching "Reaction: !X" card shows the plan that follows on one board.
 - A move that is played by default (e.g. ...Nf6 when no pawn attacks the bishop) is never an arrow: it is already on the board.
 - Cards describe **general plans**, not every White option at move 4 and every option at move 5. One plan card can cover several White moves that lead to the same kind of position.
 - A Key board shows the whole plan with several arrows. A board with a single arrow is a rare exception and never true for all boards of a card. Don't fuss over the exact move order inside a plan.
