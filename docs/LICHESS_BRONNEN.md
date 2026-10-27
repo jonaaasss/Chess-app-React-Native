@@ -52,6 +52,8 @@ Not measurable through the API: likes and the quality of the comments. Check tho
 | fuxia | –, 2016 | 1.e4 e5 sidelines (Ponziani, Scotch, Vienna, Evans) | recommended on the forum |
 | SalgadoChess | GM, 2795 | 1.e4 e5 2.d4 for Black, Greco history | little on the Italian |
 | MasterChessDojo | NM, 2006 | Italian/Evans miniatures | |
+| ToyTiko (publishes GM Michael Roiz) | NM | "Giuoco piano as black" Part 1 `ZNpSeoTX` / Part 2 `9neH3F7E`: Pianissimo, Nc3 + d3, Bg5, Be3, b4 plans | best Black-side source for quiet Italian lines; may come from a paid course (Jonas approved its use) |
+| YoungGunners, IM likewater, Horobetz (NM) | – / IM / NM | Giuoco Piano for Black, Evans, Max Lange | found by the leaderboard scan, not checked yet |
 | JThybo, Craze, RebeccaHarris (Naroditsky) | GM | Berlin, Spanish, Catalan, gambits | nothing on the Italian |
 
 Dropped: disabled accounts (ImaginaryGC, Yeltcki, nsn21, pepellou, Qconstantinee), ToS flag (colt45nine, Zkwong1877), `Lichess` (mostly broadcasts), beginner level (Dabadman, LeninPerez). Extend this table whenever new authors are checked.
