@@ -97,6 +97,8 @@ export function PieceArt({ code }: { code: PieceCode }) {
           <Path d="M12 36v-4h21v4H12z" strokeLinecap="butt" />
           <Path d="M11 14V9h4v2h5V9h5v2h5V9h4v5" strokeLinecap="butt" />
           <Path d="M34 14l-3 3H14l-3-3" />
+          {/* white filler between the two strokes: on some pixel alignments (e.g. a rook on d1) the 1.5-unit gap anti-aliases to solid black */}
+          <Path d="M14 14.75h17v1.5H14z" fill="#fff" stroke="none" />
           <Path d="M31 17v12.5H14V17" strokeLinecap="butt" strokeLinejoin="miter" />
           <Path d="M31 29.5l1.5 2.5h-20l1.5-2.5" />
           <Path d="M11 14h23" fill="none" stroke="#000" strokeLinejoin="miter" />

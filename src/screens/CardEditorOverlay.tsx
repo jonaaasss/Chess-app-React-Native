@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ScrollView, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { addCard, deleteCard, getBoardStyle, getCard, getOpening, getRepertoire, saveCard } from '../storage';
 import { descriptionFace, faceAnnotations } from '../chess';
@@ -313,6 +313,19 @@ function CardEditorOverlay({
 
       <ScrollView contentContainerStyle={styles.content}>
 
+        <View style={styles.fastRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.fastTitle}>Fast Revision</Text>
+            <Text style={styles.fastDesc}>Include this card in the quick daily run-through.</Text>
+          </View>
+          <Switch
+            value={card.fastRevision === true}
+            onValueChange={(on) => setCard((prev) => (prev ? { ...prev, fastRevision: on ? true : undefined } : prev))}
+            trackColor={{ false: colors.panel2, true: colors.primary }}
+            thumbColor={colors.textPrimary}
+          />
+        </View>
+
         <View style={styles.modeHeaderRow}>
           <Text style={[styles.fieldLabel, { marginTop: 0, marginBottom: 0 }]}>Boards</Text>
           <View style={styles.modeToggle}>
@@ -396,6 +409,19 @@ const styles = StyleSheet.create({
   topBarBtn: { color: colors.textDim, ...type.body },
   title: { color: colors.text, ...type.h2 },
   fieldLabel: { color: colors.textDim, fontSize: 12.5, marginBottom: 6, marginTop: 14 },
+  fastRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 12,
+    marginBottom: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.panel
+  },
+  fastTitle: { color: colors.text, ...type.bodyStrong },
+  fastDesc: { color: colors.textDim, fontSize: 12.5, marginTop: 2 },
   modeHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 0, marginBottom: 6 },
   modeToggle: { flexDirection: 'row', backgroundColor: colors.panel2, borderRadius: 8, padding: 2, borderWidth: 1, borderColor: colors.border },
   modeBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6 },

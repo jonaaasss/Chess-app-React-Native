@@ -230,4 +230,6 @@ export interface Card {
   // description, recomputed live rather than stored, so editing a board's
   // description keeps this in sync until you actually write your own.
   overviewText?: string;
+  // On: this card is part of Fast Revision (the quick daily run-through).
+  fastRevision?: boolean;
 }

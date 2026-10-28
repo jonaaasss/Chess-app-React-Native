@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View } from 'react-native';
+import { Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -101,6 +101,7 @@ function SettingsRoute({ navigation }: NativeStackScreenProps<RootStackParamList
 
 export default function App() {
   const [dataReady, setDataReady] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [fontsLoaded] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
@@ -111,7 +112,9 @@ export default function App() {
   const ready = dataReady && fontsLoaded;
 
   useEffect(() => {
-    ensureSeeded().then(() => setDataReady(true));
+    ensureSeeded()
+      .then(() => setDataReady(true))
+      .catch((e) => setLoadError(String(e?.message ?? e)));
   }, []);
 
   // Automatic cloud backup (only does anything while signed in).
@@ -129,7 +132,12 @@ export default function App() {
       <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }} onLayout={onLayoutRootView}>
         <StatusBar style="light" />
         <TutorialProvider>
-        {!ready ? (
+        {loadError ? (
+          <View style={{ flex: 1, backgroundColor: colors.bg, padding: 24, justifyContent: 'center' }}>
+            <Text style={{ color: colors.textPrimary, fontSize: 16, marginBottom: 8 }}>Your data could not be loaded.</Text>
+            <Text selectable style={{ color: colors.textPrimary, fontSize: 13 }}>{loadError}</Text>
+          </View>
+        ) : !ready ? (
           <View style={{ flex: 1, backgroundColor: colors.bg }} />
         ) : (
           <NavigationContainer

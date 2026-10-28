@@ -24,7 +24,8 @@
       "expo-font",
       "expo-splash-screen",
       "./plugins/withStockfishAssets.js",
-      "./plugins/withPermanentBuild.js"
+      "./plugins/withPermanentBuild.js",
+      "expo-sqlite"
     ]
   }
 }

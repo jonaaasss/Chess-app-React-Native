@@ -39,6 +39,11 @@ export const colors = {
   // Danger as text on the dark background (the solid red above is for fills).
   dangerText: '#F27C7C',
 
+  // Move colours in the opening Summary: a move that is always the same
+  // (c3), one that depends on the opponent (?Bd3) — red is dangerText (!c3).
+  moveSure: '#4ade80',
+  moveMaybe: '#fb923c',
+
   evalRight: '#15803d',
   evalWrong: '#dc2626',
 

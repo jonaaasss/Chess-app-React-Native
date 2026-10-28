@@ -48,6 +48,7 @@ interface ParsedBoard {
 }
 interface ParsedCard {
   name: string;
+  fastRevision?: boolean;
   boards: ParsedBoard[];
 }
 export interface ParsedImport {
@@ -227,7 +228,8 @@ export function parseOpeningImport(raw: string): ParseResult {
       if (c.boards.length > MAX_BOARDS_PER_CARD) return fail(`${where} "${name}" has more than ${MAX_BOARDS_PER_CARD} boards.`);
       const boards = c.boards.map((b: unknown, bi: number) => parseBoard(b, `${where} "${name}", board ${bi + 1}`));
       boardCount += boards.length;
-      return { name, boards };
+      if (c.fastRevision !== undefined && typeof c.fastRevision !== 'boolean') return fail(`${where} "${name}": "fastRevision" must be true or false.`);
+      return { name, boards, fastRevision: c.fastRevision === true ? true : undefined };
     });
     return { ok: true, value: { summary, cards }, boardCount };
   } catch (e) {
@@ -285,7 +287,8 @@ function buildCard(openingId: string, order: number, pc: ParsedCard): Card {
     order,
     name: pc.name,
     mode: 'plan',
-    boards: pc.boards.map((b, i) => buildBoard(i, b))
+    boards: pc.boards.map((b, i) => buildBoard(i, b)),
+    ...(pc.fastRevision ? { fastRevision: true } : {})
   };
 }
 
