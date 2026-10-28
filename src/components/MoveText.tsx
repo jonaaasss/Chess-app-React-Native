@@ -8,7 +8,10 @@ import { colors } from '../theme';
 // match too, which suits "bishop sees h3".
 // A "!" glued to the front of a move ("!Nf3") marks it as a move to avoid: it
 // is shown in red and without the "!" (the text field itself keeps the "!").
-const MOVE_RE = /(!?)(O-O-O|O-O|0-0-0|0-0|[KQRBN]?[a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?[+#]?)/g;
+// With `markers` (the opening Summary) a plain move is a move you always play
+// (green) and a "?" in front ("?Bd3") marks a move that depends on the
+// opponent (orange); elsewhere a "?" just stays ordinary text.
+const MOVE_RE = /([!?]?)(O-O-O|O-O|0-0-0|0-0|[KQRBN]?[a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?[+#]?)/g;
 
 function isWordChar(ch: string | undefined): boolean {
   return ch !== undefined && /[A-Za-z0-9]/.test(ch);
@@ -23,12 +26,14 @@ export function MoveText({
   text,
   style,
   blurred,
-  numberOfLines
+  numberOfLines,
+  markers
 }: {
   text: string;
   style?: StyleProp<TextStyle>;
   blurred?: boolean;
   numberOfLines?: number;
+  markers?: boolean;
 }) {
   const parts: React.ReactNode[] = [];
   let last = 0;
@@ -44,7 +49,15 @@ export function MoveText({
     if (isWordChar(text[start - 1]) || isWordChar(text[end])) continue;
     if (start > last) parts.push(text.slice(last, start));
     const avoid = m[1] === '!';
-    const moveStyle = avoid ? (blurred ? styles.avoidBlurred : styles.avoid) : blurred ? styles.moveBlurred : styles.move;
+    const maybe = m[1] === '?' && !!markers;
+    if (m[1] === '?' && !markers) parts.push('?');
+    const moveStyle = avoid
+      ? blurred ? styles.avoidBlurred : styles.avoid
+      : maybe
+        ? blurred ? styles.maybeBlurred : styles.maybe
+        : markers
+          ? blurred ? styles.sureBlurred : styles.sure
+          : blurred ? styles.moveBlurred : styles.move;
     parts.push(
       <Text key={start} style={moveStyle}>
         {m[2]}
@@ -61,6 +74,24 @@ export function MoveText({
 }
 
 const styles = StyleSheet.create({
+  sure: { color: colors.moveSure, fontWeight: '700', fontFamily: 'monospace' },
+  sureBlurred: {
+    color: 'transparent',
+    fontWeight: '700',
+    fontFamily: 'monospace',
+    textShadowColor: colors.moveSure,
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 7
+  },
+  maybe: { color: colors.moveMaybe, fontWeight: '700', fontFamily: 'monospace' },
+  maybeBlurred: {
+    color: 'transparent',
+    fontWeight: '700',
+    fontFamily: 'monospace',
+    textShadowColor: colors.moveMaybe,
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 7
+  },
   move: { color: colors.logoGold, fontWeight: '700', fontFamily: 'monospace' },
   blurred: {
     color: 'transparent',

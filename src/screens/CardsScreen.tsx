@@ -24,7 +24,8 @@ import { colors, radius, spacing, type } from '../theme';
 import { openCardEditor, openNewCardEditor } from './CardEditorOverlay';
 import { openOpeningSummaryDialog } from './OpeningSummaryOverlay';
 import { MoveText } from '../components/MoveText';
-import { askStudyPreview, startStudySession } from './StudySessionOverlay';
+import { summaryPreviewText } from '../components/SummaryText';
+import { askStudyOptions, startStudySession } from './StudySessionOverlay';
 import { useTutorial } from '../tutorial';
 
 function cardPreviewText(card: Card): string {
@@ -194,9 +195,9 @@ export function CardsScreen({
 
   async function handleStudy() {
     if (cards.length === 0) return;
-    const preview = await askStudyPreview();
-    if (preview === null) return;
-    await startStudySession([openingId], { shuffleOpenings: false, preview });
+    const options = await askStudyOptions();
+    if (!options) return;
+    await startStudySession([openingId], { shuffleOpenings: false, ...options });
     load();
   }
 
@@ -263,7 +264,7 @@ export function CardsScreen({
       {opening.summary ? (
         <Pressable onPress={handleEditSummary} style={styles.summaryBox}>
           <Text style={styles.summaryLabel}>Summary</Text>
-          <MoveText text={opening.summary} style={styles.summaryText} numberOfLines={3} />
+          <MoveText markers text={summaryPreviewText(opening.summary)} style={styles.summaryText} numberOfLines={3} />
         </Pressable>
       ) : (
         <Pressable onPress={handleEditSummary} style={styles.summaryAdd}>

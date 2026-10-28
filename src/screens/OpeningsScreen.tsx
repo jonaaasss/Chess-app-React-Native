@@ -17,7 +17,7 @@ import { Screen, TopBar, Breadcrumb, BigButton, PieceBadge, rowStyles, RowMenu, 
 import { useTutorial, useTutorialTarget } from '../tutorial';
 import { colors, spacing, type } from '../theme';
 import { MoveText } from '../components/MoveText';
-import { askStudyPreview, startStudySession } from './StudySessionOverlay';
+import { askStudyOptions, startStudySession } from './StudySessionOverlay';
 import { openOpeningStartPositionPicker } from './OpeningStartPositionOverlay';
 import { openImportPgnDialog } from './ImportPgnOverlay';
 import { openAiImportDialog } from './AiImportOverlay';
@@ -175,9 +175,9 @@ export function OpeningsScreen({
   async function handleStudy() {
     const openings = await getOpenings(repertoireId);
     if (openings.length === 0) return;
-    const preview = await askStudyPreview();
-    if (preview === null) return;
-    await startStudySession(openings.map((o) => o.id), { shuffleOpenings: true, preview });
+    const options = await askStudyOptions();
+    if (!options) return;
+    await startStudySession(openings.map((o) => o.id), { shuffleOpenings: true, ...options });
     load();
   }
 

@@ -9,6 +9,7 @@ import type { Arrow, Card, CardMode, Circle, ReactionBoard } from '../types';
 import { colors, radius, touchTarget, type } from '../theme';
 import { ChessBoardView } from '../components/ChessBoard';
 import { MoveText } from '../components/MoveText';
+import { SummaryText } from '../components/SummaryText';
 import { BackCircleButton, EditCircleButton } from '../components/Common';
 import {
   GUIDE_CARDS,
@@ -213,6 +214,14 @@ function CardsListScreen({
                 <View style={cardListStyles.body}>
                   {text ? <MoveText text={text} style={overviewStyles.text} /> : <Text style={cardListStyles.empty}>No overview text.</Text>}
                   {c.boards.length > 1 ? <OverviewBoards boards={c.boards} mode={c.mode} boardStyle={boardStyle} yourColor={yourColor} /> : null}
+                  {c.boards.length === 1 ? (() => {
+                    const preview = finalBoardPreview(c.boards[0], c.mode);
+                    return (
+                      <View style={{ alignItems: 'center', marginTop: 8 }}>
+                        <ChessBoardView board={{ pieces: preview.pieces, style: boardStyle, arrows: preview.arrows, circles: preview.circles }} size={230} flipped={yourColor === 'b'} />
+                      </View>
+                    );
+                  })() : null}
                 </View>
               ) : null}
             </View>
@@ -339,7 +348,6 @@ function StudySessionOverlay({
   // per opening per session (`summaryShownRef`), so a retry round or a
   // second pass over the same opening never repeats it.
   const [pendingSummary, setPendingSummary] = useState<{ openingName: string; text: string } | null>(null);
-  const [summaryRevealed, setSummaryRevealed] = useState(false);
   const summaryShownRef = useRef<Set<string>>(new Set());
   // The Cards list shown in front of every card of round 1 / the preview (not
   // retry rounds, not the guide): every card of the card's opening.
@@ -407,7 +415,6 @@ function StudySessionOverlay({
       const summary = opening?.summary?.trim();
       if (summary && !summaryShownRef.current.has(item.openingId)) {
         summaryShownRef.current.add(item.openingId);
-        setSummaryRevealed(false);
         setPendingSummary({ openingName: opening?.name ?? '', text: summary });
       }
       if (roundNumber === 1) {
@@ -619,7 +626,7 @@ function StudySessionOverlay({
   }
 
   // An opening's Summary takes over the whole screen before its first card:
-  // blurred until Show (styled like Show solution), then Continue.
+  // always readable, then Continue.
   if (pendingSummary) {
     return (
       <SafeAreaView style={styles.overlay}>
@@ -628,18 +635,12 @@ function StudySessionOverlay({
           {pendingSummary.openingName ? <MoveText text={pendingSummary.openingName} style={overviewStyles.headerSub} /> : null}
         </View>
         <ScrollView contentContainerStyle={overviewStyles.screenContent}>
-          <MoveText text={pendingSummary.text} style={overviewStyles.text} blurred={!summaryRevealed} />
+          <SummaryText text={pendingSummary.text} />
         </ScrollView>
         <View style={overviewStyles.footer}>
-          {summaryRevealed ? (
-            <Pressable onPress={() => setPendingSummary(null)} style={overviewStyles.continueBtn}>
-              <Text style={overviewStyles.continueBtnText}>Continue</Text>
-            </Pressable>
-          ) : (
-            <Pressable onPress={() => setSummaryRevealed(true)} style={overviewStyles.continueBtn}>
-              <Text style={overviewStyles.continueBtnText}>Show</Text>
-            </Pressable>
-          )}
+          <Pressable onPress={() => setPendingSummary(null)} style={overviewStyles.continueBtn}>
+            <Text style={overviewStyles.continueBtnText}>Continue</Text>
+          </Pressable>
         </View>
       </SafeAreaView>
     );
@@ -977,6 +978,18 @@ export async function askStudyPreview(): Promise<boolean | null> {
   ]);
 }
 
+// What to study: everything, or only the cards switched on for Fast Revision.
+export async function askStudyOptions(): Promise<{ preview: boolean; fastRevision: boolean } | null> {
+  const fastRevision = await choiceDialog<boolean>('What do you want to study?', [
+    { label: 'Full study', value: false, variant: 'primary' },
+    { label: 'Fast Revision', value: true, variant: 'secondary' }
+  ]);
+  if (fastRevision === null) return null;
+  const preview = await askStudyPreview();
+  if (preview === null) return null;
+  return { preview, fastRevision };
+}
+
 export async function startGuideSession(): Promise<void> {
   const round1: QueueItem[] = GUIDE_CARDS.map((c) => ({
     cardId: c.id,
@@ -990,7 +1003,7 @@ export async function startGuideSession(): Promise<void> {
 
 export async function startStudySession(
   openingIds: string[],
-  opts: { shuffleOpenings: boolean; preview: boolean }
+  opts: { shuffleOpenings: boolean; preview: boolean; fastRevision?: boolean }
 ): Promise<void> {
   const shuffleCards = await getSetting<boolean>('shuffle', false);
 
@@ -1002,6 +1015,7 @@ export async function startStudySession(
   const round1: QueueItem[] = [];
   for (const openingId of orderedOpenings) {
     let cards = await getCards(openingId);
+    if (opts.fastRevision) cards = cards.filter((c) => c.fastRevision === true);
     if (shuffleCards) {
       cards = shuffleArray(cards);
     }
@@ -1010,7 +1024,10 @@ export async function startStudySession(
     }
   }
 
-  if (round1.length === 0) return;
+  if (round1.length === 0) {
+    if (opts.fastRevision) showSnackbar({ message: "No cards are marked for Fast Revision yet. Switch it on in a card's editor." });
+    return;
+  }
 
   await showOverlay<void>((close) => (
     <StudySessionOverlay round1={round1} shuffleCards={shuffleCards} initialPreview={opts.preview} close={() => close(undefined)} />
