@@ -24,9 +24,9 @@ Read this before researching an opening to make cards from sources. Jonas's rule
 
 - At most 5 questions per round, numbered at the end of the answer.
 - Ask only about big choices: a line with its own name (e.g. Max Lange Attack, Scotch Gambit) or a clearly more aggressive option. No questions about details deep in a line (e.g. move 9).
-- Decide small choices yourself: the source's recommendation, otherwise the calmer move. List those decisions in a short table so Jonas can overrule them.
+- Decide small choices yourself: the source's recommendation, otherwise the calmer move. Move order inside a plan is always decided from the studies (the most common order in the sources), never asked. List those decisions in a short table so Jonas can overrule them.
 
-Jonas's choices for the Italian as Black (3...Bc5), 2026-10-25: 4.c3 Nf6 5.d4 exd4 6.cxd4 Bb4+; 4.c3 Nf6 5.O-O d6; 4.d3 Pianissimo setup (...d6, ...a6, ...Ba7, ...O-O); 4.b4 Bxb4 5.c3 Ba5 6.d4 d6; 4.O-O Nf6 5.d4 Bxd4; 4.d4 Bxd4.
+Jonas's choices for the Italian as Black (3...Bc5), 2026-10-25: 4.c3 Nf6 5.d4 exd4 6.cxd4 Bb4+; 4.c3 Nf6 5.O-O d6; 4.d3/4.c3 + d3 Pianissimo setup (...a6, ...d6, ...h6, ...O-O, ...Ba7, ...Be6); 4.b4 Bxb4 5.c3 Ba5 6.d4 d6; 4.O-O Nf6 5.d4 Bxd4; 4.d4 Bxd4.
 
 ## Judging authors
 
