@@ -19,6 +19,7 @@ Read this before creating, importing or reviewing opening cards. The app checks 
 }
 ```
 
+- **Reactions cards** (`"mode": "reactions"`, needs the app build with Reactions import): per board `moves` = the setup (where the board starts) and `line` = the recorded game after it, with variations in brackets as in PGN (a bracket is an alternative to the move just before it, nesting allowed), e.g. `"line": "d4 exd4 cxd4 Bb4+ Bd2 (Nc3 Nxe4 O-O Bxc3) Bxd2+ Nbxd2 d5"`. The first move is the main line. `arrows`/`circles` are optional; `text` is the board's description. The opponent's moves are played automatically in Study.
 - `moves`: SAN from the standard start position, space-separated. Check marks, `!`/`?` and `0-0` vs `O-O` are tolerated; every move must be legal.
 - `color`: `green`, `orange`, `red`, `blue`. `notes` are optional (`reason`, `next`, `responses`; `kind` is `reaction` or `exception`).
 - Limits: at most 60 cards, 6 boards per card, 40 arrows per board.
@@ -38,7 +39,7 @@ Read this before creating, importing or reviewing opening cards. The app checks 
 - A move Jonas plays against (almost) everything (e.g. ...Nf6 in the Italian) is already on the board of every Key position; the Key board starts after it.
 - **"Key: !..."** (`fastRevision`): board 1 holds the plan. The opponent's reactions are `responses` on the arrow.
 - **Arrow colors group moves that belong together** (e.g. a6 + Ba7 green, d6 + Be6 orange, h6 + O-O red, Re8 + d5 blue). Use a new color for each group, so a plan with several groups uses all 4 colors; green is the group to play first. Never put unrelated moves in one color.
-- **Critical lines with many variations** (gambits, forcing centre lines like c3 + d4, the Evans) get "Reactions: <line>" cards in the "Reactions: first move" style (one board per White move, red circle, one green arrow), not a plan card. Split a line over several cards when it needs more than 6 boards.
+- **Critical lines with many variations** (gambits, forcing centre lines like c3 + d4, the Evans) get a real Reactions card (`"mode": "reactions"`, one recorded line with its variations), not a Plan card.
 - The summary must match the cards: same moves in the same order.
 - **Rules of thumb** that hold in many positions (e.g. !Be3 => Bxe3; !Bg5 => h6, g5; ...Na5 when White has no c3/a3/a4 and d6 is played) go in the summary's Piece table, not as arrows on every board. "Reactions: first move" gets one board per trigger, never two boards with the same answer; the matching "Reaction: !X" card shows the plan that follows on one board. When there are few variations, that plan may run until all pieces are developed.
 - Check every planned move against the source and the explorer, also moves Jonas suggests. If the source only plays a move after a preparing move (e.g. ...h5 only after ...Nh7, otherwise g5 hangs), say so instead of adding it.

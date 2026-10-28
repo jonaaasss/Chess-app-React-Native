@@ -17,11 +17,15 @@
 //                                  "responses": [ { "trigger": "Nf6", "text": "…", "kind": "reaction" } ] } } ],
 //         "circles": [ { "square": "e5", "color": "red" } ] } ] } ]
 // }
+// A "reactions" card instead records a game per board: "moves" is the setup
+// (where the board starts) and "line" the recorded moves after it, with
+// variations in brackets as in PGN — "d4 exd4 cxd4 Bb4+ Bd2 (Nc3 Nxe4) Bxd2+"
+// makes Nc3 Nxe4 a branch instead of Bd2 Bxd2+. Arrows are not needed there.
 import { startingPosition } from './chess';
 import { allLegalMoves, createGameState, isPromotionMove, makeMove, type GameState } from './chessEngine';
 import { cleanArrowNotes } from './arrowNotes';
 import { addOpening, deleteOpening, saveCard, setOpeningSummary, uid } from './storage';
-import type { Arrow, ArrowColor, ArrowNotes, ArrowResponse, BoardFace, BoardMove, Card, Circle, Opening, PromotionPiece, ReactionBoard } from './types';
+import type { Arrow, ArrowColor, ArrowNotes, ArrowResponse, BoardFace, BoardMove, Card, Circle, MoveNode, Opening, PromotionPiece, ReactionBoard } from './types';
 
 const MAX_BOARDS_PER_CARD = 6;
 const MAX_CARDS = 60;
@@ -39,15 +43,26 @@ function isImportError(e: unknown): e is ImportError {
   return typeof e === 'object' && e !== null && 'isImportError' in e;
 }
 
+// One recorded move of a Reactions line; `children[0]` is the main line.
+interface LineMove {
+  san: string;
+  from: string;
+  to: string;
+  promotion?: PromotionPiece;
+  after: GameState;
+  children: LineMove[];
+}
 interface ParsedBoard {
   history: BoardMove[];
   final: GameState;
   text: string;
   arrows: Arrow[];
   circles: Circle[];
+  line: LineMove[]; // Reactions boards only; empty for Plan boards
 }
 interface ParsedCard {
   name: string;
+  mode: 'plan' | 'reactions';
   boards: ParsedBoard[];
 }
 export interface ParsedImport {
@@ -137,6 +152,50 @@ function playMoves(movesText: string, where: string): { history: BoardMove[]; fi
   return { history, final: state };
 }
 
+// Parses a Reactions line like "d4 exd4 cxd4 Bb4+ Bd2 (Nc3 Nxe4) Bxd2+" from
+// `start`. A bracketed variation is an alternative to the move just before it,
+// as in PGN, and variations can be nested.
+function parseLine(lineText: string, start: GameState, where: string): LineMove[] {
+  if (lineText.includes('{')) fail(`${where}: comments in { } are not supported in "line".`);
+  const tokens = lineText.replace(/\(/g, ' ( ').replace(/\)/g, ' ) ').split(/\s+/).filter((t) => t.length > 0);
+  const root: LineMove[] = [];
+  interface Point {
+    children: LineMove[];
+    state: GameState;
+  }
+  let attach: Point = { children: root, state: start };
+  let beforeLast: Point | null = null; // where the last move was played from
+  const stack: { attach: Point; beforeLast: Point | null }[] = [];
+  for (const raw of tokens) {
+    if (raw === '(') {
+      if (!beforeLast) fail(`${where}: a variation "(" must come right after a move.`);
+      stack.push({ attach, beforeLast });
+      attach = beforeLast;
+      beforeLast = null;
+      continue;
+    }
+    if (raw === ')') {
+      const top = stack.pop();
+      if (!top) fail(`${where}: there is a ")" without a matching "(".`);
+      attach = top.attach;
+      beforeLast = top.beforeLast;
+      continue;
+    }
+    const token = raw.replace(/^\d+\.+/, '');
+    if (token.length === 0 || /^(\d+\.*|\*|1-0|0-1|1\/2-1\/2)$/.test(token)) continue;
+    const found = resolveSan(attach.state, token);
+    if (!found) fail(`${where}: the move "${token}" in "line" is not legal here.`);
+    const result = makeMove(attach.state, found.from, found.to, found.promotion);
+    const node: LineMove = { san: result.san, from: found.from, to: found.to, promotion: found.promotion, after: result.next, children: [] };
+    attach.children.push(node);
+    beforeLast = attach;
+    attach = { children: node.children, state: result.next };
+  }
+  if (stack.length > 0) fail(`${where}: a "(" in "line" is never closed.`);
+  if (root.length === 0) fail(`${where}: a Reactions board needs a "line" with at least one move.`);
+  return root;
+}
+
 function parseColor(v: unknown, where: string): ArrowColor {
   if (v === undefined) return 'green';
   if (v === 'yellow') return 'orange';
@@ -182,18 +241,25 @@ function parseCircle(v: unknown, where: string): Circle {
   return { square: v.square, color: parseColor(v.color, where) };
 }
 
-function parseBoard(v: unknown, where: string): ParsedBoard {
+function parseBoard(v: unknown, where: string, mode: 'plan' | 'reactions'): ParsedBoard {
   if (!isRecord(v)) return fail(`${where} must be an object.`);
   const movesText = v.moves === undefined ? '' : v.moves;
   if (typeof movesText !== 'string') return fail(`${where}: "moves" must be text like "e4 e5 Nf3".`);
   const { history, final } = playMoves(movesText, where);
-  if (!Array.isArray(v.arrows) || v.arrows.length === 0) return fail(`${where}: a Plan board needs at least one arrow.`);
-  if (v.arrows.length > MAX_ARROWS_PER_BOARD) return fail(`${where}: at most ${MAX_ARROWS_PER_BOARD} arrows per board.`);
-  const arrows = v.arrows.map((a: unknown, i: number) => parseArrow(a, `${where}, arrow ${i + 1}`));
+  const arrowsRaw = v.arrows === undefined ? [] : v.arrows;
+  if (!Array.isArray(arrowsRaw)) return fail(`${where}: "arrows" must be a list.`);
+  if (mode === 'plan' && arrowsRaw.length === 0) return fail(`${where}: a Plan board needs at least one arrow.`);
+  if (arrowsRaw.length > MAX_ARROWS_PER_BOARD) return fail(`${where}: at most ${MAX_ARROWS_PER_BOARD} arrows per board.`);
+  const arrows = arrowsRaw.map((a: unknown, i: number) => parseArrow(a, `${where}, arrow ${i + 1}`));
   const circlesRaw = v.circles === undefined ? [] : v.circles;
   if (!Array.isArray(circlesRaw)) return fail(`${where}: "circles" must be a list.`);
   const circles = circlesRaw.map((c: unknown, i: number) => parseCircle(c, `${where}, circle ${i + 1}`));
-  return { history, final, text: optStr(v.text, `${where} text`) ?? '', arrows, circles };
+  let line: LineMove[] = [];
+  if (mode === 'reactions') {
+    if (typeof v.line !== 'string') return fail(`${where}: a Reactions board needs a "line" like "d4 exd4 cxd4".`);
+    line = parseLine(v.line, final, where);
+  }
+  return { history, final, text: optStr(v.text, `${where} text`) ?? '', arrows, circles, line };
 }
 
 export function parseOpeningImport(raw: string): ParseResult {
@@ -222,12 +288,15 @@ export function parseOpeningImport(raw: string): ParseResult {
       if (!isRecord(c)) return fail(`${where} must be an object.`);
       const name = typeof c.name === 'string' ? c.name.trim() : '';
       if (!name) return fail(`${where} needs a "name".`);
-      if (c.mode !== undefined && c.mode !== 'plan') return fail(`${where} "${name}": only "plan" cards can be imported for now.`);
+      if (c.mode !== undefined && c.mode !== 'plan' && c.mode !== 'reactions') {
+        return fail(`${where} "${name}": "mode" must be "plan" or "reactions".`);
+      }
+      const mode = c.mode === 'reactions' ? 'reactions' : 'plan';
       if (!Array.isArray(c.boards) || c.boards.length === 0) return fail(`${where} "${name}" has no boards.`);
       if (c.boards.length > MAX_BOARDS_PER_CARD) return fail(`${where} "${name}" has more than ${MAX_BOARDS_PER_CARD} boards.`);
-      const boards = c.boards.map((b: unknown, bi: number) => parseBoard(b, `${where} "${name}", board ${bi + 1}`));
+      const boards = c.boards.map((b: unknown, bi: number) => parseBoard(b, `${where} "${name}", board ${bi + 1}`, mode));
       boardCount += boards.length;
-      return { name, boards };
+      return { name, mode, boards };
     });
     return { ok: true, value: { summary, cards }, boardCount };
   } catch (e) {
@@ -278,14 +347,63 @@ function buildBoard(order: number, pb: ParsedBoard): ReactionBoard {
   };
 }
 
+function buildMoveNode(m: LineMove): MoveNode {
+  return {
+    id: uid(),
+    san: m.san,
+    from: m.from,
+    to: m.to,
+    promotion: m.promotion,
+    piecesAfter: { ...m.after.pieces },
+    turnAfter: m.after.turn,
+    castlingAfter: { ...m.after.castling },
+    enPassantAfter: m.after.enPassant,
+    addedArrows: [],
+    addedCircles: [],
+    removedArrows: [],
+    removedCircles: [],
+    children: m.children.map(buildMoveNode)
+  };
+}
+
+// Reactions boards start at the setup position (its moves kept as
+// `setupMoves`, like a board set up in the editor) with the line as the
+// recorded game tree; the description lives on `front` (see descriptionFace).
+function buildReactionsBoard(order: number, pb: ParsedBoard): ReactionBoard {
+  const faceFor = (isFront: boolean): BoardFace => ({
+    pieces: { ...pb.final.pieces },
+    turn: pb.final.turn,
+    castling: { ...pb.final.castling },
+    enPassant: pb.final.enPassant,
+    arrows: [],
+    circles: [],
+    text: isFront ? pb.text : '',
+    moves: []
+  });
+  return {
+    id: uid(),
+    order,
+    pieces: { ...pb.final.pieces },
+    turn: pb.final.turn,
+    castling: { ...pb.final.castling },
+    enPassant: pb.final.enPassant,
+    arrows: cloneArrows(pb.arrows),
+    circles: pb.circles.map((c) => ({ ...c })),
+    setupMoves: pb.history.map((m) => ({ ...m, piecesAfter: { ...m.piecesAfter }, castlingAfter: { ...m.castlingAfter } })),
+    recording: pb.line.map(buildMoveNode),
+    front: faceFor(true),
+    back: faceFor(false)
+  };
+}
+
 function buildCard(openingId: string, order: number, pc: ParsedCard): Card {
   return {
     id: uid(),
     openingId,
     order,
     name: pc.name,
-    mode: 'plan',
-    boards: pc.boards.map((b, i) => buildBoard(i, b))
+    mode: pc.mode,
+    boards: pc.boards.map((b, i) => (pc.mode === 'reactions' ? buildReactionsBoard(i, b) : buildBoard(i, b)))
   };
 }
 
