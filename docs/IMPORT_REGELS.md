@@ -19,7 +19,7 @@ Read this before creating, importing or reviewing opening cards. The app checks 
 }
 ```
 
-- **Reactions cards** (`"mode": "reactions"`, needs the app build with Reactions import): per board `moves` = the setup (where the board starts) and `line` = the recorded game after it, with variations in brackets as in PGN (a bracket is an alternative to the move just before it, nesting allowed), e.g. `"line": "d4 exd4 cxd4 Bb4+ Bd2 (Nc3 Nxe4 O-O Bxc3) Bxd2+ Nbxd2 d5"`. The first move is the main line. `arrows`/`circles` are optional; `text` is the board's description. The opponent's moves are played automatically in Study.
+- **Reactions cards** (`"mode": "reactions"`, needs the app build with Reactions import): per board `moves` = the setup (where the board starts) and `line` = the recorded game after it, with variations in brackets as in PGN (a bracket is an alternative to the move just before it, nesting allowed), e.g. `"line": "d4 exd4 cxd4 Bb4+ Bd2 (Nc3 Nxe4 O-O Bxc3) Bxd2+ Nbxd2 d5"`. The first move is the main line. `arrows`/`circles` are optional; `text` is the board's description. The opponent's moves are played automatically in Study. Keep a line small: **at most 2 levels of variations** — one branching point with 2 opponent moves, and inside each of those at most one more branching point, never deeper. Keep each branch short (until the idea is clear); other options go in the text.
 - `moves`: SAN from the standard start position, space-separated. Check marks, `!`/`?` and `0-0` vs `O-O` are tolerated; every move must be legal.
 - `color`: `green`, `orange`, `red`, `blue`. `notes` are optional (`reason`, `next`, `responses`; `kind` is `reaction` or `exception`).
 - Limits: at most 60 cards, 6 boards per card, 40 arrows per board.
