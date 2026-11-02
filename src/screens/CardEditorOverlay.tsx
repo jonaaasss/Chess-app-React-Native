@@ -9,7 +9,7 @@ import { colors, type } from '../theme';
 import { MoveText } from '../components/MoveText';
 import { openMoveDuplicateDialog } from './MoveDuplicateOverlay';
 import { BoardsGrid } from './BoardsGrid';
-import { ScrollLockContext } from '../components/Reorderable';
+import { ScrollHostContext, useScrollHost } from '../components/Reorderable';
 import { TutorialLayer, useTutorial, useTutorialTarget } from '../tutorial';
 
 export interface CardEditorResult {
@@ -129,8 +129,8 @@ function CardEditorOverlay({
   // Board style is a single global setting now (Settings screen) — fetched
   // once here and threaded down to every board preview/editor.
   const [boardStyle, setBoardStyle] = useState(0);
-  // Off while a board tile is being dragged (see Reorderable.tsx).
-  const [scrollLocked, setScrollLocked] = useState(false);
+  // Lets a dragged board tile lock and auto-scroll the editor (see Reorderable.tsx).
+  const scrollHost = useScrollHost();
   const changedRef = useRef(false);
   // The card as it is in storage, to tell whether there's anything to lose.
   const originalRef = useRef('');
@@ -314,8 +314,8 @@ function CardEditorOverlay({
         </Pressable>
       </View>
 
-      <ScrollLockContext.Provider value={setScrollLocked}>
-      <ScrollView contentContainerStyle={styles.content} scrollEnabled={!scrollLocked}>
+      <ScrollHostContext.Provider value={scrollHost.host}>
+      <ScrollView contentContainerStyle={styles.content} {...scrollHost.props}>
 
         <View style={styles.fastRow}>
           <View style={{ flex: 1 }}>
@@ -368,7 +368,7 @@ function CardEditorOverlay({
           <Text style={styles.blockBtnText}>Delete card</Text>
         </Pressable>
       </ScrollView>
-      </ScrollLockContext.Provider>
+      </ScrollHostContext.Provider>
       <SnackbarLayer />
       <TutorialLayer surface="cardEditor" />
     </SafeAreaView>

@@ -8,7 +8,7 @@ import { MoveText } from './MoveText';
 import type { PieceCode } from '../types';
 import { useFocusEffect } from '@react-navigation/native';
 import { TutorialLayer, useTutorial, useTutorialTarget } from '../tutorial';
-import { ScrollLockContext } from './Reorderable';
+import { ScrollHostContext, useScrollHost } from './Reorderable';
 import type { TutorialSurface } from '../tutorialContent';
 
 // A drawn icon instead of a Unicode "←" glyph — text glyphs don't sit
@@ -106,10 +106,9 @@ export function Screen({
   scroll?: boolean;
   surface?: TutorialSurface;
 }) {
-  const Container = scroll ? ScrollView : View;
   const { reportSurface } = useTutorial();
-  // Off while a list item is being dragged (see Reorderable.tsx).
-  const [scrollLocked, setScrollLocked] = useState(false);
+  // Lets a dragged list item lock and auto-scroll this view (see Reorderable.tsx).
+  const scrollHost = useScrollHost();
   useFocusEffect(
     useCallback(() => {
       if (surface) reportSurface(surface);
@@ -117,15 +116,15 @@ export function Screen({
   );
   return (
     <SafeAreaView style={styles.safe}>
-      <ScrollLockContext.Provider value={setScrollLocked}>
-        <Container
-          style={styles.screen}
-          contentContainerStyle={scroll ? styles.screenContent : undefined}
-          {...(scroll ? { scrollEnabled: !scrollLocked } : {})}
-        >
-          {children}
-        </Container>
-      </ScrollLockContext.Provider>
+      <ScrollHostContext.Provider value={scrollHost.host}>
+        {scroll ? (
+          <ScrollView style={styles.screen} contentContainerStyle={styles.screenContent} {...scrollHost.props}>
+            {children}
+          </ScrollView>
+        ) : (
+          <View style={styles.screen}>{children}</View>
+        )}
+      </ScrollHostContext.Provider>
       {surface && <TutorialLayer surface={surface} />}
     </SafeAreaView>
   );

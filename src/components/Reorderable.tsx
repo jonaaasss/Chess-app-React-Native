@@ -7,18 +7,90 @@
 // item's centre. Taps keep working: `guard` swallows the tap that a finished
 // drag would otherwise fire on release.
 //
-// The enclosing ScrollView must stop scrolling while a drag is running, or
-// Android hands the finger to it halfway — that's what ScrollLockContext is
-// for (see Screen in Common.tsx and CardEditorOverlay).
-import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
-import { StyleSheet, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
+// The enclosing ScrollView is a "scroll host" (useScrollHost below, used by
+// Screen in Common.tsx and by CardEditorOverlay): it stops scrolling by
+// itself while a drag is running — or Android hands the finger to it
+// halfway — and instead scrolls along when the finger nears its top or
+// bottom edge, so an item can be dragged further than one screen.
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import {
+  StyleSheet,
+  View,
+  type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  type ScrollView,
+  type StyleProp,
+  type ViewStyle
+} from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { colors, radius } from '../theme';
 
 const LONG_PRESS_MS = 400;
 const TAP_GUARD_MS = 400;
+// Auto-scroll starts this close to the scroll view's top/bottom edge and
+// speeds up towards the edge, up to MAX_SPEED pixels per frame.
+const EDGE = 80;
+const MAX_SPEED = 18;
 
-export const ScrollLockContext = createContext<(locked: boolean) => void>(() => {});
+interface ScrollHost {
+  setLocked: (locked: boolean) => void;
+  // Scrolls by `dy` (clamped to the content) and returns how far it really moved.
+  scrollBy: (dy: number) => number;
+  // The scroll view's visible top and bottom on screen, or null if unknown.
+  viewport: () => { top: number; bottom: number } | null;
+}
+
+const noHost: ScrollHost = { setLocked: () => {}, scrollBy: () => 0, viewport: () => null };
+export const ScrollHostContext = createContext<ScrollHost>(noHost);
+
+// Everything a ScrollView needs to act as a scroll host: spread `props` on
+// it and wrap its content in <ScrollHostContext.Provider value={host}>.
+export function useScrollHost() {
+  const ref = useRef<ScrollView>(null);
+  const offset = useRef(0);
+  const contentHeight = useRef(0);
+  const viewHeight = useRef(0);
+  const viewTop = useRef<number | null>(null);
+  const [locked, setLocked] = useState(false);
+
+  const host = useRef<ScrollHost>({
+    setLocked,
+    scrollBy: (dy) => {
+      const max = Math.max(0, contentHeight.current - viewHeight.current);
+      const next = Math.min(max, Math.max(0, offset.current + dy));
+      const moved = next - offset.current;
+      if (moved !== 0) {
+        offset.current = next;
+        ref.current?.scrollTo({ y: next, animated: false });
+      }
+      return moved;
+    },
+    viewport: () => (viewTop.current === null ? null : { top: viewTop.current, bottom: viewTop.current + viewHeight.current })
+  }).current;
+
+  const props = {
+    ref,
+    scrollEnabled: !locked,
+    scrollEventThrottle: 16,
+    onScroll: (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      offset.current = e.nativeEvent.contentOffset.y;
+    },
+    onContentSizeChange: (_w: number, h: number) => {
+      contentHeight.current = h;
+    },
+    onLayout: (e: LayoutChangeEvent) => {
+      viewHeight.current = e.nativeEvent.layout.height;
+      // The native scroll view supports measureInWindow even though its
+      // TypeScript class doesn't list it.
+      const native = ref.current as unknown as { measureInWindow?: (cb: (x: number, y: number) => void) => void } | null;
+      native?.measureInWindow?.((_x, y) => {
+        viewTop.current = y;
+      });
+    }
+  };
+  return { host, props };
+}
 
 interface Rect {
   x: number;
@@ -30,7 +102,7 @@ interface Rect {
 interface Drag {
   index: number;
   dx: number;
-  dy: number;
+  dy: number; // finger movement plus how far the list scrolled meanwhile
   target: number;
 }
 
@@ -65,7 +137,7 @@ function ReorderableItem({
   index: number;
   onLayout: (index: number, rect: Rect) => void;
   onStart: (index: number) => void;
-  onMove: (dx: number, dy: number) => void;
+  onMove: (dx: number, dy: number, fingerY: number) => void;
   onEnd: () => void;
   style?: StyleProp<ViewStyle>;
   // Outlines the slot the dragged item would land in, drawn on top so the
@@ -77,7 +149,7 @@ function ReorderableItem({
     .activateAfterLongPress(LONG_PRESS_MS)
     .runOnJS(true)
     .onStart(() => onStart(index))
-    .onUpdate((e) => onMove(e.translationX, e.translationY))
+    .onUpdate((e) => onMove(e.translationX, e.translationY, e.absoluteY))
     .onFinalize(() => onEnd());
   return (
     <GestureDetector gesture={pan}>
@@ -113,11 +185,17 @@ export function Reorderable<T>({
   containerStyle?: StyleProp<ViewStyle>;
   disabled?: boolean;
 }) {
-  const setScrollLocked = useContext(ScrollLockContext);
+  const scrollHost = useContext(ScrollHostContext);
   const rects = useRef<(Rect | undefined)[]>([]);
   const [drag, setDrag] = useState<Drag | null>(null);
   const dragRef = useRef<Drag | null>(null);
   const lastDragEnd = useRef(0);
+  // The finger's own movement and screen position, and how far the list has
+  // auto-scrolled since the drag started — kept apart so the dragged item
+  // stays under the finger while the content moves beneath it.
+  const finger = useRef({ dx: 0, dy: 0, y: 0 });
+  const scrolled = useRef(0);
+  const frame = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
 
   const update = (d: Drag | null) => {
     dragRef.current = d;
@@ -133,22 +211,58 @@ export function Reorderable<T>({
     []
   );
 
+  function refresh() {
+    const d = dragRef.current;
+    if (!d) return;
+    const dx = finger.current.dx;
+    const dy = finger.current.dy + scrolled.current;
+    update({ ...d, dx, dy, target: targetFor(rects.current, d.index, dx, dy) });
+  }
+
+  function stopAutoScroll() {
+    if (frame.current !== null) cancelAnimationFrame(frame.current);
+    frame.current = null;
+  }
+
+  function autoScrollStep() {
+    frame.current = null;
+    if (!dragRef.current) return;
+    const view = scrollHost.viewport();
+    if (!view) return;
+    const y = finger.current.y;
+    let speed = 0;
+    if (y < view.top + EDGE) speed = -MAX_SPEED * Math.min(1, (view.top + EDGE - y) / EDGE);
+    else if (y > view.bottom - EDGE) speed = MAX_SPEED * Math.min(1, (y - (view.bottom - EDGE)) / EDGE);
+    if (speed === 0) return;
+    const moved = scrollHost.scrollBy(speed);
+    if (moved === 0) return; // already at the top/bottom
+    scrolled.current += moved;
+    refresh();
+    frame.current = requestAnimationFrame(autoScrollStep);
+  }
+
+  useEffect(() => stopAutoScroll, []);
+
   function handleStart(index: number) {
     if (disabled) return;
-    setScrollLocked(true);
+    scrollHost.setLocked(true);
+    finger.current = { dx: 0, dy: 0, y: 0 };
+    scrolled.current = 0;
     update({ index, dx: 0, dy: 0, target: index });
   }
 
-  function handleMove(dx: number, dy: number) {
-    const d = dragRef.current;
-    if (!d) return;
-    update({ ...d, dx, dy, target: targetFor(rects.current, d.index, dx, dy) });
+  function handleMove(dx: number, dy: number, fingerY: number) {
+    if (!dragRef.current) return;
+    finger.current = { dx, dy, y: fingerY };
+    refresh();
+    if (frame.current === null) frame.current = requestAnimationFrame(autoScrollStep);
   }
 
   function handleEnd() {
     const d = dragRef.current;
     if (!d) return;
-    setScrollLocked(false);
+    stopAutoScroll();
+    scrollHost.setLocked(false);
     lastDragEnd.current = Date.now();
     update(null);
     if (d.target === d.index) return;
