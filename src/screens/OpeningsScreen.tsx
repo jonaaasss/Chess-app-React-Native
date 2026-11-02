@@ -9,8 +9,10 @@ import {
   getRepertoire,
   renameOpening,
   renameRepertoire,
-  restoreOpening
+  restoreOpening,
+  reorderOpenings
 } from '../storage';
+import { Reorderable } from '../components/Reorderable';
 import { confirmDialog, promptDialog, showSnackbar, simpleMenu, alertDialog } from '../overlay';
 import type { GroupId, Opening, PieceCode, Repertoire } from '../types';
 import { Screen, TopBar, Breadcrumb, BigButton, PieceBadge, rowStyles, RowMenu, type RowAction } from '../components/Common';
@@ -283,21 +285,30 @@ export function OpeningsScreen({
         </View>
       ) : (
         <>
-          {rows.map(({ opening, cards }) => (
-            <OpeningRow
-              key={opening.id}
-              title={opening.name}
-              subtitle={`${cards} card${cards === 1 ? '' : 's'}`}
-              piece={openingPiece}
-              targetId={opening.id === tutorial.memory.openingId ? 'openings.new' : undefined}
-              onPress={() => {
-                tutorial.event('openOpening');
-                onOpenOpening(opening.id);
-              }}
-              onRename={(name) => handleRenameOpening(opening, name)}
-              onDelete={() => handleDeleteOpening(opening)}
-            />
-          ))}
+          {/* Hold a row, then drag it to reorder (see Reorderable.tsx). */}
+          <Reorderable
+            items={rows}
+            keyOf={(r) => r.opening.id}
+            onReorder={async (ids) => {
+              setRows((prev) => ids.map((id) => prev.find((r) => r.opening.id === id)!));
+              await reorderOpenings(ids);
+              load();
+            }}
+            renderItem={({ opening, cards }, _idx, guard) => (
+              <OpeningRow
+                title={opening.name}
+                subtitle={`${cards} card${cards === 1 ? '' : 's'}`}
+                piece={openingPiece}
+                targetId={opening.id === tutorial.memory.openingId ? 'openings.new' : undefined}
+                onPress={guard(() => {
+                  tutorial.event('openOpening');
+                  onOpenOpening(opening.id);
+                })}
+                onRename={(name) => handleRenameOpening(opening, name)}
+                onDelete={() => handleDeleteOpening(opening)}
+              />
+            )}
+          />
 
           {/* Pushes the Study CTA to the bottom of the screen when there's
               only a little content, instead of leaving it stranded under a

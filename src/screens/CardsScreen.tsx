@@ -13,6 +13,7 @@ import {
   getOpening,
   getRepertoire,
   renameCard,
+  reorderCards,
   renameOpening,
   restoreCard,
   setOpeningSummary
@@ -27,6 +28,7 @@ import { MoveText } from '../components/MoveText';
 import { summaryPreviewText } from '../components/SummaryText';
 import { askStudyOptions, startStudySession } from './StudySessionOverlay';
 import { useTutorial } from '../tutorial';
+import { Reorderable } from '../components/Reorderable';
 
 function cardPreviewText(card: Card): string {
   const firstBoard = [...card.boards].sort((a, b) => a.order - b.order)[0];
@@ -282,17 +284,27 @@ export function CardsScreen({
         </View>
       ) : (
         <>
-          {cards.map((card, idx) => (
-            <CardRow
-              key={card.id}
-              card={card}
-              idx={idx}
-              piece={cardPiece}
-              onOpen={() => handleOpenCard(card)}
-              onRename={(name) => handleRenameCard(card, name)}
-              onDelete={() => handleDeleteCard(card)}
-            />
-          ))}
+          {/* Hold a card, then drag it to reorder; the numbers follow the
+              new order (see Reorderable.tsx). */}
+          <Reorderable
+            items={cards}
+            keyOf={(c) => c.id}
+            onReorder={async (ids) => {
+              setCards((prev) => ids.map((id) => prev.find((c) => c.id === id)!));
+              await reorderCards(openingId, ids);
+              load();
+            }}
+            renderItem={(card, idx, guard) => (
+              <CardRow
+                card={card}
+                idx={idx}
+                piece={cardPiece}
+                onOpen={guard(() => handleOpenCard(card))}
+                onRename={(name) => handleRenameCard(card, name)}
+                onDelete={() => handleDeleteCard(card)}
+              />
+            )}
+          />
 
           {/* Pushes the Study CTA to the bottom of the screen, matching the
               repertoire/openings screens' layout. */}

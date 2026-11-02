@@ -9,6 +9,7 @@ import { CloseCircleButton, dismissSnackbar, showSnackbar } from '../overlay';
 import type { CardMode, OpeningStartPosition, ReactionBoard } from '../types';
 import { colors, radius, spacing } from '../theme';
 import { openReactionBoardEditor } from './ReactionBoardEditorOverlay';
+import { Reorderable } from '../components/Reorderable';
 
 const MAX_BOARDS = 6;
 const PREVIEW_SIZE = 148;
@@ -127,7 +128,10 @@ export function BoardsGrid({
         <>
           <Text style={styles.overviewLabel}>Overview (shown once, after every board)</Text>
           <TextInput
-            style={styles.overviewInput}
+            // While empty it shows the auto-generated overview as its
+            // placeholder, which can't scroll — so no height cap until the
+            // user writes their own text, or the last boards get cut off.
+            style={[styles.overviewInput, overviewText ? styles.overviewInputCapped : null]}
             value={overviewText ?? ''}
             onChangeText={onOverviewChange}
             multiline
@@ -137,8 +141,15 @@ export function BoardsGrid({
         </>
       )}
 
-      <View style={styles.grid}>
-        {sorted.map((board, tileIdx) => {
+      {/* Hold a board, then drag it to reorder; "Board N" follows the new
+          order (see Reorderable.tsx). */}
+      <Reorderable
+        items={sorted}
+        keyOf={(b) => b.id}
+        containerStyle={styles.grid}
+        itemStyle={styles.tile}
+        onReorder={(ids) => onChange(ids.map((id, order) => ({ ...sorted.find((b) => b.id === id)!, order })))}
+        renderItem={(board, tileIdx, guard) => {
           // The grid preview is a management view, not Study — it always
           // shows the full position with its arrows, never hides anything:
           // Reactions' own fields, Others' front, or Plan's single face
@@ -156,11 +167,11 @@ export function BoardsGrid({
             circles: previewAnnotations.circles
           };
           return (
-          <View key={board.id} style={styles.tile}>
+          <>
             <Pressable
               ref={tileIdx === 0 ? firstBoardRef : undefined}
               collapsable={false}
-              onPress={() => handleOpen(board)}
+              onPress={guard(() => handleOpen(board))}
             >
               <ChessBoardView board={previewBoard} size={PREVIEW_SIZE} flipped={yourColor === 'b'} />
             </Pressable>
@@ -181,10 +192,10 @@ export function BoardsGrid({
                 </View>
               )}
             </View>
-          </View>
+          </>
           );
-        })}
-      </View>
+        }}
+      />
 
       {boards.length < MAX_BOARDS ? (
         <Pressable onPress={handleAdd} style={styles.addBoardBtn}>
@@ -214,10 +225,10 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 14,
     minHeight: 44,
-    maxHeight: 140,
     textAlignVertical: 'top',
     marginBottom: 12
   },
+  overviewInputCapped: { maxHeight: 140 },
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
   tile: { width: '50%', padding: spacing.xs, alignItems: 'center' },
   tileCaption: { color: colors.textDim, fontSize: 12, marginTop: 6, width: PREVIEW_SIZE },

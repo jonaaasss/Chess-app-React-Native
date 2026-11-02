@@ -9,8 +9,10 @@ import {
   getVisibleRepertoires,
   renameRepertoire,
   restoreExampleRepertoire,
-  restoreRepertoire
+  restoreRepertoire,
+  reorderRepertoires
 } from '../storage';
+import { Reorderable } from '../components/Reorderable';
 import { confirmDialog, promptDialog, showSnackbar } from '../overlay';
 import type { GroupId, PieceCode, Repertoire } from '../types';
 import { Screen, TopBar, BigButton, Breadcrumb, PieceBadge, rowStyles, RowMenu, type RowAction } from '../components/Common';
@@ -212,23 +214,33 @@ export function RepertoiresScreen({
           <Text style={emptyStyles.text}>No repertoires yet. Add one to get started.</Text>
         </View>
       ) : (
-        rows.map(({ rep, openings, cards }) => (
-          <RepertoireRow
-            key={rep.id}
-            title={rep.name}
-            subtitle={`${openings} opening${openings === 1 ? '' : 's'} · ${cards} card${cards === 1 ? '' : 's'}`}
-            piece={groupPiece}
-            isExample={rep.isExample}
-            targetId={rep.id === ownFirstId ? 'repertoires.own' : undefined}
-            onPress={() => {
-              tutorial.event('openRepertoire');
-              onOpenRepertoire(rep.id);
-            }}
-            onRename={(name) => handleRenameRepertoire(rep, name)}
-            onDelete={() => handleDeleteRepertoire(rep)}
-            onRestore={() => handleRestoreExample(rep)}
-          />
-        ))
+        // Hold a row, then drag it to reorder (see Reorderable.tsx). The
+        // example repertoire always sorts first again (see getRepertoires).
+        <Reorderable
+          items={rows}
+          keyOf={(r) => r.rep.id}
+          onReorder={async (ids) => {
+            setRows((prev) => ids.map((id) => prev.find((r) => r.rep.id === id)!));
+            await reorderRepertoires(ids);
+            load();
+          }}
+          renderItem={({ rep, openings, cards }, _idx, guard) => (
+            <RepertoireRow
+              title={rep.name}
+              subtitle={`${openings} opening${openings === 1 ? '' : 's'} · ${cards} card${cards === 1 ? '' : 's'}`}
+              piece={groupPiece}
+              isExample={rep.isExample}
+              targetId={rep.id === ownFirstId ? 'repertoires.own' : undefined}
+              onPress={guard(() => {
+                tutorial.event('openRepertoire');
+                onOpenRepertoire(rep.id);
+              })}
+              onRename={(name) => handleRenameRepertoire(rep, name)}
+              onDelete={() => handleDeleteRepertoire(rep)}
+              onRestore={() => handleRestoreExample(rep)}
+            />
+          )}
+        />
       )}
     </Screen>
   );

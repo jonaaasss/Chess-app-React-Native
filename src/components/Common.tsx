@@ -8,6 +8,7 @@ import { MoveText } from './MoveText';
 import type { PieceCode } from '../types';
 import { useFocusEffect } from '@react-navigation/native';
 import { TutorialLayer, useTutorial, useTutorialTarget } from '../tutorial';
+import { ScrollLockContext } from './Reorderable';
 import type { TutorialSurface } from '../tutorialContent';
 
 // A drawn icon instead of a Unicode "←" glyph — text glyphs don't sit
@@ -107,6 +108,8 @@ export function Screen({
 }) {
   const Container = scroll ? ScrollView : View;
   const { reportSurface } = useTutorial();
+  // Off while a list item is being dragged (see Reorderable.tsx).
+  const [scrollLocked, setScrollLocked] = useState(false);
   useFocusEffect(
     useCallback(() => {
       if (surface) reportSurface(surface);
@@ -114,9 +117,15 @@ export function Screen({
   );
   return (
     <SafeAreaView style={styles.safe}>
-      <Container style={styles.screen} contentContainerStyle={scroll ? styles.screenContent : undefined}>
-        {children}
-      </Container>
+      <ScrollLockContext.Provider value={setScrollLocked}>
+        <Container
+          style={styles.screen}
+          contentContainerStyle={scroll ? styles.screenContent : undefined}
+          {...(scroll ? { scrollEnabled: !scrollLocked } : {})}
+        >
+          {children}
+        </Container>
+      </ScrollLockContext.Provider>
       {surface && <TutorialLayer surface={surface} />}
     </SafeAreaView>
   );

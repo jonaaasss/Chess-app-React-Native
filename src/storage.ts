@@ -502,6 +502,26 @@ export async function reorderCards(_openingId: string, orderedIds: string[]): Pr
   await persist();
 }
 
+// Stores a new order after a drag on the Repertoires or Openings screen
+// (see Reorderable.tsx), the same way reorderCards does for cards.
+async function reorderById(list: { id: string; order: number }[], orderedIds: string[]): Promise<void> {
+  orderedIds.forEach((id, i) => {
+    const item = list.find((x) => x.id === id);
+    if (item) item.order = i;
+  });
+  await persist();
+}
+
+export async function reorderOpenings(orderedIds: string[]): Promise<void> {
+  const s = await load();
+  await reorderById(s.openings, orderedIds);
+}
+
+export async function reorderRepertoires(orderedIds: string[]): Promise<void> {
+  const s = await load();
+  await reorderById(s.repertoires, orderedIds);
+}
+
 export async function moveOrDuplicateCard(
   cardId: string,
   targetOpeningId: string,
