@@ -716,7 +716,7 @@ export function ReactionStudy({
               </>
             ) : (
               <>
-                <ArrowsSvg arrows={visibleArrows} size={BOARD_SIZE} flipped={flipped} />
+                <ArrowsSvg arrows={visibleArrows} size={BOARD_SIZE} flipped={flipped} pieces={displayedPieces} yourColor={yourColor} />
                 <CirclesSvg circles={[...visibleCircles, ...hintCircles]} size={BOARD_SIZE} flipped={flipped} />
               </>
             )}

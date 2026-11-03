@@ -8,22 +8,57 @@ import { PieceArt } from './pieceArt';
 
 const ARROW_KEYS = Object.keys(arrowColors) as ArrowColor[];
 
-export function ArrowsSvg({ arrows, size, flipped = false }: { arrows: Arrow[]; size: number; flipped?: boolean }) {
+type Pieces = Partial<Record<string, PieceCode>>;
+
+// An arrow that starts on one of the opponent's pieces (a white piece in a
+// Black repertoire, and the other way round) shows the opponent's move
+// rather than your own plan: it is drawn darker and dashed. Decided from the
+// position on screen only — nothing about it is stored. A Black repertoire
+// is always shown flipped (see flipIndex), so `flipped` tells whose side
+// you're on unless `yourColor` says otherwise.
+function isOpponentArrow(from: string, pieces: Pieces | undefined, yourColor: 'w' | 'b'): boolean {
+  const piece = pieces?.[from];
+  return !!piece && piece[0] !== yourColor;
+}
+
+// The same hue, about 40% darker — works for the palette and for the
+// resolved hex colours NumberedArrowsSvg gets.
+function darker(color: string): string {
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color);
+  if (!m) return color;
+  const ch = (h: string) => Math.round(parseInt(h, 16) * 0.6).toString(16).padStart(2, '0');
+  return `#${ch(m[1])}${ch(m[2])}${ch(m[3])}`;
+}
+
+const OPPONENT_DASH = '0.28 0.18';
+
+export function ArrowsSvg({
+  arrows,
+  size,
+  flipped = false,
+  pieces,
+  yourColor
+}: {
+  arrows: Arrow[];
+  size: number;
+  flipped?: boolean;
+  // The position the arrows are drawn on; without it every arrow looks like your own.
+  pieces?: Pieces;
+  yourColor?: 'w' | 'b';
+}) {
+  const side = yourColor ?? (flipped ? 'b' : 'w');
   return (
     <Svg width={size} height={size} viewBox="0 0 8 8" style={StyleSheet.absoluteFill}>
       <Defs>
         {ARROW_KEYS.map((color) => (
-          <Marker
-            key={color}
-            id={`arrowhead-${color}`}
-            markerWidth={3}
-            markerHeight={3}
-            refX={1.4}
-            refY={1.5}
-            orient="auto"
-          >
-            <Path d="M0,0 L3,1.5 L0,3 Z" fill={arrowColors[color]} />
-          </Marker>
+          <React.Fragment key={color}>
+            <Marker id={`arrowhead-${color}`} markerWidth={3} markerHeight={3} refX={1.4} refY={1.5} orient="auto">
+              <Path d="M0,0 L3,1.5 L0,3 Z" fill={arrowColors[color]} />
+            </Marker>
+            <Marker id={`arrowhead-${color}-opp`} markerWidth={3} markerHeight={3} refX={1.4} refY={1.5} orient="auto">
+              <Path d="M0,0 L3,1.5 L0,3 Z" fill={darker(arrowColors[color])} />
+            </Marker>
+          </React.Fragment>
         ))}
       </Defs>
       {arrows.map((arrow, i) => {
@@ -40,6 +75,7 @@ export function ArrowsSvg({ arrows, size, flipped = false }: { arrows: Arrow[]; 
         const len = Math.hypot(dx, dy) || 1;
         x2 -= (dx / len) * 0.35;
         y2 -= (dy / len) * 0.35;
+        const opp = isOpponentArrow(arrow.from, pieces, side);
         return (
           <Line
             key={i}
@@ -47,11 +83,12 @@ export function ArrowsSvg({ arrows, size, flipped = false }: { arrows: Arrow[]; 
             y1={y1}
             x2={x2}
             y2={y2}
-            stroke={arrowColors[arrow.color]}
+            stroke={opp ? darker(arrowColors[arrow.color]) : arrowColors[arrow.color]}
             strokeWidth={0.16}
-            strokeLinecap="round"
+            strokeLinecap={opp ? 'butt' : 'round'}
+            strokeDasharray={opp ? OPPONENT_DASH : undefined}
             opacity={0.9}
-            markerEnd={`url(#arrowhead-${arrow.color})`}
+            markerEnd={`url(#arrowhead-${arrow.color}${opp ? '-opp' : ''})`}
           />
         );
       })}
@@ -72,13 +109,28 @@ export interface NumberedArrow {
 // wherever an arrow needs a number badge attached (the editor's own
 // same-color arrow numbering, and Study's variant callouts). Shared so the
 // two look identical.
-export function NumberedArrowsSvg({ arrows, size, flipped = false }: { arrows: NumberedArrow[]; size: number; flipped?: boolean }) {
+export function NumberedArrowsSvg({
+  arrows,
+  size,
+  flipped = false,
+  pieces,
+  yourColor
+}: {
+  arrows: NumberedArrow[];
+  size: number;
+  flipped?: boolean;
+  // Only for hand-drawn arrows (see ArrowsSvg); engine and variation arrows leave it out.
+  pieces?: Pieces;
+  yourColor?: 'w' | 'b';
+}) {
+  const side = yourColor ?? (flipped ? 'b' : 'w');
+  const colorOf = (a: NumberedArrow) => (isOpponentArrow(a.from, pieces, side) ? darker(a.color) : a.color);
   return (
     <Svg width={size} height={size} viewBox="0 0 8 8" style={StyleSheet.absoluteFill}>
       <Defs>
         {arrows.map((a) => (
           <Marker key={a.id} id={`numbered-head-${a.id}`} markerWidth={3} markerHeight={3} refX={1.4} refY={1.5} orient="auto">
-            <Path d="M0,0 L3,1.5 L0,3 Z" fill={a.color} />
+            <Path d="M0,0 L3,1.5 L0,3 Z" fill={colorOf(a)} />
           </Marker>
         ))}
       </Defs>
@@ -96,6 +148,7 @@ export function NumberedArrowsSvg({ arrows, size, flipped = false }: { arrows: N
         const len = Math.hypot(dx, dy) || 1;
         x2 -= (dx / len) * 0.35;
         y2 -= (dy / len) * 0.35;
+        const opp = isOpponentArrow(a.from, pieces, side);
         return (
           <Line
             key={a.id}
@@ -103,9 +156,10 @@ export function NumberedArrowsSvg({ arrows, size, flipped = false }: { arrows: N
             y1={y1}
             x2={x2}
             y2={y2}
-            stroke={a.color}
+            stroke={colorOf(a)}
             strokeWidth={a.width ?? 0.16}
-            strokeLinecap="round"
+            strokeLinecap={opp ? 'butt' : 'round'}
+            strokeDasharray={opp ? OPPONENT_DASH : undefined}
             opacity={0.9}
             markerEnd={`url(#numbered-head-${a.id})`}
           />
@@ -250,7 +304,7 @@ export function ChessBoardView({ board, size, flipped = false }: { board: BoardS
         })}
       </View>
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
-        <ArrowsSvg arrows={board.arrows} size={size} flipped={flipped} />
+        <ArrowsSvg arrows={board.arrows} size={size} flipped={flipped} pieces={board.pieces} />
         {board.circles && board.circles.length > 0 && (
           <CirclesSvg circles={board.circles} size={size} flipped={flipped} />
         )}

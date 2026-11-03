@@ -489,7 +489,7 @@ export function PlanStudy({
           </View>
           <BoardCoords size={BOARD_SIZE} flipped={flipped} styleSet={styleSet} />
           <View style={StyleSheet.absoluteFill} pointerEvents="none">
-            <NumberedArrowsSvg arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} />
+            <NumberedArrowsSvg arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} pieces={board.back.pieces} yourColor={yourColor} />
             <NumberedArrowBadges arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} />
             {finalAnnotations.circles.length > 0 && <CirclesSvg circles={finalAnnotations.circles} size={BOARD_SIZE} flipped={flipped} />}
           </View>

@@ -1662,7 +1662,7 @@ function ReactionBoardEditorOverlay({
           <BoardCoords size={BOARD_SIZE} flipped={flipped} styleSet={styleSet} />
           <View style={StyleSheet.absoluteFill} pointerEvents="none">
             <NumberedArrowsSvg arrows={engineArrows} size={BOARD_SIZE} flipped={flipped} />
-            <NumberedArrowsSvg arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} />
+            <NumberedArrowsSvg arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} pieces={engineState.pieces} yourColor={yourColor} />
             <NumberedArrowsSvg arrows={branchArrows} size={BOARD_SIZE} flipped={flipped} />
             <CirclesSvg circles={visibleCircles} size={BOARD_SIZE} flipped={flipped} />
             <NumberedArrowBadges arrows={committedNumberedArrows} size={BOARD_SIZE} flipped={flipped} />
