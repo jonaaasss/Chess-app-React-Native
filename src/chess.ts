@@ -138,8 +138,13 @@ export function withFaceAnnotationsAt(face: BoardFace, historyIndex: number, arr
 // (Others keeps two independent ones): Reactions shows it throughout
 // Study, Plan alongside the plan — both live on the board editor's single
 // Description field, just backed by a different face internally.
+// Plan and Summary keep their single position, arrows and text on `back`.
+export function isPlanLike(mode: CardMode): boolean {
+  return mode === 'plan' || mode === 'summary';
+}
+
 export function descriptionFace(mode: CardMode): 'front' | 'back' {
-  return mode === 'plan' ? 'back' : 'front';
+  return isPlanLike(mode) ? 'back' : 'front';
 }
 
 // The auto-generated overview text (see Card.overviewText) — every board's

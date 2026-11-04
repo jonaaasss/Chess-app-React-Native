@@ -8,6 +8,7 @@ import {
   faceAnnotations,
   faceAnnotationsAt,
   flipIndex,
+  isPlanLike,
   squareFromIndex,
   squareIndex,
   startingPosition,
@@ -469,10 +470,13 @@ function ReactionBoardEditorOverlay({
   yourColor,
   boardStyle,
   initialCursorId,
+  linkTargets,
   close
 }: {
   initial: ReactionBoard;
   mode: CardMode;
+  // Summary cards: the cards an arrow's "Link to card" can point to.
+  linkTargets?: { id: string; name: string }[];
   yourColor: 'w' | 'b';
   boardStyle: number;
   // Opened from Study: the move it was actually showing, so the editor
@@ -484,7 +488,8 @@ function ReactionBoardEditorOverlay({
 }) {
   const isReactions = mode === 'reactions';
   const isOthers = mode === 'others';
-  const isPlan = mode === 'plan';
+  // Plan and Summary share the single-position editor with arrow notes.
+  const isPlan = isPlanLike(mode);
   // A Black-repertoire card is edited from Black's side of the board — rank
   // 1 at the top, a-file on the right.
   const flipped = yourColor === 'b';
@@ -866,7 +871,7 @@ function ReactionBoardEditorOverlay({
         // updates both, clearing both sides' arrows since the position
         // under them changed. Others' faces are fully independent, so only
         // the active one moves.
-        if (mode === 'plan') {
+        if (isPlan) {
           return { ...prev, front: movedFace(prev.front), back: movedFace(prev.back) };
         }
         return { ...prev, [side]: movedFace(prev[side]) };
@@ -1069,7 +1074,7 @@ function ReactionBoardEditorOverlay({
   // rather than array index, since a span is unique within one face's arrow
   // list (see addArrow above) and stays stable across re-renders.
   async function handleArrowNote(arrow: Arrow) {
-    const result = await openArrowNotesDialog(arrow.notes);
+    const result = await openArrowNotesDialog(arrow.notes, linkTargets);
     if (result === null) return;
     setBoard((prev) => {
       const at = faceAnnotationsAt(prev[side], historyIndex);
@@ -1421,7 +1426,7 @@ function ReactionBoardEditorOverlay({
       moves: old.moves.slice(0, keepCount)
     });
     setBoard((prev) =>
-      mode === 'plan'
+      isPlan
         ? { ...prev, front: truncatedFace(prev.front), back: truncatedFace(prev.back) }
         : { ...prev, [side]: truncatedFace(prev[side]) }
     );
@@ -1559,7 +1564,7 @@ function ReactionBoardEditorOverlay({
   async function handleSave() {
     if (mode === 'plan' && faceAnnotations(board.back).arrows.length === 0) {
       await alertDialog(
-        'A Plan board needs at least one arrow on its back — that arrow is the plan you\'ll have to reproduce in Study. If you don\'t want to use arrows here, switch this card to "Front & back" mode instead.'
+        'A Plan board needs at least one arrow on its back — that arrow is the plan you\'ll have to reproduce in Study. If you only want to show a position with its arrows, use a Summary card instead.'
       );
       return;
     }
@@ -2083,7 +2088,8 @@ export function openReactionBoardEditor(
   mode: CardMode = 'reactions',
   yourColor: 'w' | 'b' = 'w',
   boardStyle = 0,
-  initialCursorId?: string | null
+  initialCursorId?: string | null,
+  linkTargets?: { id: string; name: string }[]
 ): Promise<ReactionBoard | null> {
   return showOverlay<ReactionBoard | null>(
     (close) => (
@@ -2093,6 +2099,7 @@ export function openReactionBoardEditor(
         yourColor={yourColor}
         boardStyle={boardStyle}
         initialCursorId={initialCursorId}
+        linkTargets={linkTargets}
         close={close}
       />
     ),

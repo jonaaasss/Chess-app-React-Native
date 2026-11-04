@@ -22,6 +22,9 @@ export interface ArrowResponse {
 // popup in Study once the arrow is drawn/revealed. Every part is optional;
 // a note with none of them filled in doesn't exist (see arrowNotes.ts).
 export interface ArrowNotes {
+  // Summary cards only: tapping the arrow's link badge in Study opens this
+  // card (same opening) in the card viewer.
+  linkCardId?: string;
   reason?: string; // why this move
   next?: string; // the follow-up plan
   responses?: ArrowResponse[];
@@ -175,7 +178,10 @@ export interface ReactionBoard {
 // at least one arrow is required on the back before it can be saved, and
 // Study hides the front's arrows/circles — you draw the back's arrows
 // yourself instead of just flipping.
-export type CardMode = 'others' | 'reactions' | 'plan';
+// 'summary': a Plan-like card (same board editor, data on `back`) that is
+// shown, not studied — its arrows are already drawn in Study and can link
+// to other cards. At most one per opening, always first (see getCards).
+export type CardMode = 'others' | 'reactions' | 'plan' | 'summary';
 
 export interface Repertoire {
   id: string;

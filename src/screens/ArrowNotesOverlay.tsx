@@ -9,19 +9,24 @@ import { cleanArrowNotes } from '../arrowNotes';
 import { confirmDialog, showOverlay, useOverlayBack, CloseCircleButton } from '../overlay';
 import { colors, radius, touchTarget, type } from '../theme';
 import type { ArrowNotes, ArrowResponse } from '../types';
+import { MoveText } from '../components/MoveText';
 
 function ArrowNotesOverlay({
   initial,
+  linkTargets,
   close
 }: {
   initial: ArrowNotes | undefined;
+  // Summary cards only: the cards of this opening an arrow can link to.
+  linkTargets?: { id: string; name: string }[];
   close: (result: { notes: ArrowNotes | undefined } | null) => void;
 }) {
+  const [linkCardId, setLinkCardId] = useState<string | undefined>(initial?.linkCardId);
   const [reason, setReason] = useState(initial?.reason ?? '');
   const [next, setNext] = useState(initial?.next ?? '');
   const [responses, setResponses] = useState<ArrowResponse[]>(initial?.responses ?? []);
 
-  const current = () => cleanArrowNotes({ reason, next, responses });
+  const current = () => cleanArrowNotes({ linkCardId, reason, next, responses });
   const initialCleaned = JSON.stringify(cleanArrowNotes(initial) ?? null);
 
   async function handleCancel() {
@@ -50,6 +55,26 @@ function ArrowNotesOverlay({
       </View>
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        {linkTargets && (
+          <>
+            <Text style={styles.label}>Link to card</Text>
+            <View style={styles.linkList}>
+              {[{ id: '', name: 'No link' }, ...linkTargets].map((t) => {
+                const active = (linkCardId ?? '') === t.id;
+                return (
+                  <Pressable
+                    key={t.id || 'none'}
+                    onPress={() => setLinkCardId(t.id || undefined)}
+                    style={[styles.linkOption, active && styles.linkOptionActive]}
+                  >
+                    <MoveText text={t.name} style={[styles.linkOptionText, active && styles.linkOptionTextActive]} numberOfLines={1} />
+                  </Pressable>
+                );
+              })}
+            </View>
+          </>
+        )}
+
         <Text style={styles.label}>Reason</Text>
         <TextInput
           style={styles.input}
@@ -120,12 +145,30 @@ function ArrowNotesOverlay({
 
 // Resolves to the new notes (`undefined` inside means "none — remove it"),
 // or null when cancelled.
-export function openArrowNotesDialog(initial: ArrowNotes | undefined): Promise<{ notes: ArrowNotes | undefined } | null> {
-  return showOverlay<{ notes: ArrowNotes | undefined } | null>((close) => <ArrowNotesOverlay initial={initial} close={close} />);
+export function openArrowNotesDialog(
+  initial: ArrowNotes | undefined,
+  linkTargets?: { id: string; name: string }[]
+): Promise<{ notes: ArrowNotes | undefined } | null> {
+  return showOverlay<{ notes: ArrowNotes | undefined } | null>((close) => (
+    <ArrowNotesOverlay initial={initial} linkTargets={linkTargets} close={close} />
+  ));
 }
 
 const styles = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: colors.bg },
+  linkList: { gap: 6 },
+  linkOption: {
+    minHeight: 48,
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.panel2
+  },
+  linkOptionActive: { borderColor: colors.primary, backgroundColor: colors.panel },
+  linkOptionText: { color: colors.textSecondary, fontSize: 14 },
+  linkOptionTextActive: { color: colors.text, fontWeight: '700' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

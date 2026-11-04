@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { addCard, deleteCard, getBoardStyle, getCard, getOpening, getRepertoire, saveCard } from '../storage';
-import { descriptionFace, faceAnnotations } from '../chess';
+import { addCard, deleteCard, getBoardStyle, getCard, getCards, getOpening, getRepertoire, saveCard } from '../storage';
+import { descriptionFace, faceAnnotations, isPlanLike } from '../chess';
 import { confirmDialog, showOverlay, SnackbarLayer, useOverlayBack } from '../overlay';
 import type { BoardFace, Card, CardMode, OpeningStartPosition, ReactionBoard } from '../types';
 import { colors, type } from '../theme';
@@ -71,7 +71,7 @@ function migrateBoardForMode(board: ReactionBoard, fromMode: CardMode, toMode: C
       circles: finalAnnotations.circles.map((c) => ({ ...c })),
       recording: []
     };
-  } else if (!fromReactions && !toReactions && toMode === 'plan') {
+  } else if (!fromReactions && !toReactions && isPlanLike(toMode)) {
     next = {
       ...board,
       recording: [],
@@ -138,9 +138,12 @@ function CardEditorOverlay({
   const saveRef = useTutorialTarget('cardEditor.save');
   const modeRefs = {
     reactions: useTutorialTarget('cardEditor.mode.reactions'),
-    plan: useTutorialTarget('cardEditor.mode.plan'),
-    others: useTutorialTarget('cardEditor.mode.others')
+    plan: useTutorialTarget('cardEditor.mode.plan')
   };
+  // Only one Summary per opening: the option is greyed out once there is one.
+  const [hasSummary, setHasSummary] = useState(false);
+  // Summary cards: the other cards of the opening, for an arrow's "Link to card".
+  const [linkTargets, setLinkTargets] = useState<{ id: string; name: string }[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -162,6 +165,8 @@ function CardEditorOverlay({
       const rep = opening ? await getRepertoire(opening.repertoireId) : undefined;
       setYourColor(rep?.group === 'black' ? 'b' : 'w');
       setOpeningStartPosition(opening?.startPosition);
+      const siblings = await getCards(original.openingId);
+      setLinkTargets(siblings.filter((c) => c.id !== original.id).map((c) => ({ id: c.id, name: c.name || 'Untitled card' })));
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cardId]);
@@ -173,6 +178,9 @@ function CardEditorOverlay({
       const rep = opening ? await getRepertoire(opening.repertoireId) : undefined;
       setYourColor(rep?.group === 'black' ? 'b' : 'w');
       setOpeningStartPosition(opening?.startPosition);
+      const siblings = await getCards(newCard.openingId);
+      setHasSummary(siblings.some((c) => c.mode === 'summary'));
+      setLinkTargets(siblings.map((c) => ({ id: c.id, name: c.name || 'Untitled card' })));
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newCard?.openingId]);
@@ -205,6 +213,18 @@ function CardEditorOverlay({
         <ScrollView contentContainerStyle={styles.content}>
           <Text style={styles.fieldLabel}>What kind of card is this?</Text>
           <Pressable
+            onPress={() => handlePickMode('summary')}
+            disabled={hasSummary}
+            style={[styles.modeTile, hasSummary && { opacity: 0.45 }]}
+          >
+            <Text style={styles.modeTileTitle}>Summary</Text>
+            <Text style={styles.modeTileDesc}>
+              {hasSummary
+                ? 'This opening already has a Summary.'
+                : 'The opening at a glance: arrows already drawn, shown first, with links to other cards.'}
+            </Text>
+          </Pressable>
+          <Pressable
             ref={modeRefs.reactions}
             collapsable={false}
             onPress={() => handlePickMode('reactions')}
@@ -216,10 +236,6 @@ function CardEditorOverlay({
           <Pressable ref={modeRefs.plan} collapsable={false} onPress={() => handlePickMode('plan')} style={styles.modeTile}>
             <Text style={styles.modeTileTitle}>Plan</Text>
             <Text style={styles.modeTileDesc}>A position with one arrow to reproduce.</Text>
-          </Pressable>
-          <Pressable ref={modeRefs.others} collapsable={false} onPress={() => handlePickMode('others')} style={styles.modeTile}>
-            <Text style={styles.modeTileTitle}>Front & back</Text>
-            <Text style={styles.modeTileDesc}>A question side and an answer side.</Text>
           </Pressable>
         </ScrollView>
         <TutorialLayer surface="cardEditor" />
@@ -259,7 +275,7 @@ function CardEditorOverlay({
     }
     const hasRecording = card.mode === 'reactions' && next !== 'reactions' && card.boards.some((b) => b.recording.length > 0);
     if (hasRecording) {
-      const modeName = next === 'others' ? 'Front & back' : 'Plan';
+      const modeName = 'Plan';
       const ok = await confirmDialog(
         `Switching to ${modeName} deletes all recorded moves/notation on this card's boards. Each board's position, arrows, and circles are kept as its front and back. Continue?`
       );
@@ -332,6 +348,9 @@ function CardEditorOverlay({
 
         <View style={styles.modeHeaderRow}>
           <Text style={[styles.fieldLabel, { marginTop: 0, marginBottom: 0 }]}>Boards</Text>
+          {card.mode === 'summary' ? (
+            <Text style={styles.modeBtnTextActive}>Summary</Text>
+          ) : (
           <View style={styles.modeToggle}>
             <Pressable
               ref={modeRefs.reactions}
@@ -344,10 +363,8 @@ function CardEditorOverlay({
             <Pressable ref={modeRefs.plan} collapsable={false} onPress={() => handleSetMode('plan')} style={[styles.modeBtn, card.mode === 'plan' && styles.modeBtnActive]}>
               <Text style={[styles.modeBtnText, card.mode === 'plan' && styles.modeBtnTextActive]}>Plan</Text>
             </Pressable>
-            <Pressable ref={modeRefs.others} collapsable={false} onPress={() => handleSetMode('others')} style={[styles.modeBtn, card.mode === 'others' && styles.modeBtnActive]}>
-              <Text style={[styles.modeBtnText, card.mode === 'others' && styles.modeBtnTextActive]}>Front & back</Text>
-            </Pressable>
           </View>
+          )}
         </View>
 
         <BoardsGrid
@@ -356,6 +373,7 @@ function CardEditorOverlay({
           yourColor={yourColor}
           boardStyle={boardStyle}
           startPosition={openingStartPosition}
+          linkTargets={card.mode === 'summary' ? linkTargets : undefined}
           overviewText={card.overviewText}
           onOverviewChange={(overviewText) => setCard((prev) => (prev ? { ...prev, overviewText } : prev))}
           onChange={(boards) => setCard((prev) => (prev ? { ...prev, boards } : prev))}

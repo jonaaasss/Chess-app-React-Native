@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet } from 'react-native';
-import { newReactionBoardFromStart, cloneReactionBoard, defaultOverviewText, faceAnnotations } from '../chess';
+import { newReactionBoardFromStart, cloneReactionBoard, defaultOverviewText, faceAnnotations, isPlanLike } from '../chess';
 import { uid } from '../storage';
 import { ChessBoardView } from '../components/ChessBoard';
 import { ModeTip } from '../components/ModeTip';
@@ -24,6 +24,7 @@ export function BoardsGrid({
   yourColor,
   boardStyle,
   startPosition,
+  linkTargets,
   overviewText,
   onOverviewChange,
   onChange
@@ -38,6 +39,8 @@ export function BoardsGrid({
   // carries over the source board's own position instead (see
   // handleDuplicate below).
   startPosition?: OpeningStartPosition;
+  // Summary cards: the cards an arrow's "Link to card" can point to.
+  linkTargets?: { id: string; name: string }[];
   // Card.overviewText — lives here (above the boards, below the mode tip)
   // rather than below the grid, so it's still on screen once the keyboard
   // is up and you're actually typing into it.
@@ -115,7 +118,7 @@ export function BoardsGrid({
     // means: land on the recording's own start, not the end of its main
     // line — irrelevant for Others/Plan, which have no recording at all.
     tutorial.event('openBoardEditor');
-    const updated = await openReactionBoardEditor(board, mode, yourColor, boardStyle, null);
+    const updated = await openReactionBoardEditor(board, mode, yourColor, boardStyle, null, linkTargets);
     if (!updated) return;
     onChange(currentBoards.map((b) => (b.id === board.id ? updated : b)));
   }
@@ -154,7 +157,7 @@ export function BoardsGrid({
           // shows the full position with its arrows, never hides anything:
           // Reactions' own fields, Others' front, or Plan's single face
           // (`back`, where its position/arrows actually live).
-          const previewFace = mode === 'plan' ? board.back : board.front;
+          const previewFace = isPlanLike(mode) ? board.back : board.front;
           // Others/Plan keep each position's own arrows/circles now (see
           // chess.ts's faceAnnotations) — the preview shows the face's
           // current (final) position, so it needs that position's own

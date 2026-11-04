@@ -146,6 +146,9 @@ function migrate(s: Store): void {
       card.boards = [newReactionBoard(uid(), 0)];
     }
   }
+  // "Front & back" cards are no longer offered: Jonas chose to remove the
+  // existing ones (old backups that still hold them lose them on restore).
+  s.cards = s.cards.filter((c) => c.mode !== 'others');
 }
 
 // The whole store lives in a file, not in AsyncStorage: on Android a single
@@ -441,9 +444,12 @@ export async function deleteOpening(id: string): Promise<void> {
 
 // ---------- Cards ----------
 
+// The Summary card (at most one) always comes first, whatever its `order`.
 export async function getCards(openingId: string): Promise<Card[]> {
   const s = await load();
-  return s.cards.filter((c) => c.openingId === openingId).sort((a, b) => a.order - b.order);
+  return s.cards
+    .filter((c) => c.openingId === openingId)
+    .sort((a, b) => Number(b.mode === 'summary') - Number(a.mode === 'summary') || a.order - b.order);
 }
 
 export async function getCard(id: string): Promise<Card | undefined> {
@@ -461,7 +467,9 @@ export async function addCard(openingId: string, name: string, mode: CardMode): 
     order: existing.length,
     name,
     mode,
-    boards: [newReactionBoardFromStart(uid(), 0, opening?.startPosition)]
+    boards: [newReactionBoardFromStart(uid(), 0, opening?.startPosition)],
+    // Summary and Plan cards start in the quick daily run; Reactions don't.
+    ...(mode === 'summary' || mode === 'plan' ? { fastRevision: true } : {})
   };
   s.cards.push(card);
   await persist();

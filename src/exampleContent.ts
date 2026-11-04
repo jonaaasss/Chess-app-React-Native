@@ -179,66 +179,6 @@ function newReactionsCard(
   };
 }
 
-function newOthersCard(
-  idFactory: () => string,
-  openingId: string,
-  order: number,
-  name: string,
-  frontText: string,
-  backText: string,
-  moves: { from: string; to: string; promotion?: PromotionPiece }[],
-  arrowFrom: string,
-  arrowTo: string,
-  circleSquare: string
-): Card {
-  const state = playLine(moves);
-  // Front is the bare position (the question); back adds the answer arrow
-  // and circle — a small showcase of the front/back split now that the two
-  // sides can actually differ.
-  const front: BoardFace = {
-    pieces: { ...state.pieces },
-    turn: state.turn,
-    castling: { ...state.castling },
-    enPassant: state.enPassant,
-    arrows: [],
-    circles: [],
-    text: frontText,
-    moves: []
-  };
-  const back: BoardFace = {
-    pieces: { ...state.pieces },
-    turn: state.turn,
-    castling: { ...state.castling },
-    enPassant: state.enPassant,
-    arrows: [{ from: arrowFrom, to: arrowTo, color: 'green' }],
-    circles: [{ square: circleSquare, color: 'green' }],
-    text: backText,
-    moves: []
-  };
-  const board: ReactionBoard = {
-    id: idFactory(),
-    order: 0,
-    pieces: state.pieces,
-    turn: state.turn,
-    castling: state.castling,
-    enPassant: state.enPassant,
-    arrows: [],
-    circles: [],
-    setupMoves: [],
-    recording: [],
-    front,
-    back
-  };
-  return {
-    id: idFactory(),
-    openingId,
-    order,
-    name,
-    mode: 'others' as CardMode,
-    boards: [board]
-  };
-}
-
 // Plan mode has no front/back split — both faces share one position (kept
 // in sync), and only `back` carries the plan's arrow(s) and the
 // description text; `front` is never shown, per `descriptionFace` in
@@ -346,26 +286,6 @@ export function buildExampleContent(
         'Main line',
         "Play White's setup against the Italian — watch for Black's two common replies to Bc4.",
         line
-      ),
-      newOthersCard(
-        idFactory,
-        openingId,
-        1,
-        'Key position',
-        "What's White's main plan in this position?",
-        "Play d4! to challenge Black's center and open lines for the pieces.",
-        [
-          { from: 'e2', to: 'e4' },
-          { from: 'e7', to: 'e5' },
-          { from: 'g1', to: 'f3' },
-          { from: 'b8', to: 'c6' },
-          { from: 'f1', to: 'c4' },
-          { from: 'f8', to: 'c5' },
-          { from: 'c2', to: 'c3' }
-        ],
-        'd2',
-        'd4',
-        'd4'
       )
     ];
     // Vienna Game cards, taken from cards authored in the app itself (via the
@@ -550,29 +470,6 @@ export function buildExampleContent(
       'Main line',
       "Play Black's setup against 1.e4 — watch for White's two common second moves.",
       line
-    ),
-    newOthersCard(
-      idFactory,
-      openingId,
-      1,
-      'Key position',
-      'This is the Najdorf Sicilian. What move order got us here?',
-      '1.e4 c5 2.Nf3 d6 3.d4 cxd4 4.Nxd4 Nf6 5.Nc3 a6 — Black delays development to prepare ...e5 or ...b5.',
-      [
-        { from: 'e2', to: 'e4' },
-        { from: 'c7', to: 'c5' },
-        { from: 'g1', to: 'f3' },
-        { from: 'd7', to: 'd6' },
-        { from: 'd2', to: 'd4' },
-        { from: 'c5', to: 'd4' },
-        { from: 'f3', to: 'd4' },
-        { from: 'g8', to: 'f6' },
-        { from: 'b1', to: 'c3' },
-        { from: 'a7', to: 'a6' }
-      ],
-      'a6',
-      'b5',
-      'a6'
     )
   ];
   return { openings: [{ id: openingId, repertoireId, name: 'Sicilian Defense', order: 0 }], cards };

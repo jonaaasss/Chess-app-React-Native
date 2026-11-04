@@ -28,19 +28,21 @@ import { MoveText } from '../components/MoveText';
 import { summaryPreviewText } from '../components/SummaryText';
 import { askStudyOptions, startStudySession } from './StudySessionOverlay';
 import { useTutorial } from '../tutorial';
+import { isPlanLike } from '../chess';
 import { Reorderable } from '../components/Reorderable';
 
 function cardPreviewText(card: Card): string {
   const firstBoard = [...card.boards].sort((a, b) => a.order - b.order)[0];
   // Plan's single description lives on the back (see descriptionFace in
   // CardEditorOverlay) — everything else uses the front.
-  const face = card.mode === 'plan' ? firstBoard?.back : firstBoard?.front;
+  const face = isPlanLike(card.mode) ? firstBoard?.back : firstBoard?.front;
   const t = face?.text.trim();
   if (t) return t.split('\n')[0].slice(0, 60);
   return '(board only)';
 }
 
 const MODE_LABELS: Record<Card['mode'], string> = {
+  summary: 'Summary',
   reactions: 'Reactions',
   plan: 'Plan',
   others: 'Front & back'
@@ -55,14 +57,15 @@ function cardSubtitle(card: Card): string {
 // slide out on the same line, and "Rename" edits the name in place.
 function CardRow({
   card,
-  idx,
+  prefix,
   piece,
   onOpen,
   onRename,
   onDelete
 }: {
   card: Card;
-  idx: number;
+  // Shown before the name: the card's number, or "Summary" for the summary.
+  prefix: string;
   piece: PieceCode;
   onOpen: () => void;
   onRename: (newName: string) => void;
@@ -127,7 +130,7 @@ function CardRow({
         <Pressable onPress={onOpen} style={styles.main}>
           <PieceBadge code={piece} size={52} />
           <View style={styles.mainCol}>
-            <MoveText text={`${idx + 1}. ${label}`} style={styles.mainText} numberOfLines={1} />
+            <MoveText text={`${prefix} ${label}`} style={styles.mainText} numberOfLines={1} />
             <Text style={styles.subtitle} numberOfLines={1}>
               {cardSubtitle(card)}
             </Text>
@@ -249,6 +252,8 @@ export function CardsScreen({
   if (!opening || !rep) return <Screen>{null}</Screen>;
 
   const cardPiece: PieceCode = rep.group === 'white' ? 'wN' : 'bN';
+  const summaryCard = cards.find((c) => c.mode === 'summary');
+  const otherCards = cards.filter((c) => c.mode !== 'summary');
 
   return (
     <Screen surface="cards">
@@ -284,20 +289,31 @@ export function CardsScreen({
         </View>
       ) : (
         <>
+          {/* The Summary card is pinned on top and never dragged (see getCards). */}
+          {summaryCard && (
+            <CardRow
+              card={summaryCard}
+              prefix="Summary ·"
+              piece={cardPiece}
+              onOpen={() => handleOpenCard(summaryCard)}
+              onRename={(name) => handleRenameCard(summaryCard, name)}
+              onDelete={() => handleDeleteCard(summaryCard)}
+            />
+          )}
           {/* Hold a card, then drag it to reorder; the numbers follow the
               new order (see Reorderable.tsx). */}
           <Reorderable
-            items={cards}
+            items={otherCards}
             keyOf={(c) => c.id}
             onReorder={async (ids) => {
-              setCards((prev) => ids.map((id) => prev.find((c) => c.id === id)!));
+              setCards((prev) => [...prev.filter((c) => c.mode === 'summary'), ...ids.map((id) => prev.find((c) => c.id === id)!)]);
               await reorderCards(openingId, ids);
               load();
             }}
             renderItem={(card, idx, guard) => (
               <CardRow
                 card={card}
-                idx={idx}
+                prefix={`${idx + 1}.`}
                 piece={cardPiece}
                 onOpen={guard(() => handleOpenCard(card))}
                 onRename={(name) => handleRenameCard(card, name)}

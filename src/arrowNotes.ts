@@ -10,8 +10,10 @@ export function cleanArrowNotes(notes: ArrowNotes | undefined): ArrowNotes | und
   const responses = (notes.responses ?? [])
     .map((r) => ({ ...r, trigger: r.trigger.trim(), text: r.text.trim() }))
     .filter((r) => r.text.length > 0);
-  if (!reason && !next && responses.length === 0) return undefined;
+  const linkCardId = notes.linkCardId || undefined;
+  if (!reason && !next && responses.length === 0 && !linkCardId) return undefined;
   return {
+    ...(linkCardId ? { linkCardId } : {}),
     ...(reason ? { reason } : {}),
     ...(next ? { next } : {}),
     ...(responses.length > 0 ? { responses } : {})

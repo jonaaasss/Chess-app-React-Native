@@ -591,7 +591,11 @@ export function ReactionStudy({
   // the variant walkthrough, which is its own fully automatic showcase.
   const canStepReview = !inVariant;
   const canGoPrev = canStepReview && viewPly > 0;
-  const canGoNext = canStepReview && viewPly < ply;
+  // At the live position on your turn, › plays your move for you — exactly
+  // Show solution, so it costs one slip; stepping back and forward again
+  // over moves already played is just reviewing and costs nothing.
+  const nextIsSolution = canStepReview && !preview && !isReviewing && activeIsYourTurn && !activeLineDone;
+  const canGoNext = (canStepReview && viewPly < ply) || nextIsSolution;
 
   function handlePrevMove() {
     if (!canGoPrev) return;
@@ -602,6 +606,10 @@ export function ReactionStudy({
 
   function handleNextMove() {
     if (!canGoNext) return;
+    if (nextIsSolution) {
+      showSolution();
+      return;
+    }
     // Stepping forward onto the live position means you're no longer
     // reviewing — back to null so the view follows `ply` again.
     setReviewPly(viewPly + 1 >= ply ? null : viewPly + 1);
@@ -804,7 +812,7 @@ export function ReactionStudy({
               <Text style={styles.solutionText}>Show solution</Text>
             </Pressable>
           </View>
-          <Text style={styles.slipNote}>Show solution counts as a slip.</Text>
+          <Text style={styles.slipNote}>Show solution (or › on your move) counts as a slip.</Text>
         </>
       )}
     </View>

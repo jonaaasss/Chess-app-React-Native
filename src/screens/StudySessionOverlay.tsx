@@ -3,7 +3,7 @@ import { View, Text, Pressable, StyleSheet, ScrollView, Animated } from 'react-n
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import { getBoardStyle, getCard, getCards, getOpening, getRepertoire, getSetting, restoreCard, saveCard } from '../storage';
-import { defaultOverviewText, descriptionFace, faceAnnotations, mainLineLeaf } from '../chess';
+import { defaultOverviewText, descriptionFace, faceAnnotations, isPlanLike, mainLineLeaf } from '../chess';
 import { choiceDialog, confirmDialog, showOverlay, showSnackbar, SnackbarLayer, useOverlayBack } from '../overlay';
 import type { Arrow, Card, CardMode, Circle, ReactionBoard } from '../types';
 import { colors, radius, touchTarget, type } from '../theme';
@@ -25,6 +25,7 @@ import { openCardEditor } from './CardEditorOverlay';
 import { openReactionBoardEditor } from './ReactionBoardEditorOverlay';
 import { ReactionStudy } from './ReactionStudy';
 import { PlanStudy } from './PlanStudy';
+import { SummaryStudy } from './SummaryStudy';
 
 // Skip-to-next glyph, drawn (not a Unicode character) like the app's other icons.
 function SkipIcon({ size, color }: { size: number; color: string }) {
@@ -119,7 +120,7 @@ function finalBoardPreview(board: ReactionBoard, mode: CardMode): { pieces: Reac
     const leaf = mainLineLeaf(board.recording);
     return { pieces: leaf ? leaf.piecesAfter : board.pieces, arrows: [], circles: [] };
   }
-  const face = mode === 'plan' ? board.back : board.front;
+  const face = isPlanLike(mode) ? board.back : board.front;
   const annotations = faceAnnotations(face);
   return { pieces: face.pieces, arrows: annotations.arrows, circles: annotations.circles };
 }
@@ -517,13 +518,19 @@ function StudySessionOverlay({
     // list, which would otherwise make you go find and open it yourself.
     // Others has no single "current" board (every board is shown at once),
     // so it always falls through to the card editor below.
-    if ((card.mode === 'reactions' || card.mode === 'plan') && currentBoardRef.current) {
+    if ((card.mode === 'reactions' || isPlanLike(card.mode)) && currentBoardRef.current) {
+      // A Summary's arrows can link to the opening's other cards.
+      const linkTargets =
+        card.mode === 'summary'
+          ? (await getCards(card.openingId)).filter((c) => c.id !== card.id).map((c) => ({ id: c.id, name: c.name || 'Untitled card' }))
+          : undefined;
       const updated = await openReactionBoardEditor(
         currentBoardRef.current,
         card.mode,
         yourColor,
         boardStyle,
-        card.mode === 'reactions' ? currentCursorRef.current : undefined
+        card.mode === 'reactions' ? currentCursorRef.current : undefined,
+        linkTargets
       );
       if (!updated) return;
       const updatedCard = { ...card, boards: card.boards.map((b) => (b.id === updated.id ? updated : b)) };
@@ -805,6 +812,18 @@ function StudySessionOverlay({
               onGuideEvent={item?.guide ? handleGuideEvent : undefined}
             />
           </View>
+        ) : card.mode === 'summary' ? (
+          <View style={styles.studyCard}>
+            <SummaryStudy
+              key={`${roundNumber}-${index}`}
+              card={card}
+              yourColor={yourColor}
+              boardStyle={boardStyle}
+              boardRef={currentBoardRef}
+              // Nothing to get wrong: a Summary always counts as done.
+              onDone={previewing ? advancePreview : () => advance(null)}
+            />
+          </View>
         ) : card.mode === 'plan' ? (
           <View style={styles.studyCard}>
             <PlanStudy
@@ -1019,6 +1038,8 @@ export async function startStudySession(
     if (shuffleCards) {
       cards = shuffleArray(cards);
     }
+    // The Summary always opens its opening, even when cards are shuffled.
+    cards = [...cards.filter((c) => c.mode === 'summary'), ...cards.filter((c) => c.mode !== 'summary')];
     for (const c of cards) {
       round1.push({ cardId: c.id, openingId });
     }

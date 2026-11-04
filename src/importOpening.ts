@@ -21,6 +21,8 @@
 // (where the board starts) and "line" the recorded moves after it, with
 // variations in brackets as in PGN — "d4 exd4 cxd4 Bb4+ Bd2 (Nc3 Nxe4) Bxd2+"
 // makes Nc3 Nxe4 a branch instead of Bd2 Bxd2+. Arrows are not needed there.
+// A "summary" card (at most one) is a Plan-like card shown first; its arrows
+// may carry "link": "<name of another card in this import>".
 import { startingPosition } from './chess';
 import { allLegalMoves, createGameState, isPromotionMove, makeMove, type GameState } from './chessEngine';
 import { cleanArrowNotes } from './arrowNotes';
@@ -62,7 +64,7 @@ interface ParsedBoard {
 }
 interface ParsedCard {
   name: string;
-  mode: 'plan' | 'reactions';
+  mode: 'plan' | 'reactions' | 'summary';
   fastRevision?: boolean;
   boards: ParsedBoard[];
 }
@@ -226,14 +228,24 @@ function parseNotes(v: unknown, where: string): ArrowNotes | undefined {
   });
 }
 
-function parseArrow(v: unknown, where: string): Arrow {
+// Summary arrows: the card name an arrow links to, resolved to an id on import.
+const LINK_NAME = Symbol('linkName');
+type ParsedArrow = Arrow & { [LINK_NAME]?: string };
+
+function parseArrow(v: unknown, where: string, mode: 'plan' | 'reactions' | 'summary'): Arrow {
   if (!isRecord(v)) return fail(`${where} must be an object.`);
+  if (v.link !== undefined) {
+    if (mode !== 'summary') return fail(`${where}: only Summary cards can have a "link".`);
+    if (typeof v.link !== 'string' || !v.link.trim()) return fail(`${where}: "link" must be the name of a card.`);
+  }
   if (typeof v.from !== 'string' || !SQUARE.test(v.from) || typeof v.to !== 'string' || !SQUARE.test(v.to)) {
     return fail(`${where} needs "from" and "to" squares like "e2" and "e4".`);
   }
   if (v.from === v.to) return fail(`${where}: "from" and "to" are the same square.`);
   const notes = parseNotes(v.notes, where);
-  return { from: v.from, to: v.to, color: parseColor(v.color, where), ...(notes ? { notes } : {}) };
+  const arrow: ParsedArrow = { from: v.from, to: v.to, color: parseColor(v.color, where), ...(notes ? { notes } : {}) };
+  if (typeof v.link === 'string') arrow[LINK_NAME] = v.link.trim();
+  return arrow;
 }
 
 function parseCircle(v: unknown, where: string): Circle {
@@ -242,7 +254,7 @@ function parseCircle(v: unknown, where: string): Circle {
   return { square: v.square, color: parseColor(v.color, where) };
 }
 
-function parseBoard(v: unknown, where: string, mode: 'plan' | 'reactions'): ParsedBoard {
+function parseBoard(v: unknown, where: string, mode: 'plan' | 'reactions' | 'summary'): ParsedBoard {
   if (!isRecord(v)) return fail(`${where} must be an object.`);
   const movesText = v.moves === undefined ? '' : v.moves;
   if (typeof movesText !== 'string') return fail(`${where}: "moves" must be text like "e4 e5 Nf3".`);
@@ -251,7 +263,7 @@ function parseBoard(v: unknown, where: string, mode: 'plan' | 'reactions'): Pars
   if (!Array.isArray(arrowsRaw)) return fail(`${where}: "arrows" must be a list.`);
   if (mode === 'plan' && arrowsRaw.length === 0) return fail(`${where}: a Plan board needs at least one arrow.`);
   if (arrowsRaw.length > MAX_ARROWS_PER_BOARD) return fail(`${where}: at most ${MAX_ARROWS_PER_BOARD} arrows per board.`);
-  const arrows = arrowsRaw.map((a: unknown, i: number) => parseArrow(a, `${where}, arrow ${i + 1}`));
+  const arrows = arrowsRaw.map((a: unknown, i: number) => parseArrow(a, `${where}, arrow ${i + 1}`, mode));
   const circlesRaw = v.circles === undefined ? [] : v.circles;
   if (!Array.isArray(circlesRaw)) return fail(`${where}: "circles" must be a list.`);
   const circles = circlesRaw.map((c: unknown, i: number) => parseCircle(c, `${where}, circle ${i + 1}`));
@@ -289,10 +301,10 @@ export function parseOpeningImport(raw: string): ParseResult {
       if (!isRecord(c)) return fail(`${where} must be an object.`);
       const name = typeof c.name === 'string' ? c.name.trim() : '';
       if (!name) return fail(`${where} needs a "name".`);
-      if (c.mode !== undefined && c.mode !== 'plan' && c.mode !== 'reactions') {
-        return fail(`${where} "${name}": "mode" must be "plan" or "reactions".`);
+      if (c.mode !== undefined && c.mode !== 'plan' && c.mode !== 'reactions' && c.mode !== 'summary') {
+        return fail(`${where} "${name}": "mode" must be "summary", "plan" or "reactions".`);
       }
-      const mode = c.mode === 'reactions' ? 'reactions' : 'plan';
+      const mode = c.mode === 'reactions' || c.mode === 'summary' ? c.mode : 'plan';
       if (!Array.isArray(c.boards) || c.boards.length === 0) return fail(`${where} "${name}" has no boards.`);
       if (c.boards.length > MAX_BOARDS_PER_CARD) return fail(`${where} "${name}" has more than ${MAX_BOARDS_PER_CARD} boards.`);
       const boards = c.boards.map((b: unknown, bi: number) => parseBoard(b, `${where} "${name}", board ${bi + 1}`, mode));
@@ -300,6 +312,19 @@ export function parseOpeningImport(raw: string): ParseResult {
       if (c.fastRevision !== undefined && typeof c.fastRevision !== 'boolean') return fail(`${where} "${name}": "fastRevision" must be true or false.`);
       return { name, mode, boards, fastRevision: c.fastRevision === true ? true : undefined };
     });
+    if (cards.filter((c) => c.mode === 'summary').length > 1) return fail('An opening can have only one Summary card.');
+    // Every link must name another card of this import.
+    const names = new Set(cards.map((c) => c.name));
+    cards.forEach((c) =>
+      c.boards.forEach((b, bi) =>
+        b.arrows.forEach((a, ai) => {
+          const link = (a as ParsedArrow)[LINK_NAME];
+          if (link && (!names.has(link) || link === c.name)) {
+            fail(`Card "${c.name}", board ${bi + 1}, arrow ${ai + 1}: "link" must be the name of another card in this import ("${link}" isn't).`);
+          }
+        })
+      )
+    );
     return { ok: true, value: { summary, cards }, boardCount };
   } catch (e) {
     if (isImportError(e)) return { ok: false, error: e.message };
@@ -416,8 +441,23 @@ export async function importOpening(repertoireId: string, name: string, spec: Pa
   const opening = await addOpening(repertoireId, name);
   try {
     if (spec.summary) await setOpeningSummary(opening.id, spec.summary);
-    for (let i = 0; i < spec.cards.length; i++) {
-      await saveCard(buildCard(opening.id, i, spec.cards[i]));
+    const built = spec.cards.map((pc, i) => buildCard(opening.id, i, pc));
+    // Summary links point at cards by name in the import text; now that every
+    // card has its id, turn each name into that id.
+    const idByName = new Map(built.map((c) => [c.name, c.id]));
+    spec.cards.forEach((pc, ci) =>
+      pc.boards.forEach((pb, bi) =>
+        pb.arrows.forEach((a, ai) => {
+          const link = (a as ParsedArrow)[LINK_NAME];
+          if (!link) return;
+          const face = built[ci].boards[bi].back;
+          const target = face.moves.length > 0 ? face.moves[face.moves.length - 1].arrowsAfter : face.arrows;
+          target[ai] = { ...target[ai], notes: { ...target[ai].notes, linkCardId: idByName.get(link) } };
+        })
+      )
+    );
+    for (const card of built) {
+      await saveCard(card);
     }
   } catch (e) {
     await deleteOpening(opening.id);
