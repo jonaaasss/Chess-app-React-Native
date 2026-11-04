@@ -1,10 +1,11 @@
 // Long-press-and-drag reordering for any list or grid of rows/tiles.
 //
 // Hold an item for a moment, then drag it: it lifts and follows the finger,
-// the slot it would land in gets an outline, and letting go moves it there.
-// Works for a plain vertical list and for a wrapping grid alike, because the
-// drop target is simply the item whose centre is closest to the dragged
-// item's centre. Taps keep working: `guard` swallows the tap that a finished
+// and the other items slide out of the way to show the gap it would drop
+// into; letting go moves it there. Works for a plain vertical list and for a
+// wrapping grid alike, because the drop target is simply the slot whose
+// centre is closest to the dragged item's centre, and the others slide into
+// the slot they'd take in that new order. Taps keep working: `guard` swallows the tap that a finished
 // drag would otherwise fire on release.
 //
 // The enclosing ScrollView is a "scroll host" (useScrollHost below, used by
@@ -14,6 +15,7 @@
 // bottom edge, so an item can be dragged further than one screen.
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import {
+  Animated,
   StyleSheet,
   View,
   type LayoutChangeEvent,
@@ -24,10 +26,10 @@ import {
   type ViewStyle
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { colors, radius } from '../theme';
 
 const LONG_PRESS_MS = 400;
 const TAP_GUARD_MS = 400;
+const SHIFT_MS = 150;
 // Auto-scroll starts this close to the scroll view's top/bottom edge and
 // speeds up towards the edge, up to MAX_SPEED pixels per frame.
 const EDGE = 80;
@@ -124,6 +126,13 @@ function targetFor(rects: (Rect | undefined)[], from: number, dx: number, dy: nu
   return best;
 }
 
+// Where the item now at `k` sits once the dragged item moves from `from` to `to`.
+function shiftedIndex(k: number, from: number, to: number): number {
+  if (from < to && k > from && k <= to) return k - 1;
+  if (to < from && k >= to && k < from) return k + 1;
+  return k;
+}
+
 function ReorderableItem({
   index,
   onLayout,
@@ -131,7 +140,7 @@ function ReorderableItem({
   onMove,
   onEnd,
   style,
-  highlight,
+  shift,
   children
 }: {
   index: number;
@@ -140,9 +149,8 @@ function ReorderableItem({
   onMove: (dx: number, dy: number, fingerY: number) => void;
   onEnd: () => void;
   style?: StyleProp<ViewStyle>;
-  // Outlines the slot the dragged item would land in, drawn on top so the
-  // item's own size never changes mid-drag.
-  highlight?: boolean;
+  // How far the item slides to make room (animated); none for the dragged item.
+  shift?: Animated.ValueXY;
   children: React.ReactNode;
 }) {
   const pan = Gesture.Pan()
@@ -153,14 +161,13 @@ function ReorderableItem({
     .onFinalize(() => onEnd());
   return (
     <GestureDetector gesture={pan}>
-      <View
+      <Animated.View
         collapsable={false}
-        style={style}
+        style={[style, shift && { transform: shift.getTranslateTransform() }]}
         onLayout={(e: LayoutChangeEvent) => onLayout(index, e.nativeEvent.layout)}
       >
         {children}
-        {highlight && <View pointerEvents="none" style={styles.target} />}
-      </View>
+      </Animated.View>
     </GestureDetector>
   );
 }
@@ -196,6 +203,16 @@ export function Reorderable<T>({
   const finger = useRef({ dx: 0, dy: 0, y: 0 });
   const scrolled = useRef(0);
   const frame = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
+  // Per item (by key): how far it currently slides aside for the dragged one.
+  const shifts = useRef(new Map<string, Animated.ValueXY>()).current;
+  const shiftFor = (key: string) => {
+    let v = shifts.get(key);
+    if (!v) {
+      v = new Animated.ValueXY({ x: 0, y: 0 });
+      shifts.set(key, v);
+    }
+    return v;
+  };
 
   const update = (d: Drag | null) => {
     dragRef.current = d;
@@ -243,6 +260,20 @@ export function Reorderable<T>({
 
   useEffect(() => stopAutoScroll, []);
 
+  // Slide every other item into the slot it takes in the new order.
+  const dragIndex = drag?.index ?? -1;
+  const dragTarget = drag?.target ?? -1;
+  useEffect(() => {
+    items.forEach((item, k) => {
+      if (k === dragIndex) return;
+      const own = rects.current[k];
+      const slot = dragIndex < 0 ? own : rects.current[shiftedIndex(k, dragIndex, dragTarget)];
+      const toValue = own && slot ? { x: slot.x - own.x, y: slot.y - own.y } : { x: 0, y: 0 };
+      Animated.timing(shiftFor(keyOf(item)), { toValue, duration: SHIFT_MS, useNativeDriver: true }).start();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dragIndex, dragTarget]);
+
   function handleStart(index: number) {
     if (disabled) return;
     scrollHost.setLocked(true);
@@ -264,6 +295,12 @@ export function Reorderable<T>({
     stopAutoScroll();
     scrollHost.setLocked(false);
     lastDragEnd.current = Date.now();
+    // The list re-renders in its new order right away, so the slide-aside
+    // offsets must vanish at once instead of animating back.
+    shifts.forEach((v) => {
+      v.stopAnimation();
+      v.setValue({ x: 0, y: 0 });
+    });
     update(null);
     if (d.target === d.index) return;
     const keys = items.map(keyOf);
@@ -278,7 +315,6 @@ export function Reorderable<T>({
     <View style={containerStyle}>
       {items.map((item, index) => {
         const isDragged = drag?.index === index;
-        const isTarget = !!drag && drag.target === index && !isDragged;
         return (
           <ReorderableItem
             key={keyOf(item)}
@@ -289,7 +325,7 @@ export function Reorderable<T>({
             onStart={handleStart}
             onMove={handleMove}
             onEnd={handleEnd}
-            highlight={isTarget}
+            shift={isDragged ? undefined : shiftFor(keyOf(item))}
             style={[
               itemStyle,
               isDragged && drag && [styles.dragged, { transform: [{ translateX: drag.dx }, { translateY: drag.dy }, { scale: 1.03 }] }]
@@ -304,6 +340,5 @@ export function Reorderable<T>({
 }
 
 const styles = StyleSheet.create({
-  dragged: { zIndex: 10, elevation: 10, opacity: 0.92 },
-  target: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: radius.lg, borderWidth: 2, borderColor: colors.accent, borderStyle: 'dashed' }
+  dragged: { zIndex: 10, elevation: 10, opacity: 0.92 }
 });

@@ -6,9 +6,9 @@ import { hasArrowNotes } from '../arrowNotes';
 import { ArrowNoteBody } from '../components/ArrowNoteBody';
 import { CloseCircleButton } from '../overlay';
 import { MoveText } from '../components/MoveText';
-import type { Arrow, ArrowColor, Card, ReactionBoard } from '../types';
+import type { Arrow, ArrowColor, Card, PieceCode, ReactionBoard } from '../types';
 import { arrowColors, boardStyles, colors, radius, touchTarget } from '../theme';
-import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, type NumberedArrow } from '../components/ChessBoard';
+import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, isOpponentArrow, type NumberedArrow } from '../components/ChessBoard';
 import { PIECE_ANIM_DURATION_MS } from '../components/PieceAnimation';
 import type { GuideTargets } from '../components/GuideCoach';
 import type { CoachEvent } from '../guideContent';
@@ -80,12 +80,14 @@ function buildColorGroups(arrows: Arrow[]): ColorGroup[] {
 // 2+ times) — keyed by from/to/color so a drawn arrow in Study can look up
 // the exact same number instead of just numbering by the order you find
 // them in, which would rarely match.
-function editorArrowNumbers(arrows: Arrow[]): Map<string, number> {
+// Arrows from an opponent piece have no number there and don't count.
+function editorArrowNumbers(arrows: Arrow[], pieces: Partial<Record<string, PieceCode>> | undefined, yourColor: 'w' | 'b'): Map<string, number> {
+  const own = arrows.filter((a) => !isOpponentArrow(a.from, pieces, yourColor));
   const countByColor: Partial<Record<ArrowColor, number>> = {};
-  for (const a of arrows) countByColor[a.color] = (countByColor[a.color] ?? 0) + 1;
+  for (const a of own) countByColor[a.color] = (countByColor[a.color] ?? 0) + 1;
   const seenByColor: Partial<Record<ArrowColor, number>> = {};
   const numbers = new Map<string, number>();
-  for (const a of arrows) {
+  for (const a of own) {
     const seen = (seenByColor[a.color] = (seenByColor[a.color] ?? 0) + 1);
     if ((countByColor[a.color] ?? 0) > 1) {
       numbers.set(`${a.from}-${a.to}-${a.color}`, seen);
@@ -192,7 +194,10 @@ export function PlanStudy({
   // in case the board was set up by playing moves first.
   const finalAnnotations = useMemo(() => (board ? faceAnnotations(board.back) : { arrows: [], circles: [] }), [board]);
   const colorGroups = useMemo(() => buildColorGroups(finalAnnotations.arrows), [finalAnnotations]);
-  const arrowNumbers = useMemo(() => editorArrowNumbers(finalAnnotations.arrows), [finalAnnotations]);
+  const arrowNumbers = useMemo(
+    () => editorArrowNumbers(finalAnnotations.arrows, board?.back.pieces, yourColor),
+    [finalAnnotations, board, yourColor]
+  );
   // Nothing to reproduce — the board can't be studied at all, which is a
   // problem to fix in the editor, not a board to quietly count as solved.
   const noArrows = colorGroups.length === 0;

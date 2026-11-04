@@ -16,7 +16,8 @@ type Pieces = Partial<Record<string, PieceCode>>;
 // position on screen only — nothing about it is stored. A Black repertoire
 // is always shown flipped (see flipIndex), so `flipped` tells whose side
 // you're on unless `yourColor` says otherwise.
-function isOpponentArrow(from: string, pieces: Pieces | undefined, yourColor: 'w' | 'b'): boolean {
+// Also used to leave such arrows out of the same-colour numbering.
+export function isOpponentArrow(from: string, pieces: Pieces | undefined, yourColor: 'w' | 'b'): boolean {
   const piece = pieces?.[from];
   return !!piece && piece[0] !== yourColor;
 }

@@ -17,7 +17,7 @@ import {
 import { legalMovesFrom, makeMove, isPromotionMove, sansForBoardMoves, type GameState } from '../chessEngine';
 import type { Arrow, ArrowColor, BoardFace, BoardMove, CardMode, Circle, MoveNode, PieceCode, PromotionPiece, ReactionBoard } from '../types';
 import { arrowColors, boardStyles, colors, engineColors, radius, spacing, type, variationColor } from '../theme';
-import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, type NumberedArrow } from '../components/ChessBoard';
+import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, isOpponentArrow, type NumberedArrow } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts } from '../components/PieceAnimation';
 import { alertDialog, confirmDialog, dismissSnackbar, showOverlay, showSnackbar, SnackbarLayer, useOverlayBack } from '../overlay';
 import { hasArrowNotes } from '../arrowNotes';
@@ -119,19 +119,21 @@ function isStartingFace(face: BoardFace): boolean {
 // Same thick-arrow-with-side-offset-badge treatment used by Study's variant
 // callouts, so the editor's own arrows look identical. Only same-colored
 // arrows are numbered against each other (2+ of a color) — a lone arrow of
-// its color needs no badge to disambiguate.
-function toEditorNumberedArrows(arrows: Arrow[]): NumberedArrow[] {
+// its color needs no badge to disambiguate. Arrows from an opponent piece
+// (drawn dashed, see isOpponentArrow) get no number and don't count.
+function toEditorNumberedArrows(arrows: Arrow[], pieces: Partial<Record<string, PieceCode>>, yourColor: 'w' | 'b'): NumberedArrow[] {
+  const own = (a: Arrow) => !isOpponentArrow(a.from, pieces, yourColor);
   const countByColor: Partial<Record<ArrowColor, number>> = {};
-  for (const a of arrows) countByColor[a.color] = (countByColor[a.color] ?? 0) + 1;
+  for (const a of arrows) if (own(a)) countByColor[a.color] = (countByColor[a.color] ?? 0) + 1;
   const seenByColor: Partial<Record<ArrowColor, number>> = {};
   return arrows.map((a, i) => {
-    const seen = (seenByColor[a.color] = (seenByColor[a.color] ?? 0) + 1);
+    const seen = own(a) ? (seenByColor[a.color] = (seenByColor[a.color] ?? 0) + 1) : 0;
     return {
       id: `${a.from}-${a.to}-${a.color}-${i}`,
       from: a.from,
       to: a.to,
       color: arrowColors[a.color],
-      number: (countByColor[a.color] ?? 0) > 1 ? seen : undefined
+      number: own(a) && (countByColor[a.color] ?? 0) > 1 ? seen : undefined
     };
   });
 }
@@ -665,14 +667,22 @@ function ReactionBoardEditorOverlay({
   }, [isReactions, activeFace, historyIndex, board, path]);
 
   const numberedArrows = useMemo(
-    () => toEditorNumberedArrows(tempArrow ? [...visibleArrows, { ...tempArrow, color: annotateColor }] : visibleArrows),
-    [visibleArrows, tempArrow, annotateColor]
+    () =>
+      toEditorNumberedArrows(
+        tempArrow ? [...visibleArrows, { ...tempArrow, color: annotateColor }] : visibleArrows,
+        engineState.pieces,
+        yourColor
+      ),
+    [visibleArrows, tempArrow, annotateColor, engineState.pieces, yourColor]
   );
   // Badges are numbered off the committed arrows only — while a second
   // same-color arrow is still being dragged (not yet released), its number
   // shouldn't appear yet, nor should it bump an existing lone arrow's badge
   // into existence prematurely.
-  const committedNumberedArrows = useMemo(() => toEditorNumberedArrows(visibleArrows), [visibleArrows]);
+  const committedNumberedArrows = useMemo(
+    () => toEditorNumberedArrows(visibleArrows, engineState.pieces, yourColor),
+    [visibleArrows, engineState.pieces, yourColor]
+  );
 
   const legalTargets = useMemo(
     () => (selected ? legalMovesFrom(engineState, selected) : []),
