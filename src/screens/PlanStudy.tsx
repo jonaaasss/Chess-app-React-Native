@@ -80,20 +80,25 @@ function buildColorGroups(arrows: Arrow[]): ColorGroup[] {
 // 2+ times) — keyed by from/to/color so a drawn arrow in Study can look up
 // the exact same number instead of just numbering by the order you find
 // them in, which would rarely match.
-// Arrows from an opponent piece have no number there and don't count.
+// Arrows from an opponent piece are numbered separately there, among themselves.
 function editorArrowNumbers(arrows: Arrow[], pieces: Partial<Record<string, PieceCode>> | undefined, yourColor: 'w' | 'b'): Map<string, number> {
+  const opp = arrows.filter((a) => isOpponentArrow(a.from, pieces, yourColor));
   const own = arrows.filter((a) => !isOpponentArrow(a.from, pieces, yourColor));
-  const countByColor: Partial<Record<ArrowColor, number>> = {};
-  for (const a of own) countByColor[a.color] = (countByColor[a.color] ?? 0) + 1;
-  const seenByColor: Partial<Record<ArrowColor, number>> = {};
   const numbers = new Map<string, number>();
-  for (const a of own) {
+  for (const group of [own, opp]) numberWithinColors(group, numbers);
+  return numbers;
+}
+
+function numberWithinColors(arrows: Arrow[], numbers: Map<string, number>): void {
+  const countByColor: Partial<Record<ArrowColor, number>> = {};
+  for (const a of arrows) countByColor[a.color] = (countByColor[a.color] ?? 0) + 1;
+  const seenByColor: Partial<Record<ArrowColor, number>> = {};
+  for (const a of arrows) {
     const seen = (seenByColor[a.color] = (seenByColor[a.color] ?? 0) + 1);
     if ((countByColor[a.color] ?? 0) > 1) {
       numbers.set(`${a.from}-${a.to}-${a.color}`, seen);
     }
   }
-  return numbers;
 }
 
 // Interactive Plan study: the position is shown bare (no arrows/circles —
@@ -495,8 +500,8 @@ export function PlanStudy({
           <BoardCoords size={BOARD_SIZE} flipped={flipped} styleSet={styleSet} />
           <View style={StyleSheet.absoluteFill} pointerEvents="none">
             <NumberedArrowsSvg arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} pieces={board.back.pieces} yourColor={yourColor} />
-            <NumberedArrowBadges arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} />
-            {finalAnnotations.circles.length > 0 && <CirclesSvg circles={finalAnnotations.circles} size={BOARD_SIZE} flipped={flipped} />}
+            <NumberedArrowBadges arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} pieces={board.back.pieces} yourColor={yourColor} />
+            {finalAnnotations.circles.length > 0 && <CirclesSvg circles={finalAnnotations.circles} size={BOARD_SIZE} flipped={flipped} pieces={board.back.pieces} yourColor={yourColor} />}
           </View>
         </View>
       </View>

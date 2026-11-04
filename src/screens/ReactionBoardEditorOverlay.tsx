@@ -120,20 +120,22 @@ function isStartingFace(face: BoardFace): boolean {
 // callouts, so the editor's own arrows look identical. Only same-colored
 // arrows are numbered against each other (2+ of a color) — a lone arrow of
 // its color needs no badge to disambiguate. Arrows from an opponent piece
-// (drawn dashed, see isOpponentArrow) get no number and don't count.
+// (drawn dashed and darker, see isOpponentArrow) are numbered separately,
+// among themselves, so they never shift your own arrows' numbers.
 function toEditorNumberedArrows(arrows: Arrow[], pieces: Partial<Record<string, PieceCode>>, yourColor: 'w' | 'b'): NumberedArrow[] {
-  const own = (a: Arrow) => !isOpponentArrow(a.from, pieces, yourColor);
-  const countByColor: Partial<Record<ArrowColor, number>> = {};
-  for (const a of arrows) if (own(a)) countByColor[a.color] = (countByColor[a.color] ?? 0) + 1;
-  const seenByColor: Partial<Record<ArrowColor, number>> = {};
+  const groupOf = (a: Arrow) => `${isOpponentArrow(a.from, pieces, yourColor) ? 'opp' : 'own'}-${a.color}`;
+  const countByGroup = new Map<string, number>();
+  for (const a of arrows) countByGroup.set(groupOf(a), (countByGroup.get(groupOf(a)) ?? 0) + 1);
+  const seenByGroup = new Map<string, number>();
   return arrows.map((a, i) => {
-    const seen = own(a) ? (seenByColor[a.color] = (seenByColor[a.color] ?? 0) + 1) : 0;
+    const seen = (seenByGroup.get(groupOf(a)) ?? 0) + 1;
+    seenByGroup.set(groupOf(a), seen);
     return {
       id: `${a.from}-${a.to}-${a.color}-${i}`,
       from: a.from,
       to: a.to,
       color: arrowColors[a.color],
-      number: own(a) && (countByColor[a.color] ?? 0) > 1 ? seen : undefined
+      number: (countByGroup.get(groupOf(a)) ?? 0) > 1 ? seen : undefined
     };
   });
 }
@@ -1674,8 +1676,8 @@ function ReactionBoardEditorOverlay({
             <NumberedArrowsSvg arrows={engineArrows} size={BOARD_SIZE} flipped={flipped} />
             <NumberedArrowsSvg arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} pieces={engineState.pieces} yourColor={yourColor} />
             <NumberedArrowsSvg arrows={branchArrows} size={BOARD_SIZE} flipped={flipped} />
-            <CirclesSvg circles={visibleCircles} size={BOARD_SIZE} flipped={flipped} />
-            <NumberedArrowBadges arrows={committedNumberedArrows} size={BOARD_SIZE} flipped={flipped} />
+            <CirclesSvg circles={visibleCircles} size={BOARD_SIZE} flipped={flipped} pieces={engineState.pieces} yourColor={yourColor} />
+            <NumberedArrowBadges arrows={committedNumberedArrows} size={BOARD_SIZE} flipped={flipped} pieces={engineState.pieces} yourColor={yourColor} />
             <NumberedArrowBadges arrows={branchArrows} size={BOARD_SIZE} flipped={flipped} />
             <PieceAnimationGhosts ghosts={ghosts} cell={CELL} />
           </View>

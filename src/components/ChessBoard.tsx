@@ -173,7 +173,21 @@ export function NumberedArrowsSvg({
 // The number badges for NumberedArrowsSvg, pushed to the side of each
 // arrow (alternating left/right) rather than sitting on its midpoint —
 // short or near-parallel arrows would otherwise stack their badges.
-export function NumberedArrowBadges({ arrows, size, flipped = false }: { arrows: NumberedArrow[]; size: number; flipped?: boolean }) {
+export function NumberedArrowBadges({
+  arrows,
+  size,
+  flipped = false,
+  pieces,
+  yourColor
+}: {
+  arrows: NumberedArrow[];
+  size: number;
+  flipped?: boolean;
+  // As in NumberedArrowsSvg: an opponent's (dashed) arrow gets a darker badge.
+  pieces?: Pieces;
+  yourColor?: 'w' | 'b';
+}) {
+  const yourSide = yourColor ?? (flipped ? 'b' : 'w');
   const cell = size / 8;
   function centerPx(square: string) {
     const raw = squareIndex(square);
@@ -199,7 +213,7 @@ export function NumberedArrowBadges({ arrows, size, flipped = false }: { arrows:
         const bx = px + nx * offset * side;
         const by = py + ny * offset * side;
         return (
-          <View key={a.id} style={[badgeStyles.badge, { left: bx - 9, top: by - 9, backgroundColor: a.color }]}>
+          <View key={a.id} style={[badgeStyles.badge, { left: bx - 9, top: by - 9, backgroundColor: isOpponentArrow(a.from, pieces, yourSide) ? darker(a.color) : a.color }]}>
             <Text style={badgeStyles.text}>{a.number}</Text>
           </View>
         );
@@ -220,7 +234,22 @@ const badgeStyles = StyleSheet.create({
   text: { color: '#fff', fontSize: 10, fontWeight: '700' }
 });
 
-export function CirclesSvg({ circles, size, flipped = false }: { circles: Circle[]; size: number; flipped?: boolean }) {
+// A circle on an opponent's piece is drawn in the darker shade too (solid,
+// unlike the dashed opponent arrows), so it reads as being about their piece.
+export function CirclesSvg({
+  circles,
+  size,
+  flipped = false,
+  pieces,
+  yourColor
+}: {
+  circles: Circle[];
+  size: number;
+  flipped?: boolean;
+  pieces?: Pieces;
+  yourColor?: 'w' | 'b';
+}) {
+  const side = yourColor ?? (flipped ? 'b' : 'w');
   return (
     <Svg width={size} height={size} viewBox="0 0 8 8" style={StyleSheet.absoluteFill}>
       {circles.map((c, i) => {
@@ -233,7 +262,7 @@ export function CirclesSvg({ circles, size, flipped = false }: { circles: Circle
             cx={file + 0.5}
             cy={rank + 0.5}
             r={0.42}
-            stroke={arrowColors[c.color]}
+            stroke={isOpponentArrow(c.square, pieces, side) ? darker(arrowColors[c.color]) : arrowColors[c.color]}
             strokeWidth={0.09}
             fill="none"
             opacity={0.9}
@@ -307,7 +336,7 @@ export function ChessBoardView({ board, size, flipped = false }: { board: BoardS
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
         <ArrowsSvg arrows={board.arrows} size={size} flipped={flipped} pieces={board.pieces} />
         {board.circles && board.circles.length > 0 && (
-          <CirclesSvg circles={board.circles} size={size} flipped={flipped} />
+          <CirclesSvg circles={board.circles} size={size} flipped={flipped} pieces={board.pieces} />
         )}
       </View>
     </View>
