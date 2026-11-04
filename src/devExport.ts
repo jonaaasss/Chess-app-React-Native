@@ -7,9 +7,20 @@ import { faceAnnotations, toFen } from './chess';
 import { getCards, getOpenings, getRepertoire } from './storage';
 import type { Arrow, Circle, MoveNode } from './types';
 
-function arrowsText(arrows: Arrow[]): string {
+// Each arrow with its notes (and, for Summary arrows, the linked card's name).
+function arrowsText(arrows: Arrow[], cardNames?: Map<string, string>): string {
   if (arrows.length === 0) return 'none';
-  return arrows.map((a) => `${a.from}->${a.to} (${a.color})`).join(', ');
+  return arrows
+    .map((a) => {
+      const n = a.notes;
+      const extra: string[] = [];
+      if (n?.linkCardId) extra.push(`link: ${cardNames?.get(n.linkCardId) ?? '(missing card)'}`);
+      if (n?.reason) extra.push(`reason: ${n.reason}`);
+      if (n?.next) extra.push(`next: ${n.next}`);
+      for (const r of n?.responses ?? []) extra.push(`${r.kind} ${r.trigger}: ${r.text}`);
+      return `${a.from}->${a.to} (${a.color})${extra.length ? ` {${extra.join(' | ')}}` : ''}`;
+    })
+    .join(', ');
 }
 
 function circlesText(circles: Circle[]): string {
@@ -63,38 +74,48 @@ export async function buildRepertoireExportText(repertoireId: string): Promise<s
   for (const opening of openings) {
     lines.push('', `=== Opening: ${opening.name} ===`);
     const cards = await getCards(opening.id);
+    if (opening.summary?.trim()) lines.push('Opening summary text:', opening.summary.trim());
+    const cardNames = new Map(cards.map((c) => [c.id, c.name || '(untitled)']));
     for (const card of cards) {
-      lines.push('', `--- Card: ${card.name || '(untitled)'} [${card.mode}] ---`);
-      const board = card.boards[0];
-      if (!board) {
+      lines.push('', `--- Card: ${card.name || '(untitled)'} [${card.mode}]${card.fastRevision ? ' [fast revision]' : ''} ---`);
+      if (card.overviewText?.trim()) lines.push(`Overview: ${card.overviewText.trim()}`);
+      const boards = [...card.boards].sort((a, b) => a.order - b.order);
+      if (boards.length === 0) {
         lines.push('(no board)');
         continue;
       }
-      if (card.mode === 'reactions') {
-        lines.push(`Front text: ${board.front.text || '(none)'}`);
-        lines.push(`Setup FEN (position before Play): ${toFen(board.pieces, board.turn, board.castling, board.enPassant)}`);
-        lines.push(`Recording: ${renderRecording(board.recording)}`);
-      } else if (card.mode === 'others') {
-        const front = faceAnnotations(board.front);
-        const back = faceAnnotations(board.back);
-        lines.push('Front:');
-        lines.push(`  Moves: ${sansForBoardMoves(board.front.moves).join(' ') || '(start position)'}`);
-        lines.push(`  Arrows: ${arrowsText(front.arrows)}`);
-        lines.push(`  Circles: ${circlesText(front.circles)}`);
-        lines.push(`  Text: ${board.front.text || '(none)'}`);
-        lines.push('Back:');
-        lines.push(`  Moves: ${sansForBoardMoves(board.back.moves).join(' ') || '(start position)'}`);
-        lines.push(`  Arrows: ${arrowsText(back.arrows)}`);
-        lines.push(`  Circles: ${circlesText(back.circles)}`);
-        lines.push(`  Text: ${board.back.text || '(none)'}`);
-      } else {
-        // plan — only `back` matters, `front` is unused (descriptionFace).
-        const back = faceAnnotations(board.back);
-        lines.push(`Moves: ${sansForBoardMoves(board.back.moves).join(' ') || '(start position)'}`);
-        lines.push(`Plan arrows: ${arrowsText(back.arrows)}`);
-        lines.push(`Plan circles: ${circlesText(back.circles)}`);
-        lines.push(`Text: ${board.back.text || '(none)'}`);
-      }
+      // Every board, not just the first — a card can hold up to 6.
+      boards.forEach((board, bi) => {
+        if (boards.length > 1) lines.push(`[Board ${bi + 1} of ${boards.length}]`);
+        if (card.mode === 'reactions') {
+          lines.push(`Front text: ${board.front.text || '(none)'}`);
+          lines.push(`Setup moves: ${sansForBoardMoves(board.setupMoves).join(' ') || '(none)'}`);
+          lines.push(`Setup FEN (position before Play): ${toFen(board.pieces, board.turn, board.castling, board.enPassant)}`);
+          lines.push(`Arrows at setup: ${arrowsText(board.arrows, cardNames)}`);
+          lines.push(`Circles at setup: ${circlesText(board.circles)}`);
+          lines.push(`Recording: ${renderRecording(board.recording)}`);
+        } else if (card.mode === 'others') {
+          const front = faceAnnotations(board.front);
+          const back = faceAnnotations(board.back);
+          lines.push('Front:');
+          lines.push(`  Moves: ${sansForBoardMoves(board.front.moves).join(' ') || '(start position)'}`);
+          lines.push(`  Arrows: ${arrowsText(front.arrows, cardNames)}`);
+          lines.push(`  Circles: ${circlesText(front.circles)}`);
+          lines.push(`  Text: ${board.front.text || '(none)'}`);
+          lines.push('Back:');
+          lines.push(`  Moves: ${sansForBoardMoves(board.back.moves).join(' ') || '(start position)'}`);
+          lines.push(`  Arrows: ${arrowsText(back.arrows, cardNames)}`);
+          lines.push(`  Circles: ${circlesText(back.circles)}`);
+          lines.push(`  Text: ${board.back.text || '(none)'}`);
+        } else {
+          // plan / summary — only `back` matters, `front` is unused (descriptionFace).
+          const back = faceAnnotations(board.back);
+          lines.push(`Moves: ${sansForBoardMoves(board.back.moves).join(' ') || '(start position)'}`);
+          lines.push(`Plan arrows: ${arrowsText(back.arrows, cardNames)}`);
+          lines.push(`Plan circles: ${circlesText(back.circles)}`);
+          lines.push(`Text: ${board.back.text || '(none)'}`);
+        }
+      });
     }
     if (cards.length === 0) lines.push('(no cards)');
   }
