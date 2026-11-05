@@ -17,8 +17,8 @@ import {
 } from '../chess';
 import { legalMovesFrom, makeMove, isPromotionMove, sansForBoardMoves, type GameState } from '../chessEngine';
 import type { Arrow, ArrowColor, BoardFace, BoardMove, CardMode, Circle, MoveNode, PieceCode, PromotionPiece, ReactionBoard } from '../types';
-import { arrowColors, BASE_ARROW_COLORS, boardStyles, colors, DARK_TINT, engineColors, radius, spacing, touchTarget, type, variationColor } from '../theme';
-import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, opponentTint, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
+import { ARROW_COLOR_NAMES, arrowColors, BASE_ARROW_COLORS, boardStyles, colors, DARK_TINT, engineColors, radius, spacing, touchTarget, type, variationColor } from '../theme';
+import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, parallelOffsets, opponentTint, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts } from '../components/PieceAnimation';
 import { alertDialog, confirmDialog, dismissSnackbar, showOverlay, showSnackbar, SnackbarLayer, useOverlayBack } from '../overlay';
 import { hasArrowNotes } from '../arrowNotes';
@@ -722,9 +722,15 @@ function ReactionBoardEditorOverlay({
     !onlyDrawing ||
     (activeThreat ? a.notes?.threat === activeThreat : effectiveArrowColor(a as Arrow, engineState.pieces, yourColor) === annotateColor);
   const shownArrows = visibleArrows.filter(isShownArrow);
-  const shownCircles = onlyDrawing
-    ? visibleCircles.filter((c) => !activeThreat && (isOpponentArrow(c.square, engineState.pieces, yourColor) ? opponentTint(c.color) : c.color) === annotateColor)
-    : visibleCircles;
+  const isShownCircle = (c: { square: string; color: ArrowColor }) =>
+    !onlyDrawing || (!activeThreat && (isOpponentArrow(c.square, engineState.pieces, yourColor) ? opponentTint(c.color) : c.color) === annotateColor);
+  const shownCircles = visibleCircles.filter(isShownCircle);
+  // "Clear arrows" clears what is on screen: with "Only drawing color" just that colour (or threat).
+  const clearLabel = !onlyDrawing
+    ? 'Clear arrows'
+    : activeThreat
+      ? `Clear threat ${activeThreat}`
+      : `Clear ${ARROW_COLOR_NAMES[annotateColor].toLowerCase()} arrows`;
   const shownNumbered = numberedArrows.filter((_, i) => i >= visibleArrows.length || isShownArrow(visibleArrows[i]));
   const shownCommitted = committedNumberedArrows.filter((_, i) => isShownArrow(visibleArrows[i]));
 
@@ -734,10 +740,11 @@ function ReactionBoardEditorOverlay({
   const badgeLayout = useMemo(() => {
     const numberIdx: number[] = [];
     const pts: Point[] = [];
+    const offsets = parallelOffsets(shownCommitted);
     shownCommitted.forEach((a, i) => {
       if (a.number === undefined && !a.label) return;
       numberIdx.push(i);
-      pts.push(numberBadgeCenter(a, i, BOARD_SIZE, flipped));
+      pts.push(numberBadgeCenter(a, i, BOARD_SIZE, flipped, offsets[i]));
     });
     const notes = isPlan && atHead ? shownArrows.map((a) => noteBadgeCenter(a.from, a.to, BOARD_SIZE, flipped)) : [];
     const placed = separateBadgeCenters([...pts, ...notes], NOTE_BADGE_MIN_DIST, BOARD_SIZE);
@@ -1166,10 +1173,15 @@ function ReactionBoardEditorOverlay({
   }
 
   function clearAnnotations() {
-    if (visibleArrows.length === 0 && visibleCircles.length === 0) return;
+    if (shownArrows.length === 0 && shownCircles.length === 0) return;
+    const keepArrow = (a: Arrow) => !isShownArrow(a);
+    const keepCircle = (c: Circle) => !isShownCircle(c);
 
     if (!isReactions) {
-      setBoard((prev) => ({ ...prev, [side]: withFaceAnnotationsAt(prev[side], historyIndex, [], []) }));
+      setBoard((prev) => {
+        const at = faceAnnotationsAt(prev[side], historyIndex);
+        return { ...prev, [side]: withFaceAnnotationsAt(prev[side], historyIndex, at.arrows.filter(keepArrow), at.circles.filter(keepCircle)) };
+      });
       return;
     }
 
@@ -1180,19 +1192,19 @@ function ReactionBoardEditorOverlay({
       // there's no action here that could reasonably surprise you by
       // silently doing nothing.
       if (!(phase === 'playing' && setupAtHead)) return;
-      setBoard((prev) => ({ ...prev, arrows: [], circles: [] }));
+      setBoard((prev) => ({ ...prev, arrows: prev.arrows.filter(keepArrow), circles: prev.circles.filter(keepCircle) }));
       return;
     }
     setBoard((prev) => ({
       ...prev,
       recording: mapNode(prev.recording, cursorId, (n) => {
-        const inheritedArrows = visibleArrows.filter((a) => !n.addedArrows.some((o) => sameArrow(o, a)));
-        const inheritedCircles = visibleCircles.filter((c) => !n.addedCircles.some((o) => sameCircle(o, c)));
+        const inheritedArrows = shownArrows.filter((a) => !n.addedArrows.some((o) => sameArrow(o, a)));
+        const inheritedCircles = shownCircles.filter((c) => !n.addedCircles.some((o) => sameCircle(o, c)));
         return {
           ...n,
-          addedArrows: [],
+          addedArrows: n.addedArrows.filter(keepArrow),
           removedArrows: [...n.removedArrows, ...inheritedArrows],
-          addedCircles: [],
+          addedCircles: n.addedCircles.filter(keepCircle),
           removedCircles: [...n.removedCircles, ...inheritedCircles]
         };
       })
@@ -1379,8 +1391,8 @@ function ReactionBoardEditorOverlay({
   }
 
   function handleClearArrows() {
-    if (visibleArrows.length === 0 && visibleCircles.length === 0) return;
-    clearUndo.current = { before: board, after: null, snackbar: null };
+    if (shownArrows.length === 0 && shownCircles.length === 0) return;
+    clearUndo.current = { before: board, after: null, snackbar: null, message: onlyDrawing ? `${clearLabel.replace('Clear', 'Cleared')}` : undefined };
     clearAnnotations();
   }
 
@@ -1874,7 +1886,7 @@ function ReactionBoardEditorOverlay({
               <Text style={[styles.clearBtnText, onlyDrawing && styles.onlyBtnTextActive]}>Only drawing color</Text>
             </Pressable>
             <Pressable onPress={handleClearArrows} style={styles.clearBtn}>
-              <Text style={styles.clearBtnText}>Clear arrows</Text>
+              <Text style={styles.clearBtnText}>{clearLabel}</Text>
             </Pressable>
           </View>
         </View>

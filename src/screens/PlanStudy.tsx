@@ -8,7 +8,7 @@ import { CloseCircleButton } from '../overlay';
 import { MoveText } from '../components/MoveText';
 import type { Arrow, ArrowColor, Card, PieceCode, ReactionBoard } from '../types';
 import { ARROW_COLOR_NAMES, ARROW_COLOR_ORDER, arrowColors, boardStyles, colors, radius, touchTarget } from '../theme';
-import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, opponentTint, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
+import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, opponentTint, parallelOffsets, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
 import { PIECE_ANIM_DURATION_MS } from '../components/PieceAnimation';
 import type { GuideTargets } from '../components/GuideCoach';
 import type { CoachEvent } from '../guideContent';
@@ -531,8 +531,9 @@ export function PlanStudy({
   // All badges of the board placed together — numbers / "!" and, on a
   // Summary, link and note badges — so overlapping ones move to free space.
   const numberPts: { idx: number; p: Point }[] = [];
+  const offsets = parallelOffsets(numberedArrows);
   numberedArrows.forEach((a, i) => {
-    if (a.number !== undefined || a.label) numberPts.push({ idx: i, p: numberBadgeCenter(a, i, BOARD_SIZE, flipped) });
+    if (a.number !== undefined || a.label) numberPts.push({ idx: i, p: numberBadgeCenter(a, i, BOARD_SIZE, flipped, offsets[i]) });
   });
   const linkNotePts: { idx: number; kind: 'link' | 'note'; p: Point }[] = [];
   if (isSummary) {

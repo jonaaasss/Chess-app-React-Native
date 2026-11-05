@@ -40,6 +40,44 @@ const OPPONENT_DASH = '0.28 0.18';
 const HALO = 'rgba(255,255,255,0.7)';
 const HALO_EXTRA = 0.1;
 
+// Arrows for the very same move (a Summary allows one per colour) are drawn
+// side by side instead of on top of each other: each gets a sideways offset
+// in board squares (0 for an arrow that is alone on its move).
+const PARALLEL_STEP = 0.24;
+export function parallelOffsets(arrows: { from: string; to: string }[]): number[] {
+  const count = new Map<string, number>();
+  for (const a of arrows) count.set(`${a.from}-${a.to}`, (count.get(`${a.from}-${a.to}`) ?? 0) + 1);
+  const seen = new Map<string, number>();
+  return arrows.map((a) => {
+    const key = `${a.from}-${a.to}`;
+    const n = count.get(key) ?? 1;
+    const k = seen.get(key) ?? 0;
+    seen.set(key, k + 1);
+    return (k - (n - 1) / 2) * PARALLEL_STEP;
+  });
+}
+
+// Start and end (in board squares) of an arrow, shortened at the head and
+// shifted sideways by `offset`.
+function arrowLine(from: string, to: string, flipped: boolean, offset: number) {
+  const fromRaw = squareIndex(from);
+  const toRaw = squareIndex(to);
+  let x1 = flipIndex(fromRaw.file, flipped) + 0.5;
+  let y1 = flipIndex(fromRaw.rank, flipped) + 0.5;
+  let x2 = flipIndex(toRaw.file, flipped) + 0.5;
+  let y2 = flipIndex(toRaw.rank, flipped) + 0.5;
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy) || 1;
+  const ox = (-dy / len) * offset;
+  const oy = (dx / len) * offset;
+  x1 += ox;
+  y1 += oy;
+  x2 += ox - (dx / len) * 0.35;
+  y2 += oy - (dy / len) * 0.35;
+  return { x1, y1, x2, y2 };
+}
+
 export function ArrowsSvg({
   arrows,
   size,
@@ -55,6 +93,7 @@ export function ArrowsSvg({
   yourColor?: 'w' | 'b';
 }) {
   const side = yourColor ?? (flipped ? 'b' : 'w');
+  const offsets = parallelOffsets(arrows);
   return (
     <Svg width={size} height={size} viewBox="0 0 8 8" style={StyleSheet.absoluteFill}>
       <Defs>
@@ -70,19 +109,7 @@ export function ArrowsSvg({
         ))}
       </Defs>
       {arrows.map((arrow, i) => {
-        const fromRaw = squareIndex(arrow.from);
-        const toRaw = squareIndex(arrow.to);
-        const from = { file: flipIndex(fromRaw.file, flipped), rank: flipIndex(fromRaw.rank, flipped) };
-        const to = { file: flipIndex(toRaw.file, flipped), rank: flipIndex(toRaw.rank, flipped) };
-        const x1 = from.file + 0.5;
-        const y1 = from.rank + 0.5;
-        let x2 = to.file + 0.5;
-        let y2 = to.rank + 0.5;
-        const dx = x2 - x1;
-        const dy = y2 - y1;
-        const len = Math.hypot(dx, dy) || 1;
-        x2 -= (dx / len) * 0.35;
-        y2 -= (dy / len) * 0.35;
+        const { x1, y1, x2, y2 } = arrowLine(arrow.from, arrow.to, flipped, offsets[i]);
         const opp = isOpponentArrow(arrow.from, pieces, side);
         const color = opp ? opponentTint(arrow.color) : arrow.color;
         return (
@@ -136,6 +163,7 @@ export function NumberedArrowsSvg({
   yourColor?: 'w' | 'b';
 }) {
   const side = yourColor ?? (flipped ? 'b' : 'w');
+  const offsets = parallelOffsets(arrows);
   return (
     <Svg width={size} height={size} viewBox="0 0 8 8" style={StyleSheet.absoluteFill}>
       <Defs>
@@ -145,20 +173,8 @@ export function NumberedArrowsSvg({
           </Marker>
         ))}
       </Defs>
-      {arrows.map((a) => {
-        const fromRaw = squareIndex(a.from);
-        const toRaw = squareIndex(a.to);
-        const from = { file: flipIndex(fromRaw.file, flipped), rank: flipIndex(fromRaw.rank, flipped) };
-        const to = { file: flipIndex(toRaw.file, flipped), rank: flipIndex(toRaw.rank, flipped) };
-        const x1 = from.file + 0.5;
-        const y1 = from.rank + 0.5;
-        let x2 = to.file + 0.5;
-        let y2 = to.rank + 0.5;
-        const dx = x2 - x1;
-        const dy = y2 - y1;
-        const len = Math.hypot(dx, dy) || 1;
-        x2 -= (dx / len) * 0.35;
-        y2 -= (dy / len) * 0.35;
+      {arrows.map((a, i) => {
+        const { x1, y1, x2, y2 } = arrowLine(a.from, a.to, flipped, offsets[i]);
         const opp = isOpponentArrow(a.from, pieces, side);
         const width = a.width ?? 0.16;
         return (
@@ -193,7 +209,7 @@ export interface Point {
 
 // Where an arrow's number badge sits by default: 70% along the arrow, pushed
 // to alternating sides so near-parallel arrows don't stack their badges.
-export function numberBadgeCenter(a: { from: string; to: string }, i: number, size: number, flipped: boolean): Point {
+export function numberBadgeCenter(a: { from: string; to: string }, i: number, size: number, flipped: boolean, offset = 0): Point {
   const cell = size / 8;
   const centerPx = (square: string) => {
     const raw = squareIndex(square);
@@ -204,8 +220,10 @@ export function numberBadgeCenter(a: { from: string; to: string }, i: number, si
   const dx = to.x - from.x;
   const dy = to.y - from.y;
   const len = Math.hypot(dx, dy) || 1;
-  const side = i % 2 === 0 ? 1 : -1;
-  return { x: from.x + dx * 0.7 + (-dy / len) * 10 * side, y: from.y + dy * 0.7 + (dx / len) * 10 * side };
+  // A side-by-side arrow (see parallelOffsets) keeps its badge on its own side.
+  const side = offset !== 0 ? Math.sign(offset) : i % 2 === 0 ? 1 : -1;
+  const push = 10 + Math.abs(offset) * cell;
+  return { x: from.x + dx * 0.7 + (-dy / len) * push * side, y: from.y + dy * 0.7 + (dx / len) * push * side };
 }
 
 // Moves badges that overlap apart until each has room (a few relaxation
