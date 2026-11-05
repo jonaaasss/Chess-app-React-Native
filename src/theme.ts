@@ -115,7 +115,7 @@ export const type = {
 // use the Android figure rather than iOS's 44pt.
 export const touchTarget = 48;
 
-export const arrowColors: Record<'green' | 'darkGreen' | 'orange' | 'darkOrange' | 'red' | 'darkRed' | 'blue' | 'darkBlue' | 'purple' | 'darkPurple', string> = {
+export const arrowColors: Record<'green' | 'darkGreen' | 'orange' | 'darkOrange' | 'red' | 'darkRed' | 'blue' | 'darkBlue' | 'purple' | 'darkPurple' | 'teal' | 'darkTeal', string> = {
   green: '#7CDB8A',
   darkGreen: '#2F9E44',
   orange: '#F5B266',
@@ -125,12 +125,14 @@ export const arrowColors: Record<'green' | 'darkGreen' | 'orange' | 'darkOrange'
   blue: '#7EB8F2',
   darkBlue: '#1C64C8',
   purple: '#C9A2F5',
-  darkPurple: '#7A3FC7'
+  darkPurple: '#7A3FC7',
+  teal: '#6EE0D2',
+  darkTeal: '#0E8A80'
 };
 
 // The base colours and, under each, its dark tint — the palette's two rows.
 export const BASE_ARROW_COLORS = ['green', 'orange', 'red', 'blue'] as const;
-export const DARK_TINT = { green: 'darkGreen', orange: 'darkOrange', red: 'darkRed', blue: 'darkBlue', purple: 'darkPurple' } as const;
+export const DARK_TINT = { green: 'darkGreen', orange: 'darkOrange', red: 'darkRed', blue: 'darkBlue', purple: 'darkPurple', teal: 'darkTeal' } as const;
 // The order Plan/Summary study asks for the colour groups: each colour, then its tint.
 export const ARROW_COLOR_ORDER = ['green', 'darkGreen', 'orange', 'darkOrange', 'red', 'darkRed', 'blue', 'darkBlue'] as const;
 // Readable names for the study status line ("Dark green arrows: 1 of 2").
@@ -144,7 +146,9 @@ export const ARROW_COLOR_NAMES: Record<keyof typeof arrowColors, string> = {
   blue: 'Blue',
   darkBlue: 'Dark blue',
   purple: 'Threat',
-  darkPurple: 'Threat'
+  darkPurple: 'Threat',
+  teal: 'My threat',
+  darkTeal: 'My threat'
 };
 
 // Distinct from arrowColors.blue (a paler, pastel shade meant for the

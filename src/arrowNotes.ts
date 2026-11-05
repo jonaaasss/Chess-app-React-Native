@@ -14,10 +14,12 @@ export function cleanArrowNotes(notes: ArrowNotes | undefined): ArrowNotes | und
   // Older data stored `threat: true`; that is threat A.
   const raw = notes.threat as unknown;
   const threat = raw === true ? 'A' : typeof raw === 'string' && /^[A-Z]$/.test(raw) ? raw : undefined;
-  if (!reason && !next && responses.length === 0 && !linkCardId && !threat) return undefined;
+  const myThreat = typeof notes.myThreat === 'string' && /^[A-Z]$/.test(notes.myThreat) ? notes.myThreat : undefined;
+  if (!reason && !next && responses.length === 0 && !linkCardId && !threat && !myThreat) return undefined;
   return {
     ...(linkCardId ? { linkCardId } : {}),
     ...(threat ? { threat } : {}),
+    ...(myThreat ? { myThreat } : {}),
     ...(reason ? { reason } : {}),
     ...(next ? { next } : {}),
     ...(responses.length > 0 ? { responses } : {})
@@ -27,5 +29,5 @@ export function cleanArrowNotes(notes: ArrowNotes | undefined): ArrowNotes | und
 // Something filled in on the notes screen (a threat letter alone is not a note).
 export function hasArrowNotes(arrow: Arrow): boolean {
   const n = cleanArrowNotes(arrow.notes);
-  return !!n && Object.keys(n).some((k) => k !== 'threat');
+  return !!n && Object.keys(n).some((k) => k !== 'threat' && k !== 'myThreat');
 }

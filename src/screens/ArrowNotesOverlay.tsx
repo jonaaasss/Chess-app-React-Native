@@ -25,12 +25,13 @@ function ArrowNotesOverlay({
   const [linkCardId, setLinkCardId] = useState<string | undefined>(initial?.linkCardId);
   // The threat letter is set by drawing with a threat in the board editor; kept as is here.
   const threat = initial?.threat;
+  const myThreat = initial?.myThreat;
   const [linkOpen, setLinkOpen] = useState(false);
   const [reason, setReason] = useState(initial?.reason ?? '');
   const [next, setNext] = useState(initial?.next ?? '');
   const [responses, setResponses] = useState<ArrowResponse[]>(initial?.responses ?? []);
 
-  const current = () => cleanArrowNotes({ linkCardId, threat, reason, next, responses });
+  const current = () => cleanArrowNotes({ linkCardId, threat, myThreat, reason, next, responses });
   const initialCleaned = JSON.stringify(cleanArrowNotes(initial) ?? null);
 
   async function handleCancel() {

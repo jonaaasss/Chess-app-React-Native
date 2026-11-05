@@ -5,7 +5,7 @@ export type GroupId = 'white' | 'black';
 // ARROW_COLOR_ORDER in theme.ts.
 // Purple is reserved for threats on a Summary (see ArrowNotes.threat) and is
 // not part of the study order.
-export type ArrowColor = 'green' | 'darkGreen' | 'orange' | 'darkOrange' | 'red' | 'darkRed' | 'blue' | 'darkBlue' | 'purple' | 'darkPurple';
+export type ArrowColor = 'green' | 'darkGreen' | 'orange' | 'darkOrange' | 'red' | 'darkRed' | 'blue' | 'darkBlue' | 'purple' | 'darkPurple' | 'teal' | 'darkTeal';
 
 export type PieceCode =
   | 'wK' | 'wQ' | 'wR' | 'wB' | 'wN' | 'wP'
@@ -35,6 +35,10 @@ export interface ArrowNotes {
   // time). The opponent's move shows "!A", your answers "A1", "A2". Threat
   // arrows are purple and studied one threat at a time, outside the order.
   threat?: string;
+  // Summary cards only: the letter of one of your own threats (teal). Your
+  // threatening move shows "★A", your follow-up "A1", "A2"; the opponent's
+  // replies in between appear by themselves in Study.
+  myThreat?: string;
   reason?: string; // why this move
   next?: string; // the follow-up plan
   responses?: ArrowResponse[];
@@ -50,6 +54,10 @@ export interface Arrow {
 export interface Circle {
   square: string;
   color: ArrowColor;
+  // Summary only: the circle belongs to an opponent threat / one of your
+  // threats (its letter) and is shown only while that threat is studied.
+  threat?: string;
+  myThreat?: string;
 }
 
 export interface CastlingRights {

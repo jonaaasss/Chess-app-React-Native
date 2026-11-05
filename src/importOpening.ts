@@ -33,7 +33,8 @@ const MAX_BOARDS_PER_CARD = 6;
 const MAX_CARDS = 60;
 const MAX_ARROWS_PER_BOARD = 40;
 const SQUARE = /^[a-h][1-8]$/;
-const COLORS: ArrowColor[] = ['green', 'darkGreen', 'orange', 'darkOrange', 'red', 'darkRed', 'blue', 'darkBlue', 'purple', 'darkPurple'];
+const COLORS: ArrowColor[] = ['green', 'darkGreen', 'orange', 'darkOrange', 'red', 'darkRed', 'blue', 'darkBlue', 'purple', 'darkPurple', 'teal', 'darkTeal'];
+const THREAT_COLORS: ArrowColor[] = ['purple', 'darkPurple', 'teal', 'darkTeal'];
 
 class ImportError extends Error {
   readonly isImportError = true;
@@ -203,7 +204,7 @@ function parseColor(v: unknown, where: string): ArrowColor {
   if (v === undefined) return 'green';
   if (v === 'yellow') return 'orange';
   if (typeof v === 'string' && (COLORS as string[]).includes(v)) return v as ArrowColor;
-  return fail(`${where}: colour must be green, orange, red or blue, or darkGreen, darkOrange, darkRed or darkBlue (purple / darkPurple only for threats).`);
+  return fail(`${where}: colour must be green, orange, red or blue, or darkGreen, darkOrange, darkRed or darkBlue (purple and teal only for threats).`);
 }
 
 function parseNotes(v: unknown, where: string): ArrowNotes | undefined {
@@ -242,26 +243,39 @@ function parseArrow(v: unknown, where: string, mode: 'plan' | 'reactions' | 'sum
     return fail(`${where} needs "from" and "to" squares like "e2" and "e4".`);
   }
   if (v.from === v.to) return fail(`${where}: "from" and "to" are the same square.`);
-  // Summary threats: "threat": "A" (a capital letter) — the arrow is purple and
-  // belongs to that threat (the opponent's move or one of your answers).
-  if (v.threat !== undefined) {
-    if (mode !== 'summary') return fail(`${where}: only Summary cards can have a "threat".`);
-    if (typeof v.threat !== 'string' || !/^[A-Z]$/.test(v.threat)) return fail(`${where}: "threat" must be one capital letter, like "A".`);
-  }
-  const threat = typeof v.threat === 'string' ? v.threat : undefined;
-  const color = threat ? 'purple' : parseColor(v.color, where);
-  if (!threat && (color === 'purple' || color === 'darkPurple')) return fail(`${where}: purple is only for threats (add "threat": "A").`);
+  // Summary threats: "threat": "A" (an opponent threat, purple) or
+  // "myThreat": "A" (one of yours, teal), a capital letter.
+  const tag = parseThreatTag(v, where, mode);
+  const color = tag ? tag.color : parseColor(v.color, where);
+  if (!tag && THREAT_COLORS.includes(color)) return fail(`${where}: purple and teal are only for threats (add "threat": "A" or "myThreat": "A").`);
   const parsed = parseNotes(v.notes, where);
-  const notes = threat ? { ...parsed, threat } : parsed;
+  const notes = tag ? { ...parsed, ...tag.fields } : parsed;
   const arrow: ParsedArrow = { from: v.from, to: v.to, color, ...(notes ? { notes } : {}) };
   if (typeof v.link === 'string') arrow[LINK_NAME] = v.link.trim();
   return arrow;
 }
 
-function parseCircle(v: unknown, where: string): Circle {
+function parseThreatTag(
+  v: Record<string, unknown>,
+  where: string,
+  mode: 'plan' | 'reactions' | 'summary'
+): { color: ArrowColor; fields: { threat?: string; myThreat?: string } } | undefined {
+  if (v.threat === undefined && v.myThreat === undefined) return undefined;
+  if (mode !== 'summary') return fail(`${where}: only Summary cards can have a "threat" or "myThreat".`);
+  if (v.threat !== undefined && v.myThreat !== undefined) return fail(`${where}: use "threat" or "myThreat", not both.`);
+  const letter = v.threat ?? v.myThreat;
+  if (typeof letter !== 'string' || !/^[A-Z]$/.test(letter)) return fail(`${where}: a threat must be one capital letter, like "A".`);
+  return v.threat !== undefined ? { color: 'purple', fields: { threat: letter } } : { color: 'teal', fields: { myThreat: letter } };
+}
+
+function parseCircle(v: unknown, where: string, mode: 'plan' | 'reactions' | 'summary'): Circle {
   if (!isRecord(v)) return fail(`${where} must be an object.`);
   if (typeof v.square !== 'string' || !SQUARE.test(v.square)) return fail(`${where} needs a "square" like "e5".`);
-  return { square: v.square, color: parseColor(v.color, where) };
+  const tag = parseThreatTag(v, where, mode);
+  if (tag) return { square: v.square, color: tag.color, ...tag.fields };
+  const color = parseColor(v.color, where);
+  if (THREAT_COLORS.includes(color)) return fail(`${where}: purple and teal are only for threats.`);
+  return { square: v.square, color };
 }
 
 function parseBoard(v: unknown, where: string, mode: 'plan' | 'reactions' | 'summary'): ParsedBoard {
@@ -276,7 +290,7 @@ function parseBoard(v: unknown, where: string, mode: 'plan' | 'reactions' | 'sum
   const arrows = arrowsRaw.map((a: unknown, i: number) => parseArrow(a, `${where}, arrow ${i + 1}`, mode));
   const circlesRaw = v.circles === undefined ? [] : v.circles;
   if (!Array.isArray(circlesRaw)) return fail(`${where}: "circles" must be a list.`);
-  const circles = circlesRaw.map((c: unknown, i: number) => parseCircle(c, `${where}, circle ${i + 1}`));
+  const circles = circlesRaw.map((c: unknown, i: number) => parseCircle(c, `${where}, circle ${i + 1}`, mode));
   let line: LineMove[] = [];
   if (mode === 'reactions') {
     if (typeof v.line !== 'string') return fail(`${where}: a Reactions board needs a "line" like "d4 exd4 cxd4".`);

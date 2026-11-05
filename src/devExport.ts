@@ -15,6 +15,7 @@ function arrowsText(arrows: Arrow[], cardNames?: Map<string, string>): string {
       const n = a.notes;
       const extra: string[] = [];
       if (n?.threat) extra.push(`threat ${n.threat}`);
+      if (n?.myThreat) extra.push(`my threat ${n.myThreat}`);
       if (n?.linkCardId) extra.push(`link: ${cardNames?.get(n.linkCardId) ?? '(missing card)'}`);
       if (n?.reason) extra.push(`reason: ${n.reason}`);
       if (n?.next) extra.push(`next: ${n.next}`);
@@ -26,7 +27,7 @@ function arrowsText(arrows: Arrow[], cardNames?: Map<string, string>): string {
 
 function circlesText(circles: Circle[]): string {
   if (circles.length === 0) return 'none';
-  return circles.map((c) => `${c.square} (${c.color})`).join(', ');
+  return circles.map((c) => `${c.square} (${c.color})${c.threat ? ` {threat ${c.threat}}` : c.myThreat ? ` {my threat ${c.myThreat}}` : ''}`).join(', ');
 }
 
 // Plain-text mirror of the Notation component's rendering in

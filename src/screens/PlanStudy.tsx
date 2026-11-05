@@ -3,10 +3,11 @@ import { View, Text, Pressable, StyleSheet, PanResponder, Switch, type PanRespon
 import Svg, { Path } from 'react-native-svg';
 import { allSquares, faceAnnotations, flipIndex, squareFromIndex } from '../chess';
 import { hasArrowNotes } from '../arrowNotes';
+import { sameThreat, THREAT_COLOR, threatOfArrow, threatOfCircle, type ThreatKind } from '../threats';
 import { ArrowNoteBody } from '../components/ArrowNoteBody';
 import { CloseCircleButton } from '../overlay';
 import { MoveText } from '../components/MoveText';
-import type { Arrow, ArrowColor, Card, PieceCode, ReactionBoard } from '../types';
+import type { Arrow, ArrowColor, Card, Circle, PieceCode, ReactionBoard } from '../types';
 import { ARROW_COLOR_NAMES, ARROW_COLOR_ORDER, arrowColors, BASE_ARROW_COLORS, boardStyles, DARK_TINT, colors, radius, touchTarget } from '../theme';
 import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, opponentTint, parallelOffsets, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
 import { PIECE_ANIM_DURATION_MS } from '../components/PieceAnimation';
@@ -78,6 +79,17 @@ interface ShownNote {
 
 const keyOf = (a: Arrow) => `${a.from}-${a.to}-${a.color}`;
 
+// A Summary threat as studied: its arrows in order, the opponent's ones
+// (`auto`) appearing by themselves, plus the circles that belong to it.
+interface StudyThreat {
+  kind: ThreatKind;
+  letter: string;
+  key: string;
+  steps: { arrow: Arrow; auto: boolean }[];
+  circles: Circle[];
+  title: string;
+}
+
 // A colour and its dark tint form one family (light green + dark green, …).
 function familyOf(c: ArrowColor): ArrowColor {
   return BASE_ARROW_COLORS.find((b) => b === c || DARK_TINT[b] === c) ?? c;
@@ -114,7 +126,7 @@ function buildColorGroups(arrows: Arrow[], pieces: Partial<Record<string, PieceC
 // them in, which would rarely match. Opponent arrows are numbered among
 // themselves; threat arrows (Summary) get "!" and no number.
 function editorArrowNumbers(arrows: Arrow[], pieces: Partial<Record<string, PieceCode>> | undefined, yourColor: 'w' | 'b'): Map<string, number> {
-  const numbered = arrows.filter((a) => !a.notes?.threat);
+  const numbered = arrows.filter((a) => !threatOfArrow(a));
   const opp = numbered.filter((a) => isOpponentArrow(a.from, pieces, yourColor));
   const own = numbered.filter((a) => !isOpponentArrow(a.from, pieces, yourColor));
   const numbers = new Map<string, number>();
@@ -186,7 +198,7 @@ export function PlanStudy({
   // The last colour group whose opponent arrows are on the board already.
   const [autoShownGroup, setAutoShownGroup] = useState(-1);
   // Summary: the threat being studied (its letter) and your answers found so far.
-  const [threatMode, setThreatMode] = useState<string | null>(null);
+  const [threatMode, setThreatMode] = useState<string | null>(null); // "opp:A" / "mine:A"
   const [threatFound, setThreatFound] = useState(0);
 
   // Plan: an arrow's notes pop up the moment it is found and must be
@@ -228,18 +240,40 @@ export function PlanStudy({
     () => editorArrowNumbers(finalAnnotations.arrows, board?.back.pieces, yourColor),
     [finalAnnotations, board, yourColor]
   );
-  // Threats (Summary): purple arrows tagged with a letter, outside the colour
-  // order. Per letter: the opponent's move(s) and your answers in order.
+  // Threats (Summary), outside the colour order: the opponent's (purple: their
+  // move first, then your answers) and yours (teal: in the order drawn — your
+  // threatening move, the opponent's reply appearing by itself, your follow-up).
+  // Each is a list of steps; `threatFound` is how many are on the board.
   const threats = useMemo(() => {
-    const letters = [...new Set(finalAnnotations.arrows.map((a) => a.notes?.threat).filter((t): t is string => !!t))].sort();
-    return letters.map((letter) => {
-      const all = finalAnnotations.arrows.filter((a) => a.notes?.threat === letter);
-      const opp = all.filter((a) => isOpponentArrow(a.from, board?.back.pieces, yourColor));
-      const own = all.filter((a) => !isOpponentArrow(a.from, board?.back.pieces, yourColor));
-      return { letter, opp, own, title: opp[0] ? sanLike(opp[0], board?.back.pieces) : '' };
-    });
+    const pieces = board?.back.pieces;
+    const isOpp = (a: Arrow) => isOpponentArrow(a.from, pieces, yourColor);
+    const out: StudyThreat[] = [];
+    for (const kind of ['opp', 'mine'] as const) {
+      const letters = new Set<string>();
+      for (const a of finalAnnotations.arrows) {
+        const t = threatOfArrow(a);
+        if (t?.kind === kind) letters.add(t.letter);
+      }
+      for (const letter of [...letters].sort()) {
+        const ref = { kind, letter };
+        const all = finalAnnotations.arrows.filter((a) => sameThreat(threatOfArrow(a), ref));
+        const opp = all.filter(isOpp);
+        const own = all.filter((a) => !isOpp(a));
+        const ordered = kind === 'opp' ? [...opp, ...own] : all;
+        const lead = kind === 'opp' ? opp[0] : own[0];
+        out.push({
+          kind,
+          letter,
+          key: `${kind}:${letter}`,
+          steps: ordered.map((arrow) => ({ arrow, auto: isOpp(arrow) })),
+          circles: finalAnnotations.circles.filter((c) => sameThreat(threatOfCircle(c), ref)),
+          title: `${kind === 'opp' ? '!' : '★'}${letter}${lead ? ` ${sanLike(lead, pieces)}` : ''}`
+        });
+      }
+    }
+    return out;
   }, [finalAnnotations, board, yourColor]);
-  const activeThreat = threats.find((t) => t.letter === threatMode);
+  const activeThreat = threats.find((t) => t.key === threatMode);
   const noArrows = colorGroups.length === 0 && threats.length === 0;
   // Every own arrow in study order — what preview and »/› step through.
   const allOwn = useMemo(() => colorGroups.flatMap((g) => g.own), [colorGroups]);
@@ -372,9 +406,9 @@ export function PlanStudy({
   function handleDrawnArrow(from: string, to: string) {
     if (activeThreat) {
       if (wrongArrow) return;
-      const next = activeThreat.own[threatFound];
-      if (!next) return;
-      if (next.from === from && next.to === to) setThreatFound((n) => n + 1);
+      const next = activeThreat.steps[threatFound];
+      if (!next || next.auto) return;
+      if (next.arrow.from === from && next.arrow.to === to) setThreatFound((n) => n + 1);
       else {
         setWrongArrow({ from, to });
         setTimeout(() => setWrongArrow(null), WRONG_ARROW_SHOW_MS);
@@ -453,13 +487,36 @@ export function PlanStudy({
     setAutoShownGroup((g) => Math.min(g, targetIdx - 1));
   }
 
-  function toggleThreat(letter: string) {
-    setThreatMode((cur) => (cur === letter ? null : letter));
+  function toggleThreat(key: string) {
+    setThreatMode((cur) => (cur === key ? null : key));
     setThreatFound(0);
     setWrongArrow(null);
     setSummaryNote(null);
   }
-  const threatDone = !!activeThreat && threatFound >= activeThreat.own.length;
+  const threatSteps = activeThreat?.steps ?? [];
+  const threatDone = !!activeThreat && threatFound >= threatSteps.length;
+  const threatOwnTotal = threatSteps.filter((st) => !st.auto).length;
+  const threatOwnShown = threatSteps.slice(0, threatFound).filter((st) => !st.auto).length;
+  const threatAutoPending = !!activeThreat && !threatDone && threatSteps[threatFound].auto;
+  // The opponent's moves in a threat appear by themselves (at once when the
+  // threat opens, after a beat when they answer your move).
+  useEffect(() => {
+    if (!threatAutoPending) return;
+    const t = setTimeout(() => setThreatFound((n) => n + 1), threatFound === 0 ? 0 : OPPONENT_ARROW_DELAY_MS);
+    return () => clearTimeout(t);
+  }, [threatAutoPending, threatFound]);
+  // ‹ takes back your last move in the threat (and the opponent's replies after it).
+  function threatBack() {
+    let k = threatFound - 1;
+    while (k >= 0 && threatSteps[k].auto) k--;
+    setThreatFound(Math.max(0, k));
+  }
+  // › shows your next move in the threat (with the opponent's moves before it).
+  function threatNext() {
+    let j = threatFound;
+    while (j < threatSteps.length && threatSteps[j].auto) j++;
+    setThreatFound(Math.min(threatSteps.length, j + 1));
+  }
 
   const panResponderRef = useRef<PanResponderInstance | null>(null);
   const handleDrawnArrowRef = useRef(handleDrawnArrow);
@@ -516,7 +573,7 @@ export function PlanStudy({
   const displayGroup = colorGroups[displayIdx];
   const visibleFamily = !showAll && !boardDone && displayGroup ? familyOf(displayGroup.color) : null;
   const visibleArrows = activeThreat
-    ? [...activeThreat.opp, ...activeThreat.own.slice(0, threatFound)]
+    ? threatSteps.slice(0, threatFound).map((st) => st.arrow)
     : visibleFamily
       ? drawnArrows.filter((a) => familyOf(a.color) === visibleFamily)
       : drawnArrows;
@@ -524,28 +581,34 @@ export function PlanStudy({
   const reachedOrder = boardDone ? COLOR_CYCLE.length : COLOR_CYCLE.indexOf(activeGroup?.color ?? 'green');
   const circleColor = (c: { square: string; color: ArrowColor }) =>
     board && isOpponentArrow(c.square, board.back.pieces, yourColor) ? opponentTint(c.color) : c.color;
-  const visibleCircles = activeThreat ? [] : finalAnnotations.circles.filter((c) =>
+  const visibleCircles = activeThreat ? activeThreat.circles : finalAnnotations.circles.filter((c) => !threatOfCircle(c)).filter((c) =>
     visibleFamily ? familyOf(circleColor(c)) === visibleFamily && COLOR_CYCLE.indexOf(circleColor(c)) <= reachedOrder : COLOR_CYCLE.indexOf(circleColor(c)) <= reachedOrder
   );
 
-  // "!A" on the opponent's move, "A1", "A2" on your answers.
-  function threatLabel(a: Arrow): string {
-    const t = threats.find((x) => x.letter === a.notes?.threat);
-    if (!t) return '!';
-    const i = t.own.findIndex((o) => keyOf(o) === keyOf(a));
-    return i === -1 ? `!${t.letter}` : `${t.letter}${i + 1}`;
+  // Opponent threat: "!A" on their move, "A1", "A2" on your answers.
+  // Your threat: "★A" on your threatening move, "A1", "A2" on your follow-up,
+  // no badge on the opponent's replies.
+  function threatLabel(a: Arrow): string | undefined {
+    const ref = threatOfArrow(a);
+    const t = ref && threats.find((x) => x.kind === ref.kind && x.letter === ref.letter);
+    if (!t) return undefined;
+    const own = t.steps.filter((st) => !st.auto).map((st) => keyOf(st.arrow));
+    const i = own.indexOf(keyOf(a));
+    if (i === -1) return t.kind === 'opp' ? `!${t.letter}` : undefined;
+    if (t.kind === 'mine') return i === 0 ? `★${t.letter}` : `${t.letter}${i}`;
+    return `${t.letter}${i + 1}`;
   }
   const numberedArrows: NumberedArrow[] = visibleArrows.map((a, i) => ({
     id: `${keyOf(a)}-${i}`,
     from: a.from,
     to: a.to,
     color: arrowColors[a.color],
-    ...(a.notes?.threat ? { label: threatLabel(a) } : { number: arrowNumbers.get(keyOf(a)) })
+    ...(threatOfArrow(a) ? { label: threatLabel(a) } : { number: arrowNumbers.get(keyOf(a)) })
   }));
   if (wrongArrow) {
     numberedArrows.push({ id: 'wrong', from: wrongArrow.from, to: wrongArrow.to, color: colors.danger });
   } else if (tempArrow) {
-    const tempColor = activeThreat ? arrowColors.purple : activeGroup ? arrowColors[activeGroup.color] : colors.textDim;
+    const tempColor = activeThreat ? arrowColors[THREAT_COLOR[activeThreat.kind]] : activeGroup ? arrowColors[activeGroup.color] : colors.textDim;
     numberedArrows.push({ id: 'preview', from: tempArrow.from, to: tempArrow.to, color: tempColor });
   }
 
@@ -554,13 +617,13 @@ export function PlanStudy({
   // Worked out once over every arrow of the board (or of the threat being
   // studied), so a badge never jumps when other arrows appear.
   const badgeLayout = useMemo(() => {
-    const all = activeThreat ? [...activeThreat.opp, ...activeThreat.own] : finalAnnotations.arrows.filter((a) => !a.notes?.threat);
+    const all = activeThreat ? activeThreat.steps.map((st) => st.arrow) : finalAnnotations.arrows.filter((a) => !threatOfArrow(a));
     const offsets = parallelOffsets(all);
     const kinds: { key: string; kind: 'number' | 'link' | 'note' }[] = [];
     const pts: Point[] = [];
     all.forEach((a, i) => {
       const k = keyOf(a);
-      if (a.notes?.threat || arrowNumbers.get(k) !== undefined) {
+      if (threatOfArrow(a) ? threatLabel(a) !== undefined : arrowNumbers.get(k) !== undefined) {
         kinds.push({ key: k, kind: 'number' });
         pts.push(numberBadgeCenter(a, i, BOARD_SIZE, flipped, offsets[i]));
       }
@@ -579,6 +642,7 @@ export function PlanStudy({
     const at = new Map<string, Point>();
     kinds.forEach((x, i) => at.set(`${x.kind}:${x.key}`, placed[i]));
     return at;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeThreat, finalAnnotations, arrowNumbers, isSummary, flipped]);
   const numberCenters: (Point | undefined)[] = visibleArrows.map((a) => badgeLayout.get(`number:${keyOf(a)}`));
   const linkNotePositions: { link?: Point; note?: Point }[] = visibleArrows.map((a) => ({
@@ -595,12 +659,15 @@ export function PlanStudy({
   const groupTotal = activeGroup ? activeGroup.own.length : 0;
   const groupDone = groupTotal - remaining.length;
   const colorName = activeGroup ? ARROW_COLOR_NAMES[activeGroup.color] : '';
+  const threatName = activeThreat ? `${activeThreat.kind === 'mine' ? 'My threat' : 'Threat'} ${activeThreat.letter}` : '';
   const statusText = activeThreat
     ? wrongArrow
       ? 'Wrong arrow — try again'
       : threatDone
-        ? `Threat ${activeThreat.letter} complete — tap it again to go back`
-        : `Threat ${activeThreat.letter}: your answer ${threatFound + 1} of ${activeThreat.own.length}`
+        ? `${threatName} complete — tap it again to go back`
+        : threatAutoPending
+          ? `${threatName}: the opponent plays…`
+          : `${threatName}: your ${activeThreat.kind === 'mine' ? 'move' : 'answer'} ${threatOwnShown + 1} of ${threatOwnTotal}`
     : boardDone
     ? 'Board complete!'
     : wrongArrow
@@ -610,7 +677,7 @@ export function PlanStudy({
         : activeGroup
         ? `${colorName} arrows: ${groupDone} of ${groupTotal}`
         : "Draw the plan's arrows";
-  const statusColor = activeThreat ? (wrongArrow ? colors.danger : arrowColors.purple) : boardDone ? colors.primary : wrongArrow ? colors.danger : activeGroup ? arrowColors[activeGroup.color] : colors.textDim;
+  const statusColor = activeThreat ? (wrongArrow ? colors.danger : arrowColors[THREAT_COLOR[activeThreat.kind]]) : boardDone ? colors.primary : wrongArrow ? colors.danger : activeGroup ? arrowColors[activeGroup.color] : colors.textDim;
 
   return (
     <View ref={containerRef} collapsable={false} style={{ alignItems: 'center', gap: 10 }}>
@@ -678,23 +745,36 @@ export function PlanStudy({
         )}
       </View>
 
-      {isSummary && !preview && threats.length > 0 && (
-        // Threats sit outside the colour order: tap one to study its answers, tap again to go back.
-        <View style={styles.threatRow}>
-          {threats.map((t) => (
-            <Pressable
-              key={t.letter}
-              onPress={() => toggleThreat(t.letter)}
-              style={[styles.threatChip, threatMode === t.letter && styles.threatChipActive]}
-              accessibilityLabel={`Study threat ${t.letter}`}
-            >
-              <Text style={[styles.threatChipText, threatMode === t.letter && styles.threatChipTextActive]}>
-                {`!${t.letter}${t.title ? ` ${t.title}` : ''}`}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      )}
+      {isSummary &&
+        !preview &&
+        // Threats sit outside the colour order, in two rows (the opponent's and
+        // yours): tap one to study it, tap again to go back.
+        (['opp', 'mine'] as const).map((kind) => {
+          const list = threats.filter((t) => t.kind === kind);
+          if (list.length === 0) return null;
+          const accent = arrowColors[THREAT_COLOR[kind]];
+          const dark = arrowColors[kind === 'opp' ? 'darkPurple' : 'darkTeal'];
+          return (
+            <View key={kind} style={styles.threatGroup}>
+              <Text style={[styles.threatGroupTitle, { color: accent }]}>{kind === 'opp' ? 'Opponent threats' : 'My threats'}</Text>
+              <View style={styles.threatRow}>
+                {list.map((t) => {
+                  const on = threatMode === t.key;
+                  return (
+                    <Pressable
+                      key={t.key}
+                      onPress={() => toggleThreat(t.key)}
+                      style={[styles.threatChip, { borderColor: dark }, on && { backgroundColor: dark }]}
+                      accessibilityLabel={`Study ${kind === 'opp' ? 'opponent threat' : 'my threat'} ${t.letter}`}
+                    >
+                      <Text style={[styles.threatChipText, { color: accent }, on && styles.threatChipTextActive]}>{t.title}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          );
+        })}
 
       {!noArrows && !preview && !activeThreat && (
         <View style={styles.onlyRow}>
@@ -749,18 +829,18 @@ export function PlanStudy({
       )}
 
       {!preview && activeThreat && (
-        // ‹ › one answer back / forward, « » all of this threat's answers.
+        // ‹ › one of your moves back / forward, « » all of this threat.
         <View style={styles.navRow}>
-          <Pressable onPress={() => setThreatFound(0)} disabled={threatFound === 0} style={[styles.navBtn, threatFound === 0 && styles.navBtnDisabled]} accessibilityLabel="Take back all answers">
+          <Pressable onPress={() => setThreatFound(0)} disabled={threatOwnShown === 0} style={[styles.navBtn, threatOwnShown === 0 && styles.navBtnDisabled]} accessibilityLabel="Take back all moves">
             <Text style={styles.navBtnText}>«</Text>
           </Pressable>
-          <Pressable onPress={() => setThreatFound((n) => Math.max(0, n - 1))} disabled={threatFound === 0} style={[styles.navBtn, threatFound === 0 && styles.navBtnDisabled]} accessibilityLabel="Take back one answer">
+          <Pressable onPress={threatBack} disabled={threatOwnShown === 0} style={[styles.navBtn, threatOwnShown === 0 && styles.navBtnDisabled]} accessibilityLabel="Take back one move">
             <Text style={styles.navBtnText}>‹</Text>
           </Pressable>
-          <Pressable onPress={() => setThreatFound((n) => n + 1)} disabled={threatDone} style={[styles.navBtn, threatDone && styles.navBtnDisabled]} accessibilityLabel="Show the next answer">
+          <Pressable onPress={threatNext} disabled={threatDone} style={[styles.navBtn, threatDone && styles.navBtnDisabled]} accessibilityLabel="Show the next move">
             <Text style={styles.navBtnText}>›</Text>
           </Pressable>
-          <Pressable onPress={() => setThreatFound(activeThreat.own.length)} disabled={threatDone} style={[styles.navBtn, threatDone && styles.navBtnDisabled]} accessibilityLabel="Show all answers">
+          <Pressable onPress={() => setThreatFound(threatSteps.length)} disabled={threatDone} style={[styles.navBtn, threatDone && styles.navBtnDisabled]} accessibilityLabel="Show all moves">
             <Text style={styles.navBtnText}>»</Text>
           </Pressable>
         </View>
@@ -861,6 +941,8 @@ const styles = StyleSheet.create({
   continueBtn: { marginTop: 4, minHeight: touchTarget, justifyContent: 'center', paddingHorizontal: 20, borderRadius: radius.pill, backgroundColor: colors.primary },
   continueText: { color: colors.onPrimary, fontSize: 14, fontWeight: '700' },
   onlyRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  threatGroup: { alignItems: 'center', gap: 6 },
+  threatGroupTitle: { fontSize: 13, fontWeight: '700', letterSpacing: 0.5 },
   threatRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8, paddingHorizontal: 16 },
   threatChip: { minHeight: 44, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center', borderRadius: 999, borderWidth: 1, borderColor: arrowColors.darkPurple },
   threatChipActive: { backgroundColor: arrowColors.darkPurple },

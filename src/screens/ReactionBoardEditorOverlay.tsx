@@ -22,6 +22,7 @@ import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBa
 import { usePieceAnimation, PieceAnimationGhosts } from '../components/PieceAnimation';
 import { alertDialog, confirmDialog, dismissSnackbar, showOverlay, showSnackbar, SnackbarLayer, useOverlayBack } from '../overlay';
 import { hasArrowNotes } from '../arrowNotes';
+import { sameThreat, THREAT_COLOR, threatFields, threatOfArrow, threatOfCircle, type ThreatKind, type ThreatRef } from '../threats';
 import { openArrowNotesDialog } from './ArrowNotesOverlay';
 import { getBoardEditorTipHidden, setBoardEditorTipHidden, uid } from '../storage';
 import { ModeTip } from '../components/ModeTip';
@@ -127,19 +128,25 @@ function toEditorNumberedArrows(arrows: Arrow[], pieces: Partial<Record<string, 
   // Threat arrows (Summary only) show their letter instead: "!A" on the
   // opponent's move, "A1", "A2" on your answers, and stay out of the numbering.
   const groupOf = (a: Arrow) => `${isOpponentArrow(a.from, pieces, yourColor) ? 'opp' : 'own'}-${a.color}`;
-  const numbered = arrows.filter((a) => !a.notes?.threat);
+  // Your own threats: "★A" on your threatening move, "A1", "A2" on the
+  // follow-up, no badge on the opponent's replies.
+  const numbered = arrows.filter((a) => !threatOfArrow(a));
   const threatSeen = new Map<string, number>();
   const countByGroup = new Map<string, number>();
   for (const a of numbered) countByGroup.set(groupOf(a), (countByGroup.get(groupOf(a)) ?? 0) + 1);
   const seenByGroup = new Map<string, number>();
   return arrows.map((a, i) => {
     const base = { id: `${a.from}-${a.to}-${a.color}-${i}`, from: a.from, to: a.to, color: arrowColors[effectiveArrowColor(a, pieces, yourColor)] };
-    const letter = a.notes?.threat;
-    if (letter) {
-      if (isOpponentArrow(a.from, pieces, yourColor)) return { ...base, label: `!${letter}` };
-      const n = (threatSeen.get(letter) ?? 0) + 1;
-      threatSeen.set(letter, n);
-      return { ...base, label: `${letter}${n}` };
+    const t = threatOfArrow(a);
+    if (t) {
+      const opp = isOpponentArrow(a.from, pieces, yourColor);
+      if (t.kind === 'opp' && opp) return { ...base, label: `!${t.letter}` };
+      if (t.kind === 'mine' && opp) return base;
+      const key = `${t.kind}:${t.letter}`;
+      const n = (threatSeen.get(key) ?? 0) + 1;
+      threatSeen.set(key, n);
+      if (t.kind === 'mine') return { ...base, label: n === 1 ? `★${t.letter}` : `${t.letter}${n - 1}` };
+      return { ...base, label: `${t.letter}${n}` };
     }
     const seen = (seenByGroup.get(groupOf(a)) ?? 0) + 1;
     seenByGroup.set(groupOf(a), seen);
@@ -523,7 +530,7 @@ function ReactionBoardEditorOverlay({
   const [selected, setSelected] = useState<string | null>(null);
   const [tempArrow, setTempArrow] = useState<{ from: string; to: string } | null>(null);
   // Summary: the threat you're drawing for (its letter), or null for normal colours.
-  const [activeThreat, setActiveThreat] = useState<string | null>(null);
+  const [activeThreat, setActiveThreat] = useState<ThreatRef | null>(null);
   const [pendingPromotion, setPendingPromotion] = useState<{ from: string; to: string } | null>(null);
   // Reactions' setup line's own "historyIndex" — how many of
   // `board.setupMoves` are applied/viewed, same idea as Others/Plan's
@@ -686,7 +693,7 @@ function ReactionBoardEditorOverlay({
     () =>
       toEditorNumberedArrows(
         tempArrow
-          ? [...visibleArrows, activeThreat ? { ...tempArrow, color: 'purple' as const, notes: { threat: activeThreat } } : { ...tempArrow, color: annotateColor }]
+          ? [...visibleArrows, activeThreat ? { ...tempArrow, color: THREAT_COLOR[activeThreat.kind], notes: threatFields(activeThreat) } : { ...tempArrow, color: annotateColor }]
           : visibleArrows,
         engineState.pieces,
         yourColor
@@ -706,30 +713,41 @@ function ReactionBoardEditorOverlay({
   // drawing with (opponent ones by their dark tint). Display only — numbers
   // are still worked out over all arrows, and nothing stored changes.
   const [onlyDrawing, setOnlyDrawing] = useState(false);
+  // The letters in use per kind of threat (plus the one just started).
   const threatLetters = useMemo(() => {
-    const set = new Set(visibleArrows.map((a) => a.notes?.threat).filter((t): t is string => !!t));
-    if (activeThreat) set.add(activeThreat);
-    return [...set].sort();
-  }, [visibleArrows, activeThreat]);
-  function startNewThreat() {
-    const used = new Set(threatLetters);
+    const out: Record<ThreatKind, string[]> = { opp: [], mine: [] };
+    const add = (t: ThreatRef | null) => {
+      if (t && !out[t.kind].includes(t.letter)) out[t.kind].push(t.letter);
+    };
+    visibleArrows.forEach((a) => add(threatOfArrow(a)));
+    visibleCircles.forEach((c) => add(threatOfCircle(c)));
+    add(activeThreat);
+    out.opp.sort();
+    out.mine.sort();
+    return out;
+  }, [visibleArrows, visibleCircles, activeThreat]);
+  function startNewThreat(kind: ThreatKind) {
+    const used = new Set(threatLetters[kind]);
     const next = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').find((l) => !used.has(l));
-    if (next) setActiveThreat(next);
+    if (next) setActiveThreat({ kind, letter: next });
     setTool('annotate');
     setSelected(null);
   }
   const isShownArrow = (a: { from: string; to: string; color: ArrowColor; notes?: Arrow['notes'] }) =>
     !onlyDrawing ||
-    (activeThreat ? a.notes?.threat === activeThreat : effectiveArrowColor(a as Arrow, engineState.pieces, yourColor) === annotateColor);
+    (activeThreat ? sameThreat(threatOfArrow(a as Arrow), activeThreat) : effectiveArrowColor(a as Arrow, engineState.pieces, yourColor) === annotateColor);
   const shownArrows = visibleArrows.filter(isShownArrow);
-  const isShownCircle = (c: { square: string; color: ArrowColor }) =>
-    !onlyDrawing || (!activeThreat && (isOpponentArrow(c.square, engineState.pieces, yourColor) ? opponentTint(c.color) : c.color) === annotateColor);
+  const isShownCircle = (c: Circle) =>
+    !onlyDrawing ||
+    (activeThreat
+      ? sameThreat(threatOfCircle(c), activeThreat)
+      : (isOpponentArrow(c.square, engineState.pieces, yourColor) ? opponentTint(c.color) : c.color) === annotateColor);
   const shownCircles = visibleCircles.filter(isShownCircle);
   // "Clear arrows" clears what is on screen: with "Only drawing color" just that colour (or threat).
   const clearLabel = !onlyDrawing
     ? 'Clear arrows'
     : activeThreat
-      ? `Clear threat ${activeThreat}`
+      ? `Clear ${activeThreat.kind === 'mine' ? 'my threat' : 'threat'} ${activeThreat.letter}`
       : `Clear ${ARROW_COLOR_NAMES[annotateColor].toLowerCase()} arrows`;
   const shownNumbered = numberedArrows.filter((_, i) => i >= visibleArrows.length || isShownArrow(visibleArrows[i]));
   const shownCommitted = committedNumberedArrows.filter((_, i) => isShownArrow(visibleArrows[i]));
@@ -1095,7 +1113,7 @@ function ReactionBoardEditorOverlay({
   // already uses for circles on a square.
   async function addArrow(drawnIn: Arrow) {
     // Drawing with a threat selected (Summary): purple, tagged with its letter.
-    const drawn: Arrow = activeThreat ? { ...drawnIn, color: 'purple', notes: { threat: activeThreat } } : drawnIn;
+    const drawn: Arrow = activeThreat ? { ...drawnIn, color: THREAT_COLOR[activeThreat.kind], notes: threatFields(activeThreat) } : drawnIn;
     // An arrow from an opponent piece is always stored in the dark tint.
     const arrow = { ...drawn, color: effectiveArrowColor(drawn, engineState.pieces, yourColor) };
     // Compared in the colour arrows are shown in, so an older opponent arrow
@@ -1111,7 +1129,7 @@ function ReactionBoardEditorOverlay({
       setBoard((prev) => {
         const at = faceAnnotationsAt(prev[side], historyIndex);
         // Drawing any arrow over a threat arrow removes that threat arrow.
-        const threatHere = (a: Arrow) => sameArrowSpan(a, arrow) && !!a.notes?.threat;
+        const threatHere = (a: Arrow) => sameArrowSpan(a, arrow) && !!threatOfArrow(a);
         const same = (a: Arrow) => sameArrowSpan(a, arrow) && shownColor(a) === arrow.color;
         const arrows = at.arrows.some(threatHere)
           ? at.arrows.filter((a) => !threatHere(a))
@@ -1214,6 +1232,20 @@ function ReactionBoardEditorOverlay({
   async function toggleCircle(square: string) {
     const existing = visibleCircles.find((c) => c.square === square);
     const isSameColor = existing?.color === annotateColor;
+
+    // Summary: a circle set while a threat is active belongs to that threat
+    // (its colour); tapping the square again removes it.
+    if (mode === 'summary' && activeThreat) {
+      const t = activeThreat;
+      setBoard((prev) => {
+        const at = faceAnnotationsAt(prev[side], historyIndex);
+        const mineHere = at.circles.some((c) => c.square === square && sameThreat(threatOfCircle(c), t));
+        let circles = at.circles.filter((c) => c.square !== square);
+        if (!mineHere) circles = [...circles, { square, color: THREAT_COLOR[t.kind], ...threatFields(t) }];
+        return { ...prev, [side]: withFaceAnnotationsAt(prev[side], historyIndex, at.arrows, circles) };
+      });
+      return;
+    }
 
     if (!isReactions) {
       setBoard((prev) => {
@@ -1379,15 +1411,17 @@ function ReactionBoardEditorOverlay({
     []
   );
 
-  // Long press on a threat chip: the whole threat goes (snackbar with Undo).
-  function deleteThreat(letter: string) {
-    clearUndo.current = { before: board, after: null, snackbar: null, message: `Threat ${letter} deleted` };
+  // The × on the active threat chip: the whole threat goes (snackbar with Undo).
+  function deleteThreat(t: ThreatRef) {
+    const name = `${t.kind === 'mine' ? 'My threat' : 'Threat'} ${t.letter}`;
+    clearUndo.current = { before: board, after: null, snackbar: null, message: `${name} deleted` };
     setBoard((prev) => {
       const at = faceAnnotationsAt(prev[side], historyIndex);
-      const arrows = at.arrows.filter((a) => a.notes?.threat !== letter);
-      return { ...prev, [side]: withFaceAnnotationsAt(prev[side], historyIndex, arrows, at.circles) };
+      const arrows = at.arrows.filter((a) => !sameThreat(threatOfArrow(a), t));
+      const circles = at.circles.filter((c) => !sameThreat(threatOfCircle(c), t));
+      return { ...prev, [side]: withFaceAnnotationsAt(prev[side], historyIndex, arrows, circles) };
     });
-    if (activeThreat === letter) setActiveThreat(null);
+    if (sameThreat(activeThreat, t)) setActiveThreat(null);
   }
 
   function handleClearArrows() {
@@ -1891,45 +1925,54 @@ function ReactionBoardEditorOverlay({
           </View>
         </View>
 
-        {mode === 'summary' && (
-          // Threats: each gets a letter; arrows drawn while one is selected
-          // belong to it (purple, "!A" for the opponent's move, "A1"... for yours).
-          // One framed group (Law of Common Region); the active chip carries an
-          // × to delete that threat, with Undo in the snackbar.
-          <View style={styles.threatPanel}>
-            <Text style={styles.threatTitle}>Threats</Text>
-            <View style={styles.threatRow}>
-              {threatLetters.map((l) => {
-                const on = activeThreat === l;
-                return (
-                  <View key={l} style={[styles.threatChip, on && styles.threatChipActive]}>
-                    <Pressable
-                      onPress={() => {
-                        setActiveThreat(on ? null : l);
-                        setTool('annotate');
-                        setSelected(null);
-                      }}
-                      style={styles.threatChipMain}
-                      accessibilityLabel={on ? `Stop drawing for threat ${l}` : `Draw for threat ${l}`}
-                    >
-                      <Text style={[styles.threatChipText, on && styles.threatChipTextActive]}>{l}</Text>
-                    </Pressable>
-                    {on && (
-                      <Pressable onPress={() => deleteThreat(l)} style={styles.threatDelete} accessibilityLabel={`Delete threat ${l}`}>
-                        <Svg width={14} height={14} viewBox="0 0 14 14">
-                          <Path d="M3 3l8 8M11 3l-8 8" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" />
-                        </Svg>
-                      </Pressable>
-                    )}
-                  </View>
-                );
-              })}
-              <Pressable onPress={startNewThreat} style={[styles.threatChip, styles.threatChipMain]} accessibilityLabel="Start a new threat">
-                <Text style={styles.threatChipText}>+ Threat</Text>
-              </Pressable>
-            </View>
-          </View>
-        )}
+        {mode === 'summary' &&
+          // Two framed groups (Law of Common Region), the same layout in their
+          // own colour (Law of Similarity, Von Restorff): the opponent's threats
+          // in purple ("!A", answers "A1"), yours in teal ("★A", follow-up "A1").
+          // Arrows and circles drawn while a chip is active belong to it; the
+          // active chip carries an × to delete that threat (Undo in the snackbar).
+          (['opp', 'mine'] as const).map((kind) => {
+            const accent = arrowColors[THREAT_COLOR[kind]];
+            const dark = arrowColors[DARK_TINT[THREAT_COLOR[kind]]];
+            const title = kind === 'opp' ? 'Opponent threats' : 'My threats';
+            return (
+              <View key={kind} style={[styles.threatPanel, { borderColor: dark, backgroundColor: kind === 'opp' ? 'rgba(122, 63, 199, 0.12)' : 'rgba(14, 138, 128, 0.12)' }]}>
+                <Text style={[styles.threatTitle, { color: accent }]}>{title}</Text>
+                <View style={styles.threatRow}>
+                  {threatLetters[kind].map((l) => {
+                    const on = sameThreat(activeThreat, { kind, letter: l });
+                    return (
+                      <View key={l} style={[styles.threatChip, { borderColor: dark }, on && { backgroundColor: dark }]}>
+                        <Pressable
+                          onPress={() => {
+                            setActiveThreat(on ? null : { kind, letter: l });
+                            setTool('annotate');
+                            setSelected(null);
+                          }}
+                          style={styles.threatChipMain}
+                          accessibilityLabel={on ? `Stop drawing for ${title.toLowerCase()} ${l}` : `Draw for ${title.toLowerCase()} ${l}`}
+                        >
+                          <Text style={[styles.threatChipText, { color: accent }, on && styles.threatChipTextActive]}>
+                            {kind === 'mine' ? `★${l}` : `!${l}`}
+                          </Text>
+                        </Pressable>
+                        {on && (
+                          <Pressable onPress={() => deleteThreat({ kind, letter: l })} style={styles.threatDelete} accessibilityLabel={`Delete ${title.toLowerCase()} ${l}`}>
+                            <Svg width={14} height={14} viewBox="0 0 14 14">
+                              <Path d="M3 3l8 8M11 3l-8 8" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" />
+                            </Svg>
+                          </Pressable>
+                        )}
+                      </View>
+                    );
+                  })}
+                  <Pressable onPress={() => startNewThreat(kind)} style={[styles.threatChip, styles.threatChipMain, { borderColor: dark }]} accessibilityLabel={`Start a new ${kind === 'mine' ? 'threat of yours' : 'opponent threat'}`}>
+                    <Text style={[styles.threatChipText, { color: accent }]}>+ Threat</Text>
+                  </Pressable>
+                </View>
+              </View>
+            );
+          })}
 
         {mode === 'reactions' && phase === 'playing' && (
           <>
