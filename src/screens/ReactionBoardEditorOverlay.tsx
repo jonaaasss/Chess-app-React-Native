@@ -1858,6 +1858,7 @@ function ReactionBoardEditorOverlay({
               <Text style={styles.clearBtnText}>Clear arrows</Text>
             </Pressable>
           </View>
+        </View>
 
         {mode === 'summary' && (
           // Threats: each gets a letter; arrows drawn while one is selected
@@ -1883,7 +1884,6 @@ function ReactionBoardEditorOverlay({
             </Pressable>
           </View>
         )}
-        </View>
 
         {mode === 'reactions' && phase === 'playing' && (
           <>
