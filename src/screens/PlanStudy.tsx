@@ -8,11 +8,11 @@ import { CloseCircleButton } from '../overlay';
 import { MoveText } from '../components/MoveText';
 import type { Arrow, ArrowColor, Card, PieceCode, ReactionBoard } from '../types';
 import { ARROW_COLOR_NAMES, ARROW_COLOR_ORDER, arrowColors, boardStyles, colors, radius, touchTarget } from '../theme';
-import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, effectiveArrowColor, isOpponentArrow, type NumberedArrow } from '../components/ChessBoard';
+import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, opponentTint, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
 import { PIECE_ANIM_DURATION_MS } from '../components/PieceAnimation';
 import type { GuideTargets } from '../components/GuideCoach';
 import type { CoachEvent } from '../guideContent';
-import { ArrowLinkNoteBadges } from './SummaryBoard';
+import { ArrowLinkNoteBadges, hasNoteText, pointOn } from './SummaryBoard';
 import { openCardViewer } from './CardViewerOverlay';
 
 // Same pace as ReactionStudy's opponent/preview moves, so an arrow appearing
@@ -50,6 +50,9 @@ const WRONG_ARROW_SHOW_MS = 700;
 // so the completed picture is visible for a moment rather than vanishing
 // the instant the last arrow lands.
 const BOARD_DONE_PAUSE_MS = 900;
+// Pause before the opponent's (dashed) arrows of a colour appear, once the
+// previous colour is complete — so it reads as "and now they play this".
+const OPPONENT_ARROW_DELAY_MS = 700;
 
 const BOARD_SIZE = 300;
 const CELL = BOARD_SIZE / 8;
@@ -74,6 +77,10 @@ interface ShownNote {
 }
 
 const keyOf = (a: Arrow) => `${a.from}-${a.to}-${a.color}`;
+
+function allOwnOrdered(groups: ColorGroup[], keys: Set<string>): Arrow[] {
+  return groups.flatMap((g) => g.own.filter((a) => keys.has(keyOf(a))));
+}
 
 function buildColorGroups(arrows: Arrow[], pieces: Partial<Record<string, PieceCode>> | undefined, yourColor: 'w' | 'b'): ColorGroup[] {
   return COLOR_CYCLE.map((color) => {
@@ -162,6 +169,8 @@ export function PlanStudy({
   const [tempArrow, setTempArrow] = useState<{ from: string; to: string } | null>(null);
   // Off: only the arrows and circles of the colour being worked on are shown.
   const [showAll, setShowAll] = useState(false);
+  // The last colour group whose opponent arrows are on the board already.
+  const [autoShownGroup, setAutoShownGroup] = useState(-1);
 
   // Plan: an arrow's notes pop up the moment it is found and must be
   // dismissed (Got it) before going on. Summary: notes open from the orange
@@ -210,14 +219,28 @@ export function PlanStudy({
   // first one with own arrows still to find; every group up to it shows its
   // opponent arrows. A group with only opponent arrows is passed straight
   // through.
+  // The active group is the first one that still has own arrows to find, or
+  // opponent arrows still waiting to appear (see OPPONENT_ARROW_DELAY_MS).
   const foundKeys = useMemo(() => new Set(found.map(keyOf)), [found]);
-  let groupIdx = colorGroups.findIndex((g) => g.own.some((a) => !foundKeys.has(keyOf(a))));
+  let groupIdx = colorGroups.findIndex(
+    (g, i) => g.own.some((a) => !foundKeys.has(keyOf(a))) || (g.auto.length > 0 && autoShownGroup < i)
+  );
   const boardDone = !noArrows && groupIdx === -1;
   if (groupIdx === -1) groupIdx = colorGroups.length - 1;
   const activeGroup = colorGroups[groupIdx];
+  const autoPending = !boardDone && !!activeGroup && activeGroup.auto.length > 0 && autoShownGroup < groupIdx;
   const remaining = activeGroup ? activeGroup.own.filter((a) => !foundKeys.has(keyOf(a))) : [];
-  const shownAuto = colorGroups.slice(0, groupIdx + 1).flatMap((g) => g.auto);
-  const drawnArrows = [...shownAuto, ...found];
+  const shownAuto = colorGroups.slice(0, groupIdx + 1).flatMap((g, i) => (i < groupIdx || !autoPending ? g.auto : []));
+  // Own arrows in study order (colour order, then their number order).
+  const foundInOrder = allOwnOrdered(colorGroups, foundKeys);
+  const drawnArrows = [...shownAuto, ...foundInOrder];
+
+  // After a beat, the active group's opponent arrows appear by themselves.
+  useEffect(() => {
+    if (!autoPending) return;
+    const t = setTimeout(() => setAutoShownGroup(groupIdx), OPPONENT_ARROW_DELAY_MS);
+    return () => clearTimeout(t);
+  }, [autoPending, groupIdx]);
 
   const gridRef = useRef<View>(null);
   const gridOrigin = useRef({ x: 0, y: 0 });
@@ -244,6 +267,7 @@ export function PlanStudy({
   // A new board resets the whole exercise.
   useEffect(() => {
     setFound([]);
+    setAutoShownGroup(-1);
     revealedRef.current = new Set();
     setWrongArrow(null);
     if (noteDelayRef.current) {
@@ -304,6 +328,10 @@ export function PlanStudy({
   }
 
   function revealNextPreviewArrow() {
+    if (autoPending) {
+      setAutoShownGroup(groupIdx);
+      return;
+    }
     const next = allOwn.find((a) => !foundKeys.has(keyOf(a)));
     if (!next) return;
     setFound((prev) => [...prev, next]);
@@ -311,7 +339,7 @@ export function PlanStudy({
   }
 
   function handleDrawnArrow(from: string, to: string) {
-    if (preview || !board || boardDone || allDone || wrongArrow || noArrows) return;
+    if (preview || !board || boardDone || allDone || wrongArrow || noArrows || autoPending) return;
     const match = remaining.find((a) => a.from === from && a.to === to);
     if (!match) {
       if (!isSummary) setMistakes((m) => m + 1);
@@ -339,31 +367,48 @@ export function PlanStudy({
     onGuideEvent?.('solution');
   }
 
-  const blocked = boardDone || allDone || Boolean(wrongArrow) || Boolean(pendingNote) || noArrows;
-  // › one more arrow of the current group; » the rest of the current group
-  // (or, once it is complete, the whole next group — which is then current).
-  const canNext = !blocked && remaining.length > 0;
+  const blocked = boardDone || Boolean(wrongArrow) || Boolean(pendingNote) || noArrows;
+  // › the next arrow in order (an opponent arrow still waiting comes first);
+  // » the whole current step — the opponent arrows and your own of that colour
+  // together (or, once a colour is complete, the next one, which is then current).
+  const canNext = !blocked && (remaining.length > 0 || autoPending);
   function stepNext() {
-    if (canNext) reveal([remaining[0]]);
+    if (!canNext) return;
+    if (autoPending) setAutoShownGroup(groupIdx);
+    else reveal([remaining[0]]);
   }
   function stepNextGroup() {
-    if (canNext) reveal(remaining);
+    if (!canNext) return;
+    if (autoPending) setAutoShownGroup(groupIdx);
+    reveal(remaining);
   }
-  // ‹ takes back the last found arrow; « the current group's found arrows,
-  // or if there are none yet, the whole previous group.
-  const canBack = !allDone && !wrongArrow && !pendingNote && found.length > 0;
+  // ‹ takes back the last arrow in order; « the current colour's arrows, or
+  // if there are none yet, the whole previous colour. Also after the board
+  // (or the whole card) is complete.
+  const canBack = !wrongArrow && !pendingNote && (found.length > 0 || autoShownGroup >= 0);
   function stepBack() {
     if (!canBack) return;
-    setFound((prev) => prev.slice(0, -1));
+    setAllDone(false);
+    const last = foundInOrder[foundInOrder.length - 1];
+    const lastGroup = last ? colorGroups.findIndex((g) => g.own.some((o) => keyOf(o) === keyOf(last))) : -1;
+    // Opponent arrows of a later colour than your last arrow go first.
+    if (autoShownGroup > lastGroup && autoShownGroup >= 0) {
+      setAutoShownGroup(autoShownGroup - 1);
+      return;
+    }
+    if (last) setFound((prev) => prev.filter((a) => keyOf(a) !== keyOf(last)));
   }
   function stepBackGroup() {
     if (!canBack) return;
+    setAllDone(false);
     const inGroup = (a: Arrow, g: ColorGroup | undefined) => !!g && g.own.some((o) => keyOf(o) === keyOf(a));
-    const current = boardDone ? colorGroups[colorGroups.length - 1] : activeGroup;
-    const target = found.some((a) => inGroup(a, current))
-      ? current
-      : colorGroups[colorGroups.indexOf(current as ColorGroup) - 1];
+    const currentIdx = boardDone ? colorGroups.length - 1 : groupIdx;
+    const current = colorGroups[currentIdx];
+    const hasProgress = found.some((a) => inGroup(a, current)) || (current?.auto.length && autoShownGroup >= currentIdx);
+    const targetIdx = hasProgress ? currentIdx : currentIdx - 1;
+    const target = colorGroups[targetIdx];
     setFound((prev) => prev.filter((a) => !inGroup(a, target)));
+    setAutoShownGroup((g) => Math.min(g, targetIdx - 1));
   }
 
   const panResponderRef = useRef<PanResponderInstance | null>(null);
@@ -405,7 +450,13 @@ export function PlanStudy({
   // By default only the active group's colour is on the board ("Show all colors" lifts that).
   const visibleColor = !showAll && !boardDone && activeGroup ? activeGroup.color : null;
   const visibleArrows = visibleColor ? drawnArrows.filter((a) => a.color === visibleColor) : drawnArrows;
-  const visibleCircles = visibleColor ? finalAnnotations.circles.filter((c) => c.color === visibleColor) : finalAnnotations.circles;
+  // A colour's circles appear together with that colour's step.
+  const reachedOrder = boardDone ? COLOR_CYCLE.length : COLOR_CYCLE.indexOf(activeGroup?.color ?? 'green');
+  const circleColor = (c: { square: string; color: ArrowColor }) =>
+    board && isOpponentArrow(c.square, board.back.pieces, yourColor) ? opponentTint(c.color) : c.color;
+  const visibleCircles = finalAnnotations.circles.filter((c) =>
+    visibleColor ? circleColor(c) === visibleColor : COLOR_CYCLE.indexOf(circleColor(c)) <= reachedOrder
+  );
 
   const numberedArrows: NumberedArrow[] = visibleArrows.map((a, i) => ({
     id: `${keyOf(a)}-${i}`,
@@ -420,6 +471,28 @@ export function PlanStudy({
     numberedArrows.push({ id: 'preview', from: tempArrow.from, to: tempArrow.to, color: activeGroup ? arrowColors[activeGroup.color] : colors.textDim });
   }
 
+  // All badges of the board placed together — numbers / "!" and, on a
+  // Summary, link and note badges — so overlapping ones move to free space.
+  const numberPts: { idx: number; p: Point }[] = [];
+  numberedArrows.forEach((a, i) => {
+    if (a.number !== undefined || a.label) numberPts.push({ idx: i, p: numberBadgeCenter(a, i, BOARD_SIZE, flipped) });
+  });
+  const linkNotePts: { idx: number; kind: 'link' | 'note'; p: Point }[] = [];
+  if (isSummary) {
+    visibleArrows.forEach((a, i) => {
+      const side = i % 2 === 0 ? 1 : -1;
+      if (a.notes?.linkCardId) linkNotePts.push({ idx: i, kind: 'link', p: pointOn(a, 0.4, BOARD_SIZE, flipped, side) });
+      if (hasNoteText(a)) linkNotePts.push({ idx: i, kind: 'note', p: pointOn(a, 0.25, BOARD_SIZE, flipped, -side) });
+    });
+  }
+  const placed = separateBadgeCenters([...numberPts.map((n) => n.p), ...linkNotePts.map((n) => n.p)], 26, BOARD_SIZE);
+  const numberCenters: (Point | undefined)[] = [];
+  numberPts.forEach((n, k) => (numberCenters[n.idx] = placed[k]));
+  const linkNotePositions: { link?: Point; note?: Point }[] = [];
+  linkNotePts.forEach((n, k) => {
+    linkNotePositions[n.idx] = { ...linkNotePositions[n.idx], [n.kind]: placed[numberPts.length + k] };
+  });
+
   if (!board) {
     return <Text style={{ color: colors.textDim }}>This card has no boards to study.</Text>;
   }
@@ -433,7 +506,9 @@ export function PlanStudy({
     ? 'Board complete!'
     : wrongArrow
       ? 'Wrong arrow — try again'
-      : activeGroup
+      : autoPending
+        ? `${colorName}: the opponent plays…`
+        : activeGroup
         ? `${colorName} arrows: ${groupDone} of ${groupTotal}`
         : "Draw the plan's arrows";
   const statusColor = boardDone ? colors.primary : wrongArrow ? colors.danger : activeGroup ? arrowColors[activeGroup.color] : colors.textDim;
@@ -488,7 +563,7 @@ export function PlanStudy({
           <BoardCoords size={BOARD_SIZE} flipped={flipped} styleSet={styleSet} />
           <View style={StyleSheet.absoluteFill} pointerEvents="none">
             <NumberedArrowsSvg arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} pieces={board.back.pieces} yourColor={yourColor} />
-            <NumberedArrowBadges arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} pieces={board.back.pieces} yourColor={yourColor} />
+            <NumberedArrowBadges arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} pieces={board.back.pieces} yourColor={yourColor} centers={numberCenters} />
             {visibleCircles.length > 0 && <CirclesSvg circles={visibleCircles} size={BOARD_SIZE} flipped={flipped} pieces={board.back.pieces} yourColor={yourColor} />}
           </View>
         </View>
@@ -499,6 +574,7 @@ export function PlanStudy({
             flipped={flipped}
             onOpenLink={(cardId) => openCardViewer(cardId, yourColor, boardStyle)}
             onShowNote={setSummaryNote}
+            positions={linkNotePositions}
           />
         )}
       </View>
@@ -555,7 +631,7 @@ export function PlanStudy({
         </View>
       )}
 
-      {!preview && !noArrows && !allDone && (
+      {!preview && !noArrows && (
         // « whole group back · ‹ one arrow back · › show one arrow · » show the group
         <View ref={guideTargets?.solution} collapsable={false} style={styles.navRow}>
           <Pressable onPress={stepBackGroup} disabled={!canBack} style={[styles.navBtn, !canBack && styles.navBtnDisabled]} accessibilityLabel="Take back this colour">

@@ -43,7 +43,7 @@ function NoteIcon({ size }: { size: number }) {
 
 // A point `t` of the way along the arrow, pushed sideways so the two badges
 // of one arrow (and badges of crossing arrows) don't sit on the line itself.
-function pointOn(arrow: Arrow, t: number, size: number, flipped: boolean, side: number) {
+export function pointOn(arrow: Arrow, t: number, size: number, flipped: boolean, side: number) {
   const cell = size / 8;
   const center = (sq: string) => {
     const raw = squareIndex(sq);
@@ -64,13 +64,16 @@ export function ArrowLinkNoteBadges({
   size,
   flipped,
   onOpenLink,
-  onShowNote
+  onShowNote,
+  positions
 }: {
   arrows: Arrow[];
   size: number;
   flipped: boolean;
   onOpenLink?: (cardId: string) => void;
   onShowNote?: (arrow: Arrow) => void;
+  // Positions worked out together with the number badges (see separateBadgeCenters).
+  positions?: { link?: { x: number; y: number }; note?: { x: number; y: number } }[];
 }) {
   return (
     <View style={[StyleSheet.absoluteFill, { width: size, height: size }]} pointerEvents="box-none">
@@ -78,8 +81,8 @@ export function ArrowLinkNoteBadges({
         const side = i % 2 === 0 ? 1 : -1;
         const link = onOpenLink && arrow.notes?.linkCardId;
         const note = onShowNote && hasNoteText(arrow);
-        const linkAt = pointOn(arrow, 0.4, size, flipped, side);
-        const noteAt = pointOn(arrow, 0.7, size, flipped, side);
+        const linkAt = positions?.[i]?.link ?? pointOn(arrow, 0.4, size, flipped, side);
+        const noteAt = positions?.[i]?.note ?? pointOn(arrow, 0.7, size, flipped, side);
         return (
           <React.Fragment key={`${arrow.from}-${arrow.to}-${i}`}>
             {link && (

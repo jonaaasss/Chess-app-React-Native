@@ -186,45 +186,84 @@ export function NumberedArrowsSvg({
 // The number badges for NumberedArrowsSvg, pushed to the side of each
 // arrow (alternating left/right) rather than sitting on its midpoint —
 // short or near-parallel arrows would otherwise stack their badges.
+export interface Point {
+  x: number;
+  y: number;
+}
+
+// Where an arrow's number badge sits by default: 70% along the arrow, pushed
+// to alternating sides so near-parallel arrows don't stack their badges.
+export function numberBadgeCenter(a: { from: string; to: string }, i: number, size: number, flipped: boolean): Point {
+  const cell = size / 8;
+  const centerPx = (square: string) => {
+    const raw = squareIndex(square);
+    return { x: (flipIndex(raw.file, flipped) + 0.5) * cell, y: (flipIndex(raw.rank, flipped) + 0.5) * cell };
+  };
+  const from = centerPx(a.from);
+  const to = centerPx(a.to);
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const side = i % 2 === 0 ? 1 : -1;
+  return { x: from.x + dx * 0.7 + (-dy / len) * 10 * side, y: from.y + dy * 0.7 + (dx / len) * 10 * side };
+}
+
+// Moves badges that overlap apart until each has room (a few relaxation
+// passes: every overlapping pair is pushed apart along the line between
+// them), kept inside the board. Used for all badges of a board together —
+// numbers, "!", note and link badges — so none ends up hidden under another.
+export function separateBadgeCenters(points: Point[], minDist: number, size: number): Point[] {
+  const p = points.map((c) => ({ ...c }));
+  for (let iter = 0; iter < 12; iter++) {
+    let moved = false;
+    for (let i = 0; i < p.length; i++) {
+      for (let j = i + 1; j < p.length; j++) {
+        const dx = p[j].x - p[i].x;
+        const dy = p[j].y - p[i].y;
+        const dist = Math.hypot(dx, dy);
+        if (dist >= minDist) continue;
+        moved = true;
+        const ux = dist > 0.01 ? dx / dist : 1;
+        const uy = dist > 0.01 ? dy / dist : 0;
+        const push = (minDist - dist) / 2;
+        p[i].x -= ux * push;
+        p[i].y -= uy * push;
+        p[j].x += ux * push;
+        p[j].y += uy * push;
+      }
+    }
+    for (const c of p) {
+      c.x = Math.min(size - 10, Math.max(10, c.x));
+      c.y = Math.min(size - 10, Math.max(10, c.y));
+    }
+    if (!moved) break;
+  }
+  return p;
+}
+
 export function NumberedArrowBadges({
   arrows,
   size,
   flipped = false,
   pieces,
-  yourColor
+  yourColor,
+  centers
 }: {
   arrows: NumberedArrow[];
   size: number;
   flipped?: boolean;
-  // As in NumberedArrowsSvg: an opponent's (dashed) arrow gets a darker badge.
+  // As in NumberedArrowsSvg: an opponent's (dashed) arrow gets an outlined badge.
   pieces?: Pieces;
   yourColor?: 'w' | 'b';
+  // Positions worked out together with other badges (see separateBadgeCenters).
+  centers?: (Point | undefined)[];
 }) {
   const yourSide = yourColor ?? (flipped ? 'b' : 'w');
-  const cell = size / 8;
-  function centerPx(square: string) {
-    const raw = squareIndex(square);
-    const file = flipIndex(raw.file, flipped);
-    const rank = flipIndex(raw.rank, flipped);
-    return { x: file * cell + cell / 2, y: rank * cell + cell / 2 };
-  }
   return (
     <>
       {arrows.map((a, i) => {
         if (a.number === undefined && !a.label) return null;
-        const from = centerPx(a.from);
-        const to = centerPx(a.to);
-        const dx = to.x - from.x;
-        const dy = to.y - from.y;
-        const len = Math.hypot(dx, dy) || 1;
-        const px = from.x + dx * 0.7;
-        const py = from.y + dy * 0.7;
-        const nx = -dy / len;
-        const ny = dx / len;
-        const side = i % 2 === 0 ? 1 : -1;
-        const offset = 10;
-        const bx = px + nx * offset * side;
-        const by = py + ny * offset * side;
+        const { x: bx, y: by } = centers?.[i] ?? numberBadgeCenter(a, i, size, flipped);
         return (
           <View key={a.id} style={[badgeStyles.badge, { left: bx - 9, top: by - 9, backgroundColor: a.color }, isOpponentArrow(a.from, pieces, yourSide) && badgeStyles.opponent]}>
             <Text style={badgeStyles.text}>{a.label ?? a.number}</Text>

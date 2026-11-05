@@ -18,7 +18,7 @@ import {
 import { legalMovesFrom, makeMove, isPromotionMove, sansForBoardMoves, type GameState } from '../chessEngine';
 import type { Arrow, ArrowColor, BoardFace, BoardMove, CardMode, Circle, MoveNode, PieceCode, PromotionPiece, ReactionBoard } from '../types';
 import { arrowColors, BASE_ARROW_COLORS, boardStyles, colors, DARK_TINT, engineColors, radius, spacing, type, variationColor } from '../theme';
-import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, effectiveArrowColor, isOpponentArrow, type NumberedArrow } from '../components/ChessBoard';
+import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, opponentTint, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts } from '../components/PieceAnimation';
 import { alertDialog, confirmDialog, dismissSnackbar, showOverlay, showSnackbar, SnackbarLayer, useOverlayBack } from '../overlay';
 import { hasArrowNotes } from '../arrowNotes';
@@ -420,8 +420,9 @@ function noteBadgeCenters(arrows: { from: string; to: string }[], size: number, 
   return separateNoteBadgeCenters(arrows.map((a) => noteBadgeCenter(a.from, a.to, size, flipped)));
 }
 
-function ArrowNoteBadges({ arrows, size, flipped }: { arrows: ArrowNoteTarget[]; size: number; flipped: boolean }) {
-  const centers = useMemo(() => noteBadgeCenters(arrows, size, flipped), [arrows, size, flipped]);
+function ArrowNoteBadges({ arrows, size, flipped, centers: given }: { arrows: ArrowNoteTarget[]; size: number; flipped: boolean; centers?: Point[] }) {
+  const own = useMemo(() => noteBadgeCenters(arrows, size, flipped), [arrows, size, flipped]);
+  const centers = given ?? own;
   return (
     <>
       {arrows.map((a, i) => {
@@ -688,6 +689,38 @@ function ReactionBoardEditorOverlay({
     () => toEditorNumberedArrows(visibleArrows, engineState.pieces, yourColor),
     [visibleArrows, engineState.pieces, yourColor]
   );
+
+  // "Only drawing color": just the arrows and circles in the colour you're
+  // drawing with (opponent ones by their dark tint). Display only — numbers
+  // are still worked out over all arrows, and nothing stored changes.
+  const [onlyDrawing, setOnlyDrawing] = useState(false);
+  const isShownArrow = (a: { from: string; to: string; color: ArrowColor }) =>
+    !onlyDrawing || effectiveArrowColor(a as Arrow, engineState.pieces, yourColor) === annotateColor;
+  const shownArrows = visibleArrows.filter(isShownArrow);
+  const shownCircles = onlyDrawing
+    ? visibleCircles.filter((c) => (isOpponentArrow(c.square, engineState.pieces, yourColor) ? opponentTint(c.color) : c.color) === annotateColor)
+    : visibleCircles;
+  const shownNumbered = numberedArrows.filter((_, i) => i >= visibleArrows.length || isShownArrow(visibleArrows[i]));
+  const shownCommitted = committedNumberedArrows.filter((_, i) => isShownArrow(visibleArrows[i]));
+
+  // Every badge on the board — numbers / "!" and the note "+" badges —
+  // placed together, so overlapping ones move to free space instead of one
+  // hiding another.
+  const badgeLayout = useMemo(() => {
+    const numberIdx: number[] = [];
+    const pts: Point[] = [];
+    shownCommitted.forEach((a, i) => {
+      if (a.number === undefined && !a.label) return;
+      numberIdx.push(i);
+      pts.push(numberBadgeCenter(a, i, BOARD_SIZE, flipped));
+    });
+    const notes = isPlan && atHead ? shownArrows.map((a) => noteBadgeCenter(a.from, a.to, BOARD_SIZE, flipped)) : [];
+    const placed = separateBadgeCenters([...pts, ...notes], NOTE_BADGE_MIN_DIST, BOARD_SIZE);
+    const numberCenters: (Point | undefined)[] = [];
+    numberIdx.forEach((idx, k) => (numberCenters[idx] = placed[k]));
+    return { numberCenters, noteCenters: placed.slice(pts.length) };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shownCommitted.length, shownArrows.length, visibleArrows, onlyDrawing, annotateColor, isPlan, atHead, flipped]);
 
   const legalTargets = useMemo(
     () => (selected ? legalMovesFrom(engineState, selected) : []),
@@ -1031,8 +1064,11 @@ function ReactionBoardEditorOverlay({
   async function addArrow(drawn: Arrow) {
     // An arrow from an opponent piece is always stored in the dark tint.
     const arrow = { ...drawn, color: effectiveArrowColor(drawn, engineState.pieces, yourColor) };
+    // Compared in the colour arrows are shown in, so an older opponent arrow
+    // (stored in its base colour, shown dark) is removed by drawing over it.
+    const shownColor = (a: Arrow) => effectiveArrowColor(a, engineState.pieces, yourColor);
     const existing = visibleArrows.find((a) => sameArrowSpan(a, arrow));
-    const isSameColor = existing?.color === arrow.color;
+    const isSameColor = !!existing && shownColor(existing) === arrow.color;
 
     // Summary: the same move may carry several arrows in different colours
     // (e.g. h6 as part of the plan and as the answer to !Bg5); drawing it
@@ -1040,7 +1076,7 @@ function ReactionBoardEditorOverlay({
     if (mode === 'summary') {
       setBoard((prev) => {
         const at = faceAnnotationsAt(prev[side], historyIndex);
-        const same = (a: Arrow) => sameArrowSpan(a, arrow) && a.color === arrow.color;
+        const same = (a: Arrow) => sameArrowSpan(a, arrow) && shownColor(a) === arrow.color;
         const arrows = at.arrows.some(same) ? at.arrows.filter((a) => !same(a)) : [...at.arrows, arrow];
         return { ...prev, [side]: withFaceAnnotationsAt(prev[side], historyIndex, arrows, at.circles) };
       });
@@ -1183,7 +1219,7 @@ function ReactionBoardEditorOverlay({
     // Same centers ArrowNoteBadges actually renders at (post-separation) —
     // not the raw per-arrow ones — so the exclusion zone lines up with
     // wherever a badge visually ended up after overlap avoidance.
-    return noteBadgeCenters(visibleArrows, BOARD_SIZE, flipped).some(
+    return badgeLayout.noteCenters.some(
       (center) => Math.hypot(localX - center.x, localY - center.y) <= NOTE_BADGE_RADIUS + 8
     );
   }
@@ -1692,16 +1728,17 @@ function ReactionBoardEditorOverlay({
           <BoardCoords size={BOARD_SIZE} flipped={flipped} styleSet={styleSet} />
           <View style={StyleSheet.absoluteFill} pointerEvents="none">
             <NumberedArrowsSvg arrows={engineArrows} size={BOARD_SIZE} flipped={flipped} />
-            <NumberedArrowsSvg arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} pieces={engineState.pieces} yourColor={yourColor} />
+            <NumberedArrowsSvg arrows={shownNumbered} size={BOARD_SIZE} flipped={flipped} pieces={engineState.pieces} yourColor={yourColor} />
             <NumberedArrowsSvg arrows={branchArrows} size={BOARD_SIZE} flipped={flipped} />
-            <CirclesSvg circles={visibleCircles} size={BOARD_SIZE} flipped={flipped} pieces={engineState.pieces} yourColor={yourColor} />
+            <CirclesSvg circles={shownCircles} size={BOARD_SIZE} flipped={flipped} pieces={engineState.pieces} yourColor={yourColor} />
             <NumberedArrowBadges arrows={branchArrows} size={BOARD_SIZE} flipped={flipped} />
             <PieceAnimationGhosts ghosts={ghosts} cell={CELL} />
           </View>
           {isPlan && atHead && (
             <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
               <ArrowNoteBadges
-                arrows={visibleArrows.map((a) => ({
+                centers={badgeLayout.noteCenters}
+                arrows={shownArrows.map((a) => ({
                   id: `${a.from}-${a.to}-${a.color}`,
                   from: a.from,
                   to: a.to,
@@ -1715,7 +1752,7 @@ function ReactionBoardEditorOverlay({
           )}
           {/* Number badges sit above the note badges, so a note's "+" never hides an arrow's number. */}
           <View style={StyleSheet.absoluteFill} pointerEvents="none">
-            <NumberedArrowBadges arrows={committedNumberedArrows} size={BOARD_SIZE} flipped={flipped} pieces={engineState.pieces} yourColor={yourColor} />
+            <NumberedArrowBadges arrows={shownCommitted} size={BOARD_SIZE} flipped={flipped} pieces={engineState.pieces} yourColor={yourColor} centers={badgeLayout.numberCenters} />
           </View>
         </View>
         {!hideEngine && <EngineEvalBar lines={panelLines} stale={engineStale} flipped={flipped} height={BOARD_SIZE} />}
@@ -1783,9 +1820,18 @@ function ReactionBoardEditorOverlay({
             ))}
           </View>
           <View style={{ flex: 1 }} />
-          <Pressable onPress={handleClearArrows} style={styles.clearBtn}>
-            <Text style={styles.clearBtnText}>Clear arrows</Text>
-          </Pressable>
+          <View style={styles.colorActions}>
+            <Pressable
+              onPress={() => setOnlyDrawing((v) => !v)}
+              style={[styles.onlyBtn, onlyDrawing && styles.onlyBtnActive]}
+              accessibilityLabel="Show only the drawing color"
+            >
+              <Text style={[styles.clearBtnText, onlyDrawing && styles.onlyBtnTextActive]}>Only drawing color</Text>
+            </Pressable>
+            <Pressable onPress={handleClearArrows} style={styles.clearBtn}>
+              <Text style={styles.clearBtnText}>Clear arrows</Text>
+            </Pressable>
+          </View>
         </View>
 
         {mode === 'reactions' && phase === 'playing' && (
@@ -2200,6 +2246,10 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14 },
   label: { color: colors.textDim, fontSize: 12, minWidth: 70 },
   swatchGrid: { gap: 8 },
+  colorActions: { alignItems: 'flex-end', gap: 4 },
+  onlyBtn: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 10, borderRadius: 999, borderWidth: 1, borderColor: colors.border },
+  onlyBtnActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  onlyBtnTextActive: { color: colors.onPrimary },
   swatchRow: { flexDirection: 'row', gap: 8 },
   arrowSwatch: { width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: 'transparent' },
   swatchActive: { borderColor: colors.accent },
