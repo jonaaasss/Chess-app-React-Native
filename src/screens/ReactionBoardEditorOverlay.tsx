@@ -17,7 +17,7 @@ import {
 } from '../chess';
 import { legalMovesFrom, makeMove, isPromotionMove, sansForBoardMoves, type GameState } from '../chessEngine';
 import type { Arrow, ArrowColor, BoardFace, BoardMove, CardMode, Circle, MoveNode, PieceCode, PromotionPiece, ReactionBoard } from '../types';
-import { arrowColors, BASE_ARROW_COLORS, boardStyles, colors, DARK_TINT, engineColors, radius, spacing, type, variationColor } from '../theme';
+import { arrowColors, BASE_ARROW_COLORS, boardStyles, colors, DARK_TINT, engineColors, radius, spacing, touchTarget, type, variationColor } from '../theme';
 import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, opponentTint, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts } from '../components/PieceAnimation';
 import { alertDialog, confirmDialog, dismissSnackbar, showOverlay, showSnackbar, SnackbarLayer, useOverlayBack } from '../overlay';
@@ -1882,27 +1882,40 @@ function ReactionBoardEditorOverlay({
         {mode === 'summary' && (
           // Threats: each gets a letter; arrows drawn while one is selected
           // belong to it (purple, "!A" for the opponent's move, "A1"... for yours).
-          <View style={styles.threatRow}>
-            <Text style={styles.label}>Threats</Text>
-            {threatLetters.map((l) => (
-              <Pressable
-                key={l}
-                onPress={() => {
-                  setActiveThreat(activeThreat === l ? null : l);
-                  setTool('annotate');
-                  setSelected(null);
-                }}
-                onLongPress={() => deleteThreat(l)}
-                delayLongPress={500}
-                style={[styles.threatChip, activeThreat === l && styles.threatChipActive]}
-                accessibilityLabel={`Draw for threat ${l}`}
-              >
-                <Text style={[styles.threatChipText, activeThreat === l && styles.threatChipTextActive]}>{l}</Text>
+          // One framed group (Law of Common Region); the active chip carries an
+          // × to delete that threat, with Undo in the snackbar.
+          <View style={styles.threatPanel}>
+            <Text style={styles.threatTitle}>Threats</Text>
+            <View style={styles.threatRow}>
+              {threatLetters.map((l) => {
+                const on = activeThreat === l;
+                return (
+                  <View key={l} style={[styles.threatChip, on && styles.threatChipActive]}>
+                    <Pressable
+                      onPress={() => {
+                        setActiveThreat(on ? null : l);
+                        setTool('annotate');
+                        setSelected(null);
+                      }}
+                      style={styles.threatChipMain}
+                      accessibilityLabel={on ? `Stop drawing for threat ${l}` : `Draw for threat ${l}`}
+                    >
+                      <Text style={[styles.threatChipText, on && styles.threatChipTextActive]}>{l}</Text>
+                    </Pressable>
+                    {on && (
+                      <Pressable onPress={() => deleteThreat(l)} style={styles.threatDelete} accessibilityLabel={`Delete threat ${l}`}>
+                        <Svg width={14} height={14} viewBox="0 0 14 14">
+                          <Path d="M3 3l8 8M11 3l-8 8" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" />
+                        </Svg>
+                      </Pressable>
+                    )}
+                  </View>
+                );
+              })}
+              <Pressable onPress={startNewThreat} style={[styles.threatChip, styles.threatChipMain]} accessibilityLabel="Start a new threat">
+                <Text style={styles.threatChipText}>+ Threat</Text>
               </Pressable>
-            ))}
-            <Pressable onPress={startNewThreat} style={styles.threatChip} accessibilityLabel="Start a new threat">
-              <Text style={styles.threatChipText}>+ Threat</Text>
-            </Pressable>
+            </View>
           </View>
         )}
 
@@ -2319,8 +2332,12 @@ const styles = StyleSheet.create({
   label: { color: colors.textDim, fontSize: 12, minWidth: 70 },
   swatchGrid: { gap: 8 },
   colorActions: { alignItems: 'flex-end', gap: 4 },
-  threatRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginTop: 10 },
-  threatChip: { minHeight: 44, minWidth: 44, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', borderRadius: 999, borderWidth: 1, borderColor: arrowColors.darkPurple },
+  threatPanel: { marginTop: 12, padding: 10, gap: 8, borderRadius: 12, borderWidth: 1, borderColor: arrowColors.darkPurple, backgroundColor: 'rgba(122, 63, 199, 0.12)' },
+  threatTitle: { color: arrowColors.purple, fontSize: 13, fontWeight: '700', letterSpacing: 0.5 },
+  threatRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
+  threatChip: { minHeight: touchTarget, flexDirection: 'row', alignItems: 'center', borderRadius: 999, borderWidth: 1, borderColor: arrowColors.darkPurple },
+  threatChipMain: { minHeight: touchTarget, minWidth: touchTarget, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center' },
+  threatDelete: { width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center', borderLeftWidth: 1, borderLeftColor: 'rgba(255, 255, 255, 0.3)' },
   threatChipActive: { backgroundColor: arrowColors.darkPurple },
   threatChipText: { color: arrowColors.purple, fontSize: 14, fontWeight: '700' },
   threatChipTextActive: { color: '#ffffff' },
