@@ -11,6 +11,7 @@ export function cleanArrowNotes(notes: ArrowNotes | undefined): ArrowNotes | und
     .map((r) => ({ ...r, trigger: r.trigger.trim(), text: r.text.trim() }))
     .filter((r) => r.text.length > 0);
   const linkCardId = notes.linkCardId || undefined;
+  const linkBoardId = (linkCardId && notes.linkBoardId) || undefined;
   // Older data stored `threat: true`; that is threat A.
   const raw = notes.threat as unknown;
   const threat = raw === true ? 'A' : typeof raw === 'string' && /^[A-Z]$/.test(raw) ? raw : undefined;
@@ -18,6 +19,7 @@ export function cleanArrowNotes(notes: ArrowNotes | undefined): ArrowNotes | und
   if (!reason && !next && responses.length === 0 && !linkCardId && !threat && !myThreat) return undefined;
   return {
     ...(linkCardId ? { linkCardId } : {}),
+    ...(linkBoardId ? { linkBoardId } : {}),
     ...(threat ? { threat } : {}),
     ...(myThreat ? { myThreat } : {}),
     ...(reason ? { reason } : {}),

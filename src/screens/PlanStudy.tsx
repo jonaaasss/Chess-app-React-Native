@@ -738,7 +738,7 @@ export function PlanStudy({
             arrows={visibleArrows}
             size={BOARD_SIZE}
             flipped={flipped}
-            onOpenLink={(cardId) => openCardViewer(cardId, yourColor, boardStyle)}
+            onOpenLink={(cardId, boardId) => openCardViewer(cardId, yourColor, boardStyle, boardId)}
             onShowNote={setSummaryNote}
             positions={linkNotePositions}
           />

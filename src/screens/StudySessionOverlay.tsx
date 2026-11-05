@@ -1,3 +1,4 @@
+import { toLinkTarget } from '../linkTargets';
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -521,7 +522,7 @@ function StudySessionOverlay({
       // A Summary's arrows can link to the opening's other cards.
       const linkTargets =
         card.mode === 'summary'
-          ? (await getCards(card.openingId)).filter((c) => c.id !== card.id).map((c) => ({ id: c.id, name: c.name || 'Untitled card' }))
+          ? (await getCards(card.openingId)).filter((c) => c.id !== card.id).map(toLinkTarget)
           : undefined;
       const updated = await openReactionBoardEditor(
         currentBoardRef.current,

@@ -30,6 +30,9 @@ export interface ArrowNotes {
   // Summary cards only: tapping the arrow's link badge in Study opens this
   // card (same opening) in the card viewer.
   linkCardId?: string;
+  // With linkCardId: one board of that card (its id); the viewer then shows
+  // just that board. Left out = the whole card.
+  linkBoardId?: string;
   // Summary cards only: the letter of the threat this arrow belongs to (a
   // piece landing on your half, or a trade offer — it can happen at any
   // time). The opponent's move shows "!A", your answers "A1", "A2". Threat

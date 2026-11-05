@@ -1,3 +1,4 @@
+import type { LinkTarget } from '../linkTargets';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, PanResponder, PanResponderInstance, ScrollView, ActivityIndicator } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
@@ -490,7 +491,7 @@ function ReactionBoardEditorOverlay({
   initial: ReactionBoard;
   mode: CardMode;
   // Summary cards: the cards an arrow's "Link to card" can point to.
-  linkTargets?: { id: string; name: string }[];
+  linkTargets?: LinkTarget[];
   yourColor: 'w' | 'b';
   boardStyle: number;
   // Opened from Study: the move it was actually showing, so the editor
@@ -1181,7 +1182,16 @@ function ReactionBoardEditorOverlay({
   // rather than array index, since a span is unique within one face's arrow
   // list (see addArrow above) and stays stable across re-renders.
   async function handleArrowNote(arrow: Arrow) {
-    const result = await openArrowNotesDialog(arrow.notes, linkTargets);
+    // The screen's title names the arrow: its colour and badge, as on the board.
+    const idx = visibleArrows.findIndex((a) => sameArrowSpan(a, arrow) && a.color === arrow.color);
+    const badge = idx >= 0 ? committedNumberedArrows[idx] : undefined;
+    const shown = effectiveArrowColor(arrow, engineState.pieces, yourColor);
+    const subject = {
+      color: arrowColors[shown],
+      name: ARROW_COLOR_NAMES[shown],
+      badge: badge?.label ?? (badge?.number !== undefined ? String(badge.number) : undefined)
+    };
+    const result = await openArrowNotesDialog(arrow.notes, linkTargets, subject);
     if (result === null) return;
     setBoard((prev) => {
       const at = faceAnnotationsAt(prev[side], historyIndex);
@@ -2296,7 +2306,7 @@ export function openReactionBoardEditor(
   yourColor: 'w' | 'b' = 'w',
   boardStyle = 0,
   initialCursorId?: string | null,
-  linkTargets?: { id: string; name: string }[]
+  linkTargets?: LinkTarget[]
 ): Promise<ReactionBoard | null> {
   return showOverlay<ReactionBoard | null>(
     (close) => (

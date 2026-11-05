@@ -16,11 +16,15 @@ import { SummaryBoard } from './SummaryBoard';
 
 function CardViewerOverlay({
   cardId,
+  boardId,
   yourColor,
   boardStyle,
   close
 }: {
   cardId: string;
+  // A link to one board: only that board is shown (no ‹ › to other boards;
+  // a Reactions board still steps through its moves). Missing board = whole card.
+  boardId?: string;
   yourColor: 'w' | 'b';
   boardStyle: number;
   close: () => void;
@@ -37,7 +41,12 @@ function CardViewerOverlay({
   }, [cardId]);
   useOverlayBack(close);
 
-  const boards = useMemo(() => (card ? [...card.boards].sort((a, b) => a.order - b.order) : []), [card]);
+  const boards = useMemo(() => {
+    if (!card) return [];
+    const sorted = [...card.boards].sort((a, b) => a.order - b.order);
+    const one = boardId ? sorted.filter((b) => b.id === boardId) : [];
+    return one.length > 0 ? one : sorted;
+  }, [card, boardId]);
   const board = boards[boardIdx];
   const isReactions = card?.mode === 'reactions';
   const line = useMemo(() => (board && isReactions ? mainLineNodes(board.recording) : []), [board, isReactions]);
@@ -134,9 +143,9 @@ function CardViewerOverlay({
   );
 }
 
-export function openCardViewer(cardId: string, yourColor: 'w' | 'b', boardStyle: number): Promise<void> {
+export function openCardViewer(cardId: string, yourColor: 'w' | 'b', boardStyle: number, boardId?: string): Promise<void> {
   return showOverlay<void>((close) => (
-    <CardViewerOverlay cardId={cardId} yourColor={yourColor} boardStyle={boardStyle} close={() => close(undefined)} />
+    <CardViewerOverlay cardId={cardId} boardId={boardId} yourColor={yourColor} boardStyle={boardStyle} close={() => close(undefined)} />
   ), { animation: 'none' });
 }
 

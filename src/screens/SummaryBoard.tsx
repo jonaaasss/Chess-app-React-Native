@@ -70,7 +70,7 @@ export function ArrowLinkNoteBadges({
   arrows: Arrow[];
   size: number;
   flipped: boolean;
-  onOpenLink?: (cardId: string) => void;
+  onOpenLink?: (cardId: string, boardId?: string) => void;
   onShowNote?: (arrow: Arrow) => void;
   // Positions worked out together with the number badges (see separateBadgeCenters).
   positions?: { link?: { x: number; y: number }; note?: { x: number; y: number } }[];
@@ -87,7 +87,7 @@ export function ArrowLinkNoteBadges({
           <React.Fragment key={`${arrow.from}-${arrow.to}-${i}`}>
             {link && (
               <Pressable
-                onPress={() => onOpenLink(arrow.notes!.linkCardId!)}
+                onPress={() => onOpenLink(arrow.notes!.linkCardId!, arrow.notes!.linkBoardId)}
                 hitSlop={HIT}
                 accessibilityLabel="Open linked card"
                 style={[styles.badge, styles.linkBadge, { left: linkAt.x - BADGE / 2, top: linkAt.y - BADGE / 2 }]}
@@ -129,7 +129,7 @@ export function SummaryBoard({
   flipped: boolean;
   boardStyle: number;
   // Leave out to show the board without badges (e.g. a linked Plan card).
-  onOpenLink?: (cardId: string) => void;
+  onOpenLink?: (cardId: string, boardId?: string) => void;
   onShowNote?: (arrow: Arrow) => void;
 }) {
   return (

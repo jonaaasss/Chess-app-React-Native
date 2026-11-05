@@ -16,7 +16,7 @@ function arrowsText(arrows: Arrow[], cardNames?: Map<string, string>): string {
       const extra: string[] = [];
       if (n?.threat) extra.push(`threat ${n.threat}`);
       if (n?.myThreat) extra.push(`my threat ${n.myThreat}`);
-      if (n?.linkCardId) extra.push(`link: ${cardNames?.get(n.linkCardId) ?? '(missing card)'}`);
+      if (n?.linkCardId) extra.push(`link: ${cardNames?.get(n.linkCardId) ?? '(missing card)'}${n.linkBoardId ? ' (one board)' : ''}`);
       if (n?.reason) extra.push(`reason: ${n.reason}`);
       if (n?.next) extra.push(`next: ${n.next}`);
       for (const r of n?.responses ?? []) extra.push(`${r.kind} ${r.trigger}: ${r.text}`);

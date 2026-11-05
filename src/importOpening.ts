@@ -231,13 +231,19 @@ function parseNotes(v: unknown, where: string): ArrowNotes | undefined {
 
 // Summary arrows: the card name an arrow links to, resolved to an id on import.
 const LINK_NAME = Symbol('linkName');
-type ParsedArrow = Arrow & { [LINK_NAME]?: string };
+// Optional "linkBoard": the board number (1 = first) of the linked card.
+const LINK_BOARD = Symbol('linkBoard');
+type ParsedArrow = Arrow & { [LINK_NAME]?: string; [LINK_BOARD]?: number };
 
 function parseArrow(v: unknown, where: string, mode: 'plan' | 'reactions' | 'summary'): Arrow {
   if (!isRecord(v)) return fail(`${where} must be an object.`);
   if (v.link !== undefined) {
     if (mode !== 'summary') return fail(`${where}: only Summary cards can have a "link".`);
     if (typeof v.link !== 'string' || !v.link.trim()) return fail(`${where}: "link" must be the name of a card.`);
+  }
+  if (v.linkBoard !== undefined) {
+    if (v.link === undefined) return fail(`${where}: "linkBoard" needs a "link".`);
+    if (typeof v.linkBoard !== 'number' || !Number.isInteger(v.linkBoard) || v.linkBoard < 1) return fail(`${where}: "linkBoard" must be a board number like 2.`);
   }
   if (typeof v.from !== 'string' || !SQUARE.test(v.from) || typeof v.to !== 'string' || !SQUARE.test(v.to)) {
     return fail(`${where} needs "from" and "to" squares like "e2" and "e4".`);
@@ -252,6 +258,7 @@ function parseArrow(v: unknown, where: string, mode: 'plan' | 'reactions' | 'sum
   const notes = tag ? { ...parsed, ...tag.fields } : parsed;
   const arrow: ParsedArrow = { from: v.from, to: v.to, color, ...(notes ? { notes } : {}) };
   if (typeof v.link === 'string') arrow[LINK_NAME] = v.link.trim();
+  if (typeof v.linkBoard === 'number') arrow[LINK_BOARD] = v.linkBoard;
   return arrow;
 }
 
@@ -345,6 +352,11 @@ export function parseOpeningImport(raw: string): ParseResult {
           const link = (a as ParsedArrow)[LINK_NAME];
           if (link && (!names.has(link) || link === c.name)) {
             fail(`Card "${c.name}", board ${bi + 1}, arrow ${ai + 1}: "link" must be the name of another card in this import ("${link}" isn't).`);
+          }
+          const linkBoard = (a as ParsedArrow)[LINK_BOARD];
+          const linked = cards.find((o) => o.name === link);
+          if (linkBoard !== undefined && linked && linkBoard > linked.boards.length) {
+            fail(`Card "${c.name}", board ${bi + 1}, arrow ${ai + 1}: "linkBoard" ${linkBoard} doesn't exist ("${link}" has ${linked.boards.length} board${linked.boards.length === 1 ? '' : 's'}).`);
           }
         })
       )
@@ -476,7 +488,10 @@ export async function importOpening(repertoireId: string, name: string, spec: Pa
           if (!link) return;
           const face = built[ci].boards[bi].back;
           const target = face.moves.length > 0 ? face.moves[face.moves.length - 1].arrowsAfter : face.arrows;
-          target[ai] = { ...target[ai], notes: { ...target[ai].notes, linkCardId: idByName.get(link) } };
+          const linkBoard = (a as ParsedArrow)[LINK_BOARD];
+          const linkedCard = built.find((c) => c.name === link);
+          const linkBoardId = linkBoard !== undefined && linkedCard ? [...linkedCard.boards].sort((x, y) => x.order - y.order)[linkBoard - 1]?.id : undefined;
+          target[ai] = { ...target[ai], notes: { ...target[ai].notes, linkCardId: idByName.get(link), ...(linkBoardId ? { linkBoardId } : {}) } };
         })
       )
     );

@@ -1,3 +1,4 @@
+import { toLinkTarget, type LinkTarget } from '../linkTargets';
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -143,7 +144,7 @@ function CardEditorOverlay({
   // Only one Summary per opening: the option is greyed out once there is one.
   const [hasSummary, setHasSummary] = useState(false);
   // Summary cards: the other cards of the opening, for an arrow's "Link to card".
-  const [linkTargets, setLinkTargets] = useState<{ id: string; name: string }[]>([]);
+  const [linkTargets, setLinkTargets] = useState<LinkTarget[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -166,7 +167,7 @@ function CardEditorOverlay({
       setYourColor(rep?.group === 'black' ? 'b' : 'w');
       setOpeningStartPosition(opening?.startPosition);
       const siblings = await getCards(original.openingId);
-      setLinkTargets(siblings.filter((c) => c.id !== original.id).map((c) => ({ id: c.id, name: c.name || 'Untitled card' })));
+      setLinkTargets(siblings.filter((c) => c.id !== original.id).map(toLinkTarget));
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cardId]);
@@ -180,7 +181,7 @@ function CardEditorOverlay({
       setOpeningStartPosition(opening?.startPosition);
       const siblings = await getCards(newCard.openingId);
       setHasSummary(siblings.some((c) => c.mode === 'summary'));
-      setLinkTargets(siblings.map((c) => ({ id: c.id, name: c.name || 'Untitled card' })));
+      setLinkTargets(siblings.map(toLinkTarget));
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newCard?.openingId]);

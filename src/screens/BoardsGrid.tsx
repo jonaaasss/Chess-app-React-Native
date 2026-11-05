@@ -1,3 +1,4 @@
+import type { LinkTarget } from '../linkTargets';
 import React, { useEffect, useRef } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet } from 'react-native';
 import { newReactionBoardFromStart, cloneReactionBoard, defaultOverviewText, faceAnnotations, isPlanLike } from '../chess';
@@ -40,7 +41,7 @@ export function BoardsGrid({
   // handleDuplicate below).
   startPosition?: OpeningStartPosition;
   // Summary cards: the cards an arrow's "Link to card" can point to.
-  linkTargets?: { id: string; name: string }[];
+  linkTargets?: LinkTarget[];
   // Card.overviewText — lives here (above the boards, below the mode tip)
   // rather than below the grid, so it's still on screen once the keyboard
   // is up and you're actually typing into it.

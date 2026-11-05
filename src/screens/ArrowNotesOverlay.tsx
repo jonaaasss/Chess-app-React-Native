@@ -11,18 +11,36 @@ import { confirmDialog, showOverlay, useOverlayBack, CloseCircleButton } from '.
 import { colors, radius, touchTarget, type } from '../theme';
 import type { ArrowNotes, ArrowResponse } from '../types';
 import { MoveText } from '../components/MoveText';
+import type { LinkTarget } from '../linkTargets';
+
+// Which arrow the notes are for: its colour (hex), its name ("Green",
+// "Threat", …) and its badge ("2", "A1", "★A"), shown as the screen's title.
+export interface ArrowNotesSubject {
+  color: string;
+  name: string;
+  badge?: string;
+}
 
 function ArrowNotesOverlay({
   initial,
   linkTargets,
+  subject,
   close
 }: {
   initial: ArrowNotes | undefined;
   // Summary cards only: the cards of this opening an arrow can link to.
-  linkTargets?: { id: string; name: string }[];
+  linkTargets?: LinkTarget[];
+  subject?: ArrowNotesSubject;
   close: (result: { notes: ArrowNotes | undefined } | null) => void;
 }) {
   const [linkCardId, setLinkCardId] = useState<string | undefined>(initial?.linkCardId);
+  // A link to one board of the card ("Whole card" = undefined).
+  const [linkBoardId, setLinkBoardId] = useState<string | undefined>(initial?.linkBoardId);
+  const [boardOpen, setBoardOpen] = useState(false);
+  const linkedCard = linkTargets?.find((t) => t.id === linkCardId);
+  const linkedBoards = linkedCard && linkedCard.boards.length > 1 ? linkedCard.boards : [];
+  // A board that no longer exists falls back to the whole card.
+  const boardId = linkedBoards.some((b) => b.id === linkBoardId) ? linkBoardId : undefined;
   // The threat letter is set by drawing with a threat in the board editor; kept as is here.
   const threat = initial?.threat;
   const myThreat = initial?.myThreat;
@@ -31,7 +49,7 @@ function ArrowNotesOverlay({
   const [next, setNext] = useState(initial?.next ?? '');
   const [responses, setResponses] = useState<ArrowResponse[]>(initial?.responses ?? []);
 
-  const current = () => cleanArrowNotes({ linkCardId, threat, myThreat, reason, next, responses });
+  const current = () => cleanArrowNotes({ linkCardId, linkBoardId: boardId, threat, myThreat, reason, next, responses });
   const initialCleaned = JSON.stringify(cleanArrowNotes(initial) ?? null);
 
   async function handleCancel() {
@@ -60,6 +78,18 @@ function ArrowNotesOverlay({
       </View>
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        {subject && (
+          // Which arrow this is about: its colour and badge.
+          <View style={styles.subjectRow}>
+            <Svg width={40} height={20} viewBox="0 0 40 20">
+              <Path d="M4 10h24" stroke={subject.color} strokeWidth={5} strokeLinecap="round" />
+              <Path d="M26 3l11 7-11 7z" fill={subject.color} />
+            </Svg>
+            <Text style={styles.subjectText}>
+              {subject.name} arrow{subject.badge ? ` ${subject.badge}` : ''}
+            </Text>
+          </View>
+        )}
         {linkTargets && (
           <>
             <Text style={styles.label}>Link</Text>
@@ -81,6 +111,7 @@ function ArrowNotesOverlay({
                     <Pressable
                       key={t.id || 'none'}
                       onPress={() => {
+                        if ((t.id || undefined) !== linkCardId) setLinkBoardId(undefined);
                         setLinkCardId(t.id || undefined);
                         setLinkOpen(false);
                       }}
@@ -91,6 +122,40 @@ function ArrowNotesOverlay({
                   );
                 })}
               </View>
+            )}
+            {linkedBoards.length > 0 && (
+              <>
+                <Text style={styles.label}>Board</Text>
+                <Pressable onPress={() => setBoardOpen((o) => !o)} style={styles.select} accessibilityLabel="Choose the linked board">
+                  <Text style={styles.selectText} numberOfLines={1}>
+                    {linkedBoards.find((b) => b.id === boardId)?.label ?? 'Whole card'}
+                  </Text>
+                  <Svg width={16} height={16} viewBox="0 0 24 24">
+                    <Path d={boardOpen ? 'M6 15l6-6 6 6' : 'M6 9l6 6 6-6'} stroke={colors.textDim} strokeWidth={2.5} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                  </Svg>
+                </Pressable>
+                {boardOpen && (
+                  <View style={styles.linkList}>
+                    {[{ id: '', label: 'Whole card' }, ...linkedBoards].map((b) => {
+                      const active = (boardId ?? '') === b.id;
+                      return (
+                        <Pressable
+                          key={b.id || 'whole'}
+                          onPress={() => {
+                            setLinkBoardId(b.id || undefined);
+                            setBoardOpen(false);
+                          }}
+                          style={[styles.linkOption, active && styles.linkOptionActive]}
+                        >
+                          <Text style={[styles.linkOptionText, active && styles.linkOptionTextActive]} numberOfLines={1}>
+                            {b.label}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                )}
+              </>
             )}
           </>
         )}
@@ -167,15 +232,18 @@ function ArrowNotesOverlay({
 // or null when cancelled.
 export function openArrowNotesDialog(
   initial: ArrowNotes | undefined,
-  linkTargets?: { id: string; name: string }[]
+  linkTargets?: LinkTarget[],
+  subject?: ArrowNotesSubject
 ): Promise<{ notes: ArrowNotes | undefined } | null> {
   return showOverlay<{ notes: ArrowNotes | undefined } | null>((close) => (
-    <ArrowNotesOverlay initial={initial} linkTargets={linkTargets} close={close} />
+    <ArrowNotesOverlay initial={initial} linkTargets={linkTargets} subject={subject} close={close} />
   ));
 }
 
 const styles = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: colors.bg },
+  subjectRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingBottom: 4 },
+  subjectText: { color: colors.text, ...type.h2 },
   linkList: { gap: 6, marginTop: 6 },
   linkOption: {
     minHeight: 48,
