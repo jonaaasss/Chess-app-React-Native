@@ -33,7 +33,7 @@ const MAX_BOARDS_PER_CARD = 6;
 const MAX_CARDS = 60;
 const MAX_ARROWS_PER_BOARD = 40;
 const SQUARE = /^[a-h][1-8]$/;
-const COLORS: ArrowColor[] = ['green', 'darkGreen', 'orange', 'darkOrange', 'red', 'darkRed', 'blue', 'darkBlue'];
+const COLORS: ArrowColor[] = ['green', 'darkGreen', 'orange', 'darkOrange', 'red', 'darkRed', 'blue', 'darkBlue', 'purple', 'darkPurple'];
 
 class ImportError extends Error {
   readonly isImportError = true;
@@ -203,7 +203,7 @@ function parseColor(v: unknown, where: string): ArrowColor {
   if (v === undefined) return 'green';
   if (v === 'yellow') return 'orange';
   if (typeof v === 'string' && (COLORS as string[]).includes(v)) return v as ArrowColor;
-  return fail(`${where}: colour must be green, orange, red or blue, or darkGreen, darkOrange, darkRed or darkBlue.`);
+  return fail(`${where}: colour must be green, orange, red or blue, or darkGreen, darkOrange, darkRed or darkBlue (purple / darkPurple only for threats).`);
 }
 
 function parseNotes(v: unknown, where: string): ArrowNotes | undefined {
@@ -242,8 +242,18 @@ function parseArrow(v: unknown, where: string, mode: 'plan' | 'reactions' | 'sum
     return fail(`${where} needs "from" and "to" squares like "e2" and "e4".`);
   }
   if (v.from === v.to) return fail(`${where}: "from" and "to" are the same square.`);
-  const notes = parseNotes(v.notes, where);
-  const arrow: ParsedArrow = { from: v.from, to: v.to, color: parseColor(v.color, where), ...(notes ? { notes } : {}) };
+  // Summary threats: "threat": "A" (a capital letter) — the arrow is purple and
+  // belongs to that threat (the opponent's move or one of your answers).
+  if (v.threat !== undefined) {
+    if (mode !== 'summary') return fail(`${where}: only Summary cards can have a "threat".`);
+    if (typeof v.threat !== 'string' || !/^[A-Z]$/.test(v.threat)) return fail(`${where}: "threat" must be one capital letter, like "A".`);
+  }
+  const threat = typeof v.threat === 'string' ? v.threat : undefined;
+  const color = threat ? 'purple' : parseColor(v.color, where);
+  if (!threat && (color === 'purple' || color === 'darkPurple')) return fail(`${where}: purple is only for threats (add "threat": "A").`);
+  const parsed = parseNotes(v.notes, where);
+  const notes = threat ? { ...parsed, threat } : parsed;
+  const arrow: ParsedArrow = { from: v.from, to: v.to, color, ...(notes ? { notes } : {}) };
   if (typeof v.link === 'string') arrow[LINK_NAME] = v.link.trim();
   return arrow;
 }

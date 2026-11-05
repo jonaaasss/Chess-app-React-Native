@@ -3,7 +3,7 @@
 // everything empty removes the note; Cancel (and the back button) leave it
 // untouched, same rules the old single text dialog had.
 import React, { useState } from 'react';
-import { View, Text, TextInput, Pressable, ScrollView, StyleSheet, Switch } from 'react-native';
+import { View, Text, TextInput, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import { cleanArrowNotes } from '../arrowNotes';
@@ -23,7 +23,8 @@ function ArrowNotesOverlay({
   close: (result: { notes: ArrowNotes | undefined } | null) => void;
 }) {
   const [linkCardId, setLinkCardId] = useState<string | undefined>(initial?.linkCardId);
-  const [threat, setThreat] = useState(initial?.threat === true);
+  // The threat letter is set by drawing with a threat in the board editor; kept as is here.
+  const threat = initial?.threat;
   const [linkOpen, setLinkOpen] = useState(false);
   const [reason, setReason] = useState(initial?.reason ?? '');
   const [next, setNext] = useState(initial?.next ?? '');
@@ -60,19 +61,6 @@ function ArrowNotesOverlay({
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {linkTargets && (
           <>
-            <View style={styles.threatRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.threatTitle}>Threat (any time)</Text>
-                <Text style={styles.threatHint}>Shown with "!" instead of a number: it can happen at any moment.</Text>
-              </View>
-              <Switch
-                value={threat}
-                onValueChange={setThreat}
-                trackColor={{ false: colors.panel2, true: colors.primary }}
-                thumbColor={colors.textPrimary}
-              />
-            </View>
-
             <Text style={styles.label}>Link</Text>
             <Pressable onPress={() => setLinkOpen((o) => !o)} style={styles.select} accessibilityLabel="Choose the linked card">
               <MoveText

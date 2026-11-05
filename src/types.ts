@@ -3,7 +3,9 @@ export type GroupId = 'white' | 'black';
 // Each base colour has a dark tint, a sub-group of that colour (e.g. green =
 // the general plan, dark green = "after !Nc3"). Study order follows
 // ARROW_COLOR_ORDER in theme.ts.
-export type ArrowColor = 'green' | 'darkGreen' | 'orange' | 'darkOrange' | 'red' | 'darkRed' | 'blue' | 'darkBlue';
+// Purple is reserved for threats on a Summary (see ArrowNotes.threat) and is
+// not part of the study order.
+export type ArrowColor = 'green' | 'darkGreen' | 'orange' | 'darkOrange' | 'red' | 'darkRed' | 'blue' | 'darkBlue' | 'purple' | 'darkPurple';
 
 export type PieceCode =
   | 'wK' | 'wQ' | 'wR' | 'wB' | 'wN' | 'wP'
@@ -28,10 +30,11 @@ export interface ArrowNotes {
   // Summary cards only: tapping the arrow's link badge in Study opens this
   // card (same opening) in the card viewer.
   linkCardId?: string;
-  // Summary cards only: a threat (a piece landing on your half, or a trade
-  // offer) and its answer can happen at any time — shown with "!" instead of
-  // a number, and outside the numbered order.
-  threat?: boolean;
+  // Summary cards only: the letter of the threat this arrow belongs to (a
+  // piece landing on your half, or a trade offer — it can happen at any
+  // time). The opponent's move shows "!A", your answers "A1", "A2". Threat
+  // arrows are purple and studied one threat at a time, outside the order.
+  threat?: string;
   reason?: string; // why this move
   next?: string; // the follow-up plan
   responses?: ArrowResponse[];

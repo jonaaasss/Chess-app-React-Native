@@ -146,6 +146,23 @@ function migrate(s: Store): void {
       card.boards = [newReactionBoard(uid(), 0)];
     }
   }
+  // Summary threats used to be an on/off switch; now each has a letter and
+  // is drawn in purple. An old "on" becomes threat A.
+  for (const card of s.cards) {
+    if (card.mode !== 'summary') continue;
+    for (const board of card.boards) {
+      for (const face of [board.front, board.back]) {
+        for (const list of [face.arrows, ...face.moves.map((m) => m.arrowsAfter)]) {
+          for (const a of list) {
+            if ((a.notes?.threat as unknown) === true) {
+              a.notes = { ...a.notes, threat: 'A' };
+              a.color = 'purple';
+            }
+          }
+        }
+      }
+    }
+  }
   // "Front & back" cards are no longer offered: Jonas chose to remove the
   // existing ones (old backups that still hold them lose them on restore).
   s.cards = s.cards.filter((c) => c.mode !== 'others');

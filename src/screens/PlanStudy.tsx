@@ -78,6 +78,15 @@ interface ShownNote {
 
 const keyOf = (a: Arrow) => `${a.from}-${a.to}-${a.color}`;
 
+// A short move name for a threat chip, e.g. "Bg5" or "Nxe5".
+function sanLike(a: Arrow, pieces: Partial<Record<string, PieceCode>> | undefined): string {
+  const piece = pieces?.[a.from];
+  const kind = piece ? piece[1] : '';
+  const capture = pieces?.[a.to] ? 'x' : '';
+  if (kind === 'P' || !kind) return capture ? `${a.from[0]}x${a.to}` : a.to;
+  return `${kind}${capture}${a.to}`;
+}
+
 function allOwnOrdered(groups: ColorGroup[], keys: Set<string>): Arrow[] {
   return groups.flatMap((g) => g.own.filter((a) => keys.has(keyOf(a))));
 }
@@ -171,6 +180,9 @@ export function PlanStudy({
   const [showAll, setShowAll] = useState(false);
   // The last colour group whose opponent arrows are on the board already.
   const [autoShownGroup, setAutoShownGroup] = useState(-1);
+  // Summary: the threat being studied (its letter) and your answers found so far.
+  const [threatMode, setThreatMode] = useState<string | null>(null);
+  const [threatFound, setThreatFound] = useState(0);
 
   // Plan: an arrow's notes pop up the moment it is found and must be
   // dismissed (Got it) before going on. Summary: notes open from the orange
@@ -211,7 +223,19 @@ export function PlanStudy({
     () => editorArrowNumbers(finalAnnotations.arrows, board?.back.pieces, yourColor),
     [finalAnnotations, board, yourColor]
   );
-  const noArrows = colorGroups.length === 0;
+  // Threats (Summary): purple arrows tagged with a letter, outside the colour
+  // order. Per letter: the opponent's move(s) and your answers in order.
+  const threats = useMemo(() => {
+    const letters = [...new Set(finalAnnotations.arrows.map((a) => a.notes?.threat).filter((t): t is string => !!t))].sort();
+    return letters.map((letter) => {
+      const all = finalAnnotations.arrows.filter((a) => a.notes?.threat === letter);
+      const opp = all.filter((a) => isOpponentArrow(a.from, board?.back.pieces, yourColor));
+      const own = all.filter((a) => !isOpponentArrow(a.from, board?.back.pieces, yourColor));
+      return { letter, opp, own, title: opp[0] ? sanLike(opp[0], board?.back.pieces) : '' };
+    });
+  }, [finalAnnotations, board, yourColor]);
+  const activeThreat = threats.find((t) => t.letter === threatMode);
+  const noArrows = colorGroups.length === 0 && threats.length === 0;
   // Every own arrow in study order — what preview and »/› step through.
   const allOwn = useMemo(() => colorGroups.flatMap((g) => g.own), [colorGroups]);
 
@@ -277,6 +301,8 @@ export function PlanStudy({
     setPendingNote(null);
     setShownNotes([]);
     setSummaryNote(null);
+    setThreatMode(null);
+    setThreatFound(0);
   }, [colorGroups]);
 
   function continueToNextBoard() {
@@ -339,6 +365,17 @@ export function PlanStudy({
   }
 
   function handleDrawnArrow(from: string, to: string) {
+    if (activeThreat) {
+      if (wrongArrow) return;
+      const next = activeThreat.own[threatFound];
+      if (!next) return;
+      if (next.from === from && next.to === to) setThreatFound((n) => n + 1);
+      else {
+        setWrongArrow({ from, to });
+        setTimeout(() => setWrongArrow(null), WRONG_ARROW_SHOW_MS);
+      }
+      return;
+    }
     if (preview || !board || boardDone || allDone || wrongArrow || noArrows || autoPending) return;
     const match = remaining.find((a) => a.from === from && a.to === to);
     if (!match) {
@@ -411,6 +448,14 @@ export function PlanStudy({
     setAutoShownGroup((g) => Math.min(g, targetIdx - 1));
   }
 
+  function toggleThreat(letter: string) {
+    setThreatMode((cur) => (cur === letter ? null : letter));
+    setThreatFound(0);
+    setWrongArrow(null);
+    setSummaryNote(null);
+  }
+  const threatDone = !!activeThreat && threatFound >= activeThreat.own.length;
+
   const panResponderRef = useRef<PanResponderInstance | null>(null);
   const handleDrawnArrowRef = useRef(handleDrawnArrow);
   handleDrawnArrowRef.current = handleDrawnArrow;
@@ -449,26 +494,38 @@ export function PlanStudy({
 
   // By default only the active group's colour is on the board ("Show all colors" lifts that).
   const visibleColor = !showAll && !boardDone && activeGroup ? activeGroup.color : null;
-  const visibleArrows = visibleColor ? drawnArrows.filter((a) => a.color === visibleColor) : drawnArrows;
+  const visibleArrows = activeThreat
+    ? [...activeThreat.opp, ...activeThreat.own.slice(0, threatFound)]
+    : visibleColor
+      ? drawnArrows.filter((a) => a.color === visibleColor)
+      : drawnArrows;
   // A colour's circles appear together with that colour's step.
   const reachedOrder = boardDone ? COLOR_CYCLE.length : COLOR_CYCLE.indexOf(activeGroup?.color ?? 'green');
   const circleColor = (c: { square: string; color: ArrowColor }) =>
     board && isOpponentArrow(c.square, board.back.pieces, yourColor) ? opponentTint(c.color) : c.color;
-  const visibleCircles = finalAnnotations.circles.filter((c) =>
+  const visibleCircles = activeThreat ? [] : finalAnnotations.circles.filter((c) =>
     visibleColor ? circleColor(c) === visibleColor : COLOR_CYCLE.indexOf(circleColor(c)) <= reachedOrder
   );
 
+  // "!A" on the opponent's move, "A1", "A2" on your answers.
+  function threatLabel(a: Arrow): string {
+    const t = threats.find((x) => x.letter === a.notes?.threat);
+    if (!t) return '!';
+    const i = t.own.findIndex((o) => keyOf(o) === keyOf(a));
+    return i === -1 ? `!${t.letter}` : `${t.letter}${i + 1}`;
+  }
   const numberedArrows: NumberedArrow[] = visibleArrows.map((a, i) => ({
     id: `${keyOf(a)}-${i}`,
     from: a.from,
     to: a.to,
     color: arrowColors[a.color],
-    ...(a.notes?.threat ? { label: '!' } : { number: arrowNumbers.get(keyOf(a)) })
+    ...(a.notes?.threat ? { label: threatLabel(a) } : { number: arrowNumbers.get(keyOf(a)) })
   }));
   if (wrongArrow) {
     numberedArrows.push({ id: 'wrong', from: wrongArrow.from, to: wrongArrow.to, color: colors.danger });
   } else if (tempArrow) {
-    numberedArrows.push({ id: 'preview', from: tempArrow.from, to: tempArrow.to, color: activeGroup ? arrowColors[activeGroup.color] : colors.textDim });
+    const tempColor = activeThreat ? arrowColors.purple : activeGroup ? arrowColors[activeGroup.color] : colors.textDim;
+    numberedArrows.push({ id: 'preview', from: tempArrow.from, to: tempArrow.to, color: tempColor });
   }
 
   // All badges of the board placed together — numbers / "!" and, on a
@@ -502,7 +559,13 @@ export function PlanStudy({
   const groupTotal = activeGroup ? activeGroup.own.length : 0;
   const groupDone = groupTotal - remaining.length;
   const colorName = activeGroup ? ARROW_COLOR_NAMES[activeGroup.color] : '';
-  const statusText = boardDone
+  const statusText = activeThreat
+    ? wrongArrow
+      ? 'Wrong arrow — try again'
+      : threatDone
+        ? `Threat ${activeThreat.letter} complete — tap it again to go back`
+        : `Threat ${activeThreat.letter}: your answer ${threatFound + 1} of ${activeThreat.own.length}`
+    : boardDone
     ? 'Board complete!'
     : wrongArrow
       ? 'Wrong arrow — try again'
@@ -511,7 +574,7 @@ export function PlanStudy({
         : activeGroup
         ? `${colorName} arrows: ${groupDone} of ${groupTotal}`
         : "Draw the plan's arrows";
-  const statusColor = boardDone ? colors.primary : wrongArrow ? colors.danger : activeGroup ? arrowColors[activeGroup.color] : colors.textDim;
+  const statusColor = activeThreat ? (wrongArrow ? colors.danger : arrowColors.purple) : boardDone ? colors.primary : wrongArrow ? colors.danger : activeGroup ? arrowColors[activeGroup.color] : colors.textDim;
 
   return (
     <View ref={containerRef} collapsable={false} style={{ alignItems: 'center', gap: 10 }}>
@@ -579,7 +642,25 @@ export function PlanStudy({
         )}
       </View>
 
-      {!noArrows && !preview && (
+      {isSummary && !preview && threats.length > 0 && (
+        // Threats sit outside the colour order: tap one to study its answers, tap again to go back.
+        <View style={styles.threatRow}>
+          {threats.map((t) => (
+            <Pressable
+              key={t.letter}
+              onPress={() => toggleThreat(t.letter)}
+              style={[styles.threatChip, threatMode === t.letter && styles.threatChipActive]}
+              accessibilityLabel={`Study threat ${t.letter}`}
+            >
+              <Text style={[styles.threatChipText, threatMode === t.letter && styles.threatChipTextActive]}>
+                {`!${t.letter}${t.title ? ` ${t.title}` : ''}`}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
+
+      {!noArrows && !preview && !activeThreat && (
         <View style={styles.onlyRow}>
           <Text style={styles.onlyLabel}>Show all colors</Text>
           <Switch
@@ -631,7 +712,25 @@ export function PlanStudy({
         </View>
       )}
 
-      {!preview && !noArrows && (
+      {!preview && activeThreat && (
+        // ‹ › one answer back / forward, « » all of this threat's answers.
+        <View style={styles.navRow}>
+          <Pressable onPress={() => setThreatFound(0)} disabled={threatFound === 0} style={[styles.navBtn, threatFound === 0 && styles.navBtnDisabled]} accessibilityLabel="Take back all answers">
+            <Text style={styles.navBtnText}>«</Text>
+          </Pressable>
+          <Pressable onPress={() => setThreatFound((n) => Math.max(0, n - 1))} disabled={threatFound === 0} style={[styles.navBtn, threatFound === 0 && styles.navBtnDisabled]} accessibilityLabel="Take back one answer">
+            <Text style={styles.navBtnText}>‹</Text>
+          </Pressable>
+          <Pressable onPress={() => setThreatFound((n) => n + 1)} disabled={threatDone} style={[styles.navBtn, threatDone && styles.navBtnDisabled]} accessibilityLabel="Show the next answer">
+            <Text style={styles.navBtnText}>›</Text>
+          </Pressable>
+          <Pressable onPress={() => setThreatFound(activeThreat.own.length)} disabled={threatDone} style={[styles.navBtn, threatDone && styles.navBtnDisabled]} accessibilityLabel="Show all answers">
+            <Text style={styles.navBtnText}>»</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {!preview && !noArrows && !activeThreat && (
         // « whole group back · ‹ one arrow back · › show one arrow · » show the group
         <View ref={guideTargets?.solution} collapsable={false} style={styles.navRow}>
           <Pressable onPress={stepBackGroup} disabled={!canBack} style={[styles.navBtn, !canBack && styles.navBtnDisabled]} accessibilityLabel="Take back this colour">
@@ -726,6 +825,11 @@ const styles = StyleSheet.create({
   continueBtn: { marginTop: 4, minHeight: touchTarget, justifyContent: 'center', paddingHorizontal: 20, borderRadius: radius.pill, backgroundColor: colors.primary },
   continueText: { color: colors.onPrimary, fontSize: 14, fontWeight: '700' },
   onlyRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  threatRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8, paddingHorizontal: 16 },
+  threatChip: { minHeight: 44, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center', borderRadius: 999, borderWidth: 1, borderColor: arrowColors.darkPurple },
+  threatChipActive: { backgroundColor: arrowColors.darkPurple },
+  threatChipText: { color: arrowColors.purple, fontSize: 14, fontWeight: '700' },
+  threatChipTextActive: { color: '#ffffff' },
   onlyLabel: { color: colors.textDim, fontSize: 13 }
 });
 
