@@ -18,7 +18,7 @@ import {
 import { legalMovesFrom, makeMove, isPromotionMove, sansForBoardMoves, type GameState } from '../chessEngine';
 import type { Arrow, ArrowColor, BoardFace, BoardMove, CardMode, Circle, MoveNode, PieceCode, PromotionPiece, ReactionBoard } from '../types';
 import { arrowColors, BASE_ARROW_COLORS, boardStyles, colors, DARK_TINT, engineColors, radius, spacing, type, variationColor } from '../theme';
-import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, isOpponentArrow, type NumberedArrow } from '../components/ChessBoard';
+import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, effectiveArrowColor, isOpponentArrow, type NumberedArrow } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts } from '../components/PieceAnimation';
 import { alertDialog, confirmDialog, dismissSnackbar, showOverlay, showSnackbar, SnackbarLayer, useOverlayBack } from '../overlay';
 import { hasArrowNotes } from '../arrowNotes';
@@ -131,7 +131,7 @@ function toEditorNumberedArrows(arrows: Arrow[], pieces: Partial<Record<string, 
   for (const a of numbered) countByGroup.set(groupOf(a), (countByGroup.get(groupOf(a)) ?? 0) + 1);
   const seenByGroup = new Map<string, number>();
   return arrows.map((a, i) => {
-    const base = { id: `${a.from}-${a.to}-${a.color}-${i}`, from: a.from, to: a.to, color: arrowColors[a.color] };
+    const base = { id: `${a.from}-${a.to}-${a.color}-${i}`, from: a.from, to: a.to, color: arrowColors[effectiveArrowColor(a, pieces, yourColor)] };
     if (a.notes?.threat) return { ...base, label: '!' };
     const seen = (seenByGroup.get(groupOf(a)) ?? 0) + 1;
     seenByGroup.set(groupOf(a), seen);
@@ -1028,9 +1028,24 @@ function ReactionBoardEditorOverlay({
   // Drawing the same arrow (same from/to) again toggles it off if the color
   // matches, or replaces it if the color differs — same rule toggleCircle
   // already uses for circles on a square.
-  async function addArrow(arrow: Arrow) {
+  async function addArrow(drawn: Arrow) {
+    // An arrow from an opponent piece is always stored in the dark tint.
+    const arrow = { ...drawn, color: effectiveArrowColor(drawn, engineState.pieces, yourColor) };
     const existing = visibleArrows.find((a) => sameArrowSpan(a, arrow));
     const isSameColor = existing?.color === arrow.color;
+
+    // Summary: the same move may carry several arrows in different colours
+    // (e.g. h6 as part of the plan and as the answer to !Bg5); drawing it
+    // again in a colour it already has removes just that one.
+    if (mode === 'summary') {
+      setBoard((prev) => {
+        const at = faceAnnotationsAt(prev[side], historyIndex);
+        const same = (a: Arrow) => sameArrowSpan(a, arrow) && a.color === arrow.color;
+        const arrows = at.arrows.some(same) ? at.arrows.filter((a) => !same(a)) : [...at.arrows, arrow];
+        return { ...prev, [side]: withFaceAnnotationsAt(prev[side], historyIndex, arrows, at.circles) };
+      });
+      return;
+    }
 
     if (!isReactions) {
       setBoard((prev) => {
@@ -1076,7 +1091,7 @@ function ReactionBoardEditorOverlay({
     if (result === null) return;
     setBoard((prev) => {
       const at = faceAnnotationsAt(prev[side], historyIndex);
-      const arrows = at.arrows.map((a) => (sameArrowSpan(a, arrow) ? { ...a, notes: result.notes } : a));
+      const arrows = at.arrows.map((a) => (sameArrowSpan(a, arrow) && a.color === arrow.color ? { ...a, notes: result.notes } : a));
       return { ...prev, [side]: withFaceAnnotationsAt(prev[side], historyIndex, arrows, at.circles) };
     });
   }
@@ -1687,7 +1702,7 @@ function ReactionBoardEditorOverlay({
             <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
               <ArrowNoteBadges
                 arrows={visibleArrows.map((a) => ({
-                  id: `${a.from}-${a.to}`,
+                  id: `${a.from}-${a.to}-${a.color}`,
                   from: a.from,
                   to: a.to,
                   hasDescription: hasArrowNotes(a),

@@ -8,7 +8,7 @@ import { CloseCircleButton } from '../overlay';
 import { MoveText } from '../components/MoveText';
 import type { Arrow, ArrowColor, Card, PieceCode, ReactionBoard } from '../types';
 import { ARROW_COLOR_NAMES, ARROW_COLOR_ORDER, arrowColors, boardStyles, colors, radius, touchTarget } from '../theme';
-import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, isOpponentArrow, type NumberedArrow } from '../components/ChessBoard';
+import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, effectiveArrowColor, isOpponentArrow, type NumberedArrow } from '../components/ChessBoard';
 import { PIECE_ANIM_DURATION_MS } from '../components/PieceAnimation';
 import type { GuideTargets } from '../components/GuideCoach';
 import type { CoachEvent } from '../guideContent';
@@ -117,7 +117,7 @@ function numberWithinColors(arrows: Arrow[], numbers: Map<string, number>): void
 // opponent arrows appear by themselves; you draw your own (order inside a
 // group doesn't matter). ‹ › take back / show one arrow, « » a whole group;
 // showing counts as a slip once per arrow (never on a Summary, which isn't
-// scored). "Show only current colour" hides everything but the group being
+// scored). Only the colour being worked on is shown unless "Show all colors" is on (and once the board is complete); the group being
 // worked on. A Summary also shows link and note badges on drawn arrows.
 export function PlanStudy({
   card,
@@ -160,7 +160,8 @@ export function PlanStudy({
   const [mistakes, setMistakes] = useState(0);
   const [allDone, setAllDone] = useState(false);
   const [tempArrow, setTempArrow] = useState<{ from: string; to: string } | null>(null);
-  const [onlyCurrent, setOnlyCurrent] = useState(false);
+  // Off: only the arrows and circles of the colour being worked on are shown.
+  const [showAll, setShowAll] = useState(false);
 
   // Plan: an arrow's notes pop up the moment it is found and must be
   // dismissed (Got it) before going on. Summary: notes open from the orange
@@ -187,7 +188,12 @@ export function PlanStudy({
 
   // A Plan board has one position — `back` holds it, its arrows and circles
   // (the final position's, see chess.ts's faceAnnotations).
-  const finalAnnotations = useMemo(() => (board ? faceAnnotations(board.back) : { arrows: [], circles: [] }), [board]);
+  // Opponent arrows count in their dark tint (that's how they are shown).
+  const finalAnnotations = useMemo(() => {
+    if (!board) return { arrows: [], circles: [] };
+    const a = faceAnnotations(board.back);
+    return { arrows: a.arrows.map((x) => ({ ...x, color: effectiveArrowColor(x, board.back.pieces, yourColor) })), circles: a.circles };
+  }, [board, yourColor]);
   const colorGroups = useMemo(
     () => buildColorGroups(finalAnnotations.arrows, board?.back.pieces, yourColor),
     [finalAnnotations, board, yourColor]
@@ -396,8 +402,8 @@ export function PlanStudy({
   }
   const panResponder = panResponderRef.current;
 
-  // "Show only current colour": just the active group's colour on the board.
-  const visibleColor = onlyCurrent && activeGroup ? activeGroup.color : null;
+  // By default only the active group's colour is on the board ("Show all colors" lifts that).
+  const visibleColor = !showAll && !boardDone && activeGroup ? activeGroup.color : null;
   const visibleArrows = visibleColor ? drawnArrows.filter((a) => a.color === visibleColor) : drawnArrows;
   const visibleCircles = visibleColor ? finalAnnotations.circles.filter((c) => c.color === visibleColor) : finalAnnotations.circles;
 
@@ -499,10 +505,10 @@ export function PlanStudy({
 
       {!noArrows && !preview && (
         <View style={styles.onlyRow}>
-          <Text style={styles.onlyLabel}>Show only current color</Text>
+          <Text style={styles.onlyLabel}>Show all colors</Text>
           <Switch
-            value={onlyCurrent}
-            onValueChange={setOnlyCurrent}
+            value={showAll}
+            onValueChange={setShowAll}
             trackColor={{ false: colors.panel2, true: colors.primary }}
             thumbColor={colors.textPrimary}
           />

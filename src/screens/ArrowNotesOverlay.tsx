@@ -3,8 +3,9 @@
 // everything empty removes the note; Cancel (and the back button) leave it
 // untouched, same rules the old single text dialog had.
 import React, { useState } from 'react';
-import { View, Text, TextInput, Pressable, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, TextInput, Pressable, ScrollView, StyleSheet, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Svg, { Path } from 'react-native-svg';
 import { cleanArrowNotes } from '../arrowNotes';
 import { confirmDialog, showOverlay, useOverlayBack, CloseCircleButton } from '../overlay';
 import { colors, radius, touchTarget, type } from '../theme';
@@ -23,6 +24,7 @@ function ArrowNotesOverlay({
 }) {
   const [linkCardId, setLinkCardId] = useState<string | undefined>(initial?.linkCardId);
   const [threat, setThreat] = useState(initial?.threat === true);
+  const [linkOpen, setLinkOpen] = useState(false);
   const [reason, setReason] = useState(initial?.reason ?? '');
   const [next, setNext] = useState(initial?.next ?? '');
   const [responses, setResponses] = useState<ArrowResponse[]>(initial?.responses ?? []);
@@ -58,29 +60,49 @@ function ArrowNotesOverlay({
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {linkTargets && (
           <>
-            <Text style={styles.label}>Link to card</Text>
-            <View style={styles.linkList}>
-              {[{ id: '', name: 'No link' }, ...linkTargets].map((t) => {
-                const active = (linkCardId ?? '') === t.id;
-                return (
-                  <Pressable
-                    key={t.id || 'none'}
-                    onPress={() => setLinkCardId(t.id || undefined)}
-                    style={[styles.linkOption, active && styles.linkOptionActive]}
-                  >
-                    <MoveText text={t.name} style={[styles.linkOptionText, active && styles.linkOptionTextActive]} numberOfLines={1} />
-                  </Pressable>
-                );
-              })}
-            </View>
-
-            <Pressable onPress={() => setThreat((t) => !t)} style={[styles.linkOption, styles.threatRow, threat && styles.linkOptionActive]}>
+            <View style={styles.threatRow}>
               <View style={{ flex: 1 }}>
-                <Text style={[styles.linkOptionText, threat && styles.linkOptionTextActive]}>Threat (any time)</Text>
+                <Text style={styles.threatTitle}>Threat (any time)</Text>
                 <Text style={styles.threatHint}>Shown with "!" instead of a number: it can happen at any moment.</Text>
               </View>
-              <Text style={[styles.linkOptionText, threat && styles.linkOptionTextActive]}>{threat ? 'On' : 'Off'}</Text>
+              <Switch
+                value={threat}
+                onValueChange={setThreat}
+                trackColor={{ false: colors.panel2, true: colors.primary }}
+                thumbColor={colors.textPrimary}
+              />
+            </View>
+
+            <Text style={styles.label}>Link</Text>
+            <Pressable onPress={() => setLinkOpen((o) => !o)} style={styles.select} accessibilityLabel="Choose the linked card">
+              <MoveText
+                text={linkTargets.find((t) => t.id === linkCardId)?.name ?? 'None'}
+                style={styles.selectText}
+                numberOfLines={1}
+              />
+              <Svg width={16} height={16} viewBox="0 0 24 24">
+                <Path d={linkOpen ? 'M6 15l6-6 6 6' : 'M6 9l6 6 6-6'} stroke={colors.textDim} strokeWidth={2.5} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+              </Svg>
             </Pressable>
+            {linkOpen && (
+              <View style={styles.linkList}>
+                {[{ id: '', name: 'None' }, ...linkTargets].map((t) => {
+                  const active = (linkCardId ?? '') === t.id;
+                  return (
+                    <Pressable
+                      key={t.id || 'none'}
+                      onPress={() => {
+                        setLinkCardId(t.id || undefined);
+                        setLinkOpen(false);
+                      }}
+                      style={[styles.linkOption, active && styles.linkOptionActive]}
+                    >
+                      <MoveText text={t.name} style={[styles.linkOptionText, active && styles.linkOptionTextActive]} numberOfLines={1} />
+                    </Pressable>
+                  );
+                })}
+              </View>
+            )}
           </>
         )}
 
@@ -165,7 +187,7 @@ export function openArrowNotesDialog(
 
 const styles = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: colors.bg },
-  linkList: { gap: 6 },
+  linkList: { gap: 6, marginTop: 6 },
   linkOption: {
     minHeight: 48,
     justifyContent: 'center',
@@ -178,7 +200,20 @@ const styles = StyleSheet.create({
   linkOptionActive: { borderColor: colors.primary, backgroundColor: colors.panel },
   linkOptionText: { color: colors.textSecondary, fontSize: 14 },
   linkOptionTextActive: { color: colors.text, fontWeight: '700' },
-  threatRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 12, paddingVertical: 10 },
+  threatRow: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 48, marginTop: 4 },
+  threatTitle: { color: colors.text, fontSize: 15, fontWeight: '600' },
+  select: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.panel2
+  },
+  selectText: { flex: 1, color: colors.text, fontSize: 15 },
   threatHint: { color: colors.textDim, fontSize: 12, marginTop: 2 },
   header: {
     flexDirection: 'row',

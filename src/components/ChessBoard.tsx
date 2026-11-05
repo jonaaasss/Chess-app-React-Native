@@ -3,7 +3,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import Svg, { Defs, Marker, Path, Line, Circle as SvgCircle } from 'react-native-svg';
 import { allSquares, flipIndex, squareIndex } from '../chess';
 import type { Arrow, ArrowColor, BoardState, Circle, PieceCode } from '../types';
-import { arrowColors, boardStyles, colors } from '../theme';
+import { arrowColors, boardStyles, colors, DARK_TINT } from '../theme';
 import { PieceArt } from './pieceArt';
 
 const ARROW_KEYS = Object.keys(arrowColors) as ArrowColor[];
@@ -22,6 +22,17 @@ type Pieces = Partial<Record<string, PieceCode>>;
 export function isOpponentArrow(from: string, pieces: Pieces | undefined, yourColor: 'w' | 'b'): boolean {
   const piece = pieces?.[from];
   return !!piece && piece[0] !== yourColor;
+}
+
+// An opponent's arrow or circle is always drawn in the dark tint of its colour.
+export function opponentTint(color: ArrowColor): ArrowColor {
+  return (DARK_TINT as Record<string, ArrowColor>)[color] ?? color;
+}
+
+// The colour an arrow is shown (and studied) in: its own, or for an
+// opponent's arrow the dark tint of it.
+export function effectiveArrowColor(arrow: Arrow, pieces: Pieces | undefined, yourColor: 'w' | 'b'): ArrowColor {
+  return isOpponentArrow(arrow.from, pieces, yourColor) ? opponentTint(arrow.color) : arrow.color;
 }
 
 const OPPONENT_DASH = '0.28 0.18';
@@ -73,6 +84,7 @@ export function ArrowsSvg({
         x2 -= (dx / len) * 0.35;
         y2 -= (dy / len) * 0.35;
         const opp = isOpponentArrow(arrow.from, pieces, side);
+        const color = opp ? opponentTint(arrow.color) : arrow.color;
         return (
           <React.Fragment key={i}>
             {opp && <Line x1={x1} y1={y1} x2={x2} y2={y2} stroke={HALO} strokeWidth={0.16 + HALO_EXTRA} strokeLinecap="butt" strokeDasharray={OPPONENT_DASH} />}
@@ -81,12 +93,12 @@ export function ArrowsSvg({
               y1={y1}
               x2={x2}
               y2={y2}
-              stroke={arrowColors[arrow.color]}
+              stroke={arrowColors[color]}
               strokeWidth={0.16}
               strokeLinecap={opp ? 'butt' : 'round'}
               strokeDasharray={opp ? OPPONENT_DASH : undefined}
               opacity={opp ? 1 : 0.9}
-              markerEnd={`url(#arrowhead-${arrow.color}${opp ? '-opp' : ''})`}
+              markerEnd={`url(#arrowhead-${color}${opp ? '-opp' : ''})`}
             />
           </React.Fragment>
         );
@@ -263,7 +275,7 @@ export function CirclesSvg({
         return (
           <React.Fragment key={i}>
             {opp && <SvgCircle cx={file + 0.5} cy={rank + 0.5} r={0.42} stroke={HALO} strokeWidth={0.09 + HALO_EXTRA} fill="none" />}
-            <SvgCircle cx={file + 0.5} cy={rank + 0.5} r={0.42} stroke={arrowColors[c.color]} strokeWidth={0.09} fill="none" opacity={opp ? 1 : 0.9} />
+            <SvgCircle cx={file + 0.5} cy={rank + 0.5} r={0.42} stroke={arrowColors[opp ? opponentTint(c.color) : c.color]} strokeWidth={0.09} fill="none" opacity={opp ? 1 : 0.9} />
           </React.Fragment>
         );
       })}
