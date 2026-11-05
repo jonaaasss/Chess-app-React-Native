@@ -1101,8 +1101,14 @@ function ReactionBoardEditorOverlay({
     if (mode === 'summary') {
       setBoard((prev) => {
         const at = faceAnnotationsAt(prev[side], historyIndex);
+        // Drawing any arrow over a threat arrow removes that threat arrow.
+        const threatHere = (a: Arrow) => sameArrowSpan(a, arrow) && !!a.notes?.threat;
         const same = (a: Arrow) => sameArrowSpan(a, arrow) && shownColor(a) === arrow.color;
-        const arrows = at.arrows.some(same) ? at.arrows.filter((a) => !same(a)) : [...at.arrows, arrow];
+        const arrows = at.arrows.some(threatHere)
+          ? at.arrows.filter((a) => !threatHere(a))
+          : at.arrows.some(same)
+            ? at.arrows.filter((a) => !same(a))
+            : [...at.arrows, arrow];
         return { ...prev, [side]: withFaceAnnotationsAt(prev[side], historyIndex, arrows, at.circles) };
       });
       return;
@@ -1331,7 +1337,7 @@ function ReactionBoardEditorOverlay({
   // "Arrows cleared" + Undo. Undo only puts the arrows back while nothing else
   // has changed on the board since; the moment something has, it goes away
   // (so it can never wipe moves played afterwards).
-  const clearUndo = useRef<{ before: ReactionBoard; after: ReactionBoard | null; snackbar: number | null } | null>(null);
+  const clearUndo = useRef<{ before: ReactionBoard; after: ReactionBoard | null; snackbar: number | null; message?: string } | null>(null);
   useEffect(() => {
     const undo = clearUndo.current;
     if (!undo) return;
@@ -1339,7 +1345,7 @@ function ReactionBoardEditorOverlay({
       if (board === undo.before) return;
       undo.after = board;
       undo.snackbar = showSnackbar({
-        message: 'Arrows cleared',
+        message: undo.message ?? 'Arrows cleared',
         actionLabel: 'Undo',
         onAction: () => {
           setBoard((current) => (current === undo.after ? undo.before : current));
@@ -1358,6 +1364,17 @@ function ReactionBoardEditorOverlay({
     },
     []
   );
+
+  // Long press on a threat chip: the whole threat goes (snackbar with Undo).
+  function deleteThreat(letter: string) {
+    clearUndo.current = { before: board, after: null, snackbar: null, message: `Threat ${letter} deleted` };
+    setBoard((prev) => {
+      const at = faceAnnotationsAt(prev[side], historyIndex);
+      const arrows = at.arrows.filter((a) => a.notes?.threat !== letter);
+      return { ...prev, [side]: withFaceAnnotationsAt(prev[side], historyIndex, arrows, at.circles) };
+    });
+    if (activeThreat === letter) setActiveThreat(null);
+  }
 
   function handleClearArrows() {
     if (visibleArrows.length === 0 && visibleCircles.length === 0) return;
@@ -1873,6 +1890,8 @@ function ReactionBoardEditorOverlay({
                   setTool('annotate');
                   setSelected(null);
                 }}
+                onLongPress={() => deleteThreat(l)}
+                delayLongPress={500}
                 style={[styles.threatChip, activeThreat === l && styles.threatChipActive]}
                 accessibilityLabel={`Draw for threat ${l}`}
               >
