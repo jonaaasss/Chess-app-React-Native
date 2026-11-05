@@ -7,7 +7,7 @@ import { ArrowNoteBody } from '../components/ArrowNoteBody';
 import { CloseCircleButton } from '../overlay';
 import { MoveText } from '../components/MoveText';
 import type { Arrow, ArrowColor, Card, PieceCode, ReactionBoard } from '../types';
-import { ARROW_COLOR_NAMES, ARROW_COLOR_ORDER, arrowColors, boardStyles, colors, radius, touchTarget } from '../theme';
+import { ARROW_COLOR_NAMES, ARROW_COLOR_ORDER, arrowColors, BASE_ARROW_COLORS, boardStyles, DARK_TINT, colors, radius, touchTarget } from '../theme';
 import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, opponentTint, parallelOffsets, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
 import { PIECE_ANIM_DURATION_MS } from '../components/PieceAnimation';
 import type { GuideTargets } from '../components/GuideCoach';
@@ -77,6 +77,11 @@ interface ShownNote {
 }
 
 const keyOf = (a: Arrow) => `${a.from}-${a.to}-${a.color}`;
+
+// A colour and its dark tint form one family (light green + dark green, …).
+function familyOf(c: ArrowColor): ArrowColor {
+  return BASE_ARROW_COLORS.find((b) => b === c || DARK_TINT[b] === c) ?? c;
+}
 
 // A short move name for a threat chip, e.g. "Bg5" or "Nxe5".
 function sanLike(a: Arrow, pieces: Partial<Record<string, PieceCode>> | undefined): string {
@@ -492,19 +497,35 @@ export function PlanStudy({
   }
   const panResponder = panResponderRef.current;
 
-  // By default only the active group's colour is on the board ("Show all colors" lifts that).
-  const visibleColor = !showAll && !boardDone && activeGroup ? activeGroup.color : null;
+  // By default only one colour family is on the board (e.g. light and dark
+  // green together; "Show all colors" lifts that). A new family takes over
+  // only once something of it is on the board, so a finished colour stays
+  // visible until then (also after » or while the opponent's arrows wait).
+  const groupHasProgress = (i: number) =>
+    !!colorGroups[i] &&
+    (colorGroups[i].own.some((a) => foundKeys.has(keyOf(a))) || (colorGroups[i].auto.length > 0 && autoShownGroup >= i));
+  let displayIdx = groupIdx;
+  if (!boardDone && !groupHasProgress(groupIdx)) {
+    for (let i = groupIdx - 1; i >= 0; i--) {
+      if (groupHasProgress(i)) {
+        displayIdx = i;
+        break;
+      }
+    }
+  }
+  const displayGroup = colorGroups[displayIdx];
+  const visibleFamily = !showAll && !boardDone && displayGroup ? familyOf(displayGroup.color) : null;
   const visibleArrows = activeThreat
     ? [...activeThreat.opp, ...activeThreat.own.slice(0, threatFound)]
-    : visibleColor
-      ? drawnArrows.filter((a) => a.color === visibleColor)
+    : visibleFamily
+      ? drawnArrows.filter((a) => familyOf(a.color) === visibleFamily)
       : drawnArrows;
   // A colour's circles appear together with that colour's step.
   const reachedOrder = boardDone ? COLOR_CYCLE.length : COLOR_CYCLE.indexOf(activeGroup?.color ?? 'green');
   const circleColor = (c: { square: string; color: ArrowColor }) =>
     board && isOpponentArrow(c.square, board.back.pieces, yourColor) ? opponentTint(c.color) : c.color;
   const visibleCircles = activeThreat ? [] : finalAnnotations.circles.filter((c) =>
-    visibleColor ? circleColor(c) === visibleColor : COLOR_CYCLE.indexOf(circleColor(c)) <= reachedOrder
+    visibleFamily ? familyOf(circleColor(c)) === visibleFamily && COLOR_CYCLE.indexOf(circleColor(c)) <= reachedOrder : COLOR_CYCLE.indexOf(circleColor(c)) <= reachedOrder
   );
 
   // "!A" on the opponent's move, "A1", "A2" on your answers.
@@ -530,26 +551,40 @@ export function PlanStudy({
 
   // All badges of the board placed together — numbers / "!" and, on a
   // Summary, link and note badges — so overlapping ones move to free space.
-  const numberPts: { idx: number; p: Point }[] = [];
-  const offsets = parallelOffsets(numberedArrows);
-  numberedArrows.forEach((a, i) => {
-    if (a.number !== undefined || a.label) numberPts.push({ idx: i, p: numberBadgeCenter(a, i, BOARD_SIZE, flipped, offsets[i]) });
-  });
-  const linkNotePts: { idx: number; kind: 'link' | 'note'; p: Point }[] = [];
-  if (isSummary) {
-    visibleArrows.forEach((a, i) => {
+  // Worked out once over every arrow of the board (or of the threat being
+  // studied), so a badge never jumps when other arrows appear.
+  const badgeLayout = useMemo(() => {
+    const all = activeThreat ? [...activeThreat.opp, ...activeThreat.own] : finalAnnotations.arrows.filter((a) => !a.notes?.threat);
+    const offsets = parallelOffsets(all);
+    const kinds: { key: string; kind: 'number' | 'link' | 'note' }[] = [];
+    const pts: Point[] = [];
+    all.forEach((a, i) => {
+      const k = keyOf(a);
+      if (a.notes?.threat || arrowNumbers.get(k) !== undefined) {
+        kinds.push({ key: k, kind: 'number' });
+        pts.push(numberBadgeCenter(a, i, BOARD_SIZE, flipped, offsets[i]));
+      }
+      if (!isSummary) return;
       const side = i % 2 === 0 ? 1 : -1;
-      if (a.notes?.linkCardId) linkNotePts.push({ idx: i, kind: 'link', p: pointOn(a, 0.4, BOARD_SIZE, flipped, side) });
-      if (hasNoteText(a)) linkNotePts.push({ idx: i, kind: 'note', p: pointOn(a, 0.25, BOARD_SIZE, flipped, -side) });
+      if (a.notes?.linkCardId) {
+        kinds.push({ key: k, kind: 'link' });
+        pts.push(pointOn(a, 0.4, BOARD_SIZE, flipped, side));
+      }
+      if (hasNoteText(a)) {
+        kinds.push({ key: k, kind: 'note' });
+        pts.push(pointOn(a, 0.25, BOARD_SIZE, flipped, -side));
+      }
     });
-  }
-  const placed = separateBadgeCenters([...numberPts.map((n) => n.p), ...linkNotePts.map((n) => n.p)], 26, BOARD_SIZE);
-  const numberCenters: (Point | undefined)[] = [];
-  numberPts.forEach((n, k) => (numberCenters[n.idx] = placed[k]));
-  const linkNotePositions: { link?: Point; note?: Point }[] = [];
-  linkNotePts.forEach((n, k) => {
-    linkNotePositions[n.idx] = { ...linkNotePositions[n.idx], [n.kind]: placed[numberPts.length + k] };
-  });
+    const placed = separateBadgeCenters(pts, 26, BOARD_SIZE);
+    const at = new Map<string, Point>();
+    kinds.forEach((x, i) => at.set(`${x.kind}:${x.key}`, placed[i]));
+    return at;
+  }, [activeThreat, finalAnnotations, arrowNumbers, isSummary, flipped]);
+  const numberCenters: (Point | undefined)[] = visibleArrows.map((a) => badgeLayout.get(`number:${keyOf(a)}`));
+  const linkNotePositions: { link?: Point; note?: Point }[] = visibleArrows.map((a) => ({
+    link: badgeLayout.get(`link:${keyOf(a)}`),
+    note: badgeLayout.get(`note:${keyOf(a)}`)
+  }));
 
   if (!board) {
     return <Text style={{ color: colors.textDim }}>This card has no boards to study.</Text>;

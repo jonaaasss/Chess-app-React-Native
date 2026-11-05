@@ -24,6 +24,8 @@ export function cleanArrowNotes(notes: ArrowNotes | undefined): ArrowNotes | und
   };
 }
 
+// Something filled in on the notes screen (a threat letter alone is not a note).
 export function hasArrowNotes(arrow: Arrow): boolean {
-  return cleanArrowNotes(arrow.notes) !== undefined;
+  const n = cleanArrowNotes(arrow.notes);
+  return !!n && Object.keys(n).some((k) => k !== 'threat');
 }
