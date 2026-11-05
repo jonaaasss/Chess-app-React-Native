@@ -106,14 +106,14 @@ export const GUIDE_COACH: Record<string, CoachStep[]> = {
       id: 'solution',
       when: 'next',
       target: 'solution',
-      text: 'Stuck? Tap Show solution to draw the next arrow.',
+      text: 'Stuck? Tap › to show the next arrow (» shows the whole colour).',
       advance: 'solution'
     },
     {
       id: 'solutionKeep',
       when: 'next',
       target: 'solution',
-      text: 'Keep tapping Show solution until the plan is complete.',
+      text: 'Keep tapping › until the plan is complete.',
       sub: "This is just an example, so you're not expected to know it yet.",
       advance: 'button'
     },

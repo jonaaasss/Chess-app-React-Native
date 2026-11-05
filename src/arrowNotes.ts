@@ -11,9 +11,11 @@ export function cleanArrowNotes(notes: ArrowNotes | undefined): ArrowNotes | und
     .map((r) => ({ ...r, trigger: r.trigger.trim(), text: r.text.trim() }))
     .filter((r) => r.text.length > 0);
   const linkCardId = notes.linkCardId || undefined;
-  if (!reason && !next && responses.length === 0 && !linkCardId) return undefined;
+  const threat = notes.threat === true;
+  if (!reason && !next && responses.length === 0 && !linkCardId && !threat) return undefined;
   return {
     ...(linkCardId ? { linkCardId } : {}),
+    ...(threat ? { threat } : {}),
     ...(reason ? { reason } : {}),
     ...(next ? { next } : {}),
     ...(responses.length > 0 ? { responses } : {})

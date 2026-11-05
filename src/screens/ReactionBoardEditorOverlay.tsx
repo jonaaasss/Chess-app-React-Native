@@ -17,7 +17,7 @@ import {
 } from '../chess';
 import { legalMovesFrom, makeMove, isPromotionMove, sansForBoardMoves, type GameState } from '../chessEngine';
 import type { Arrow, ArrowColor, BoardFace, BoardMove, CardMode, Circle, MoveNode, PieceCode, PromotionPiece, ReactionBoard } from '../types';
-import { arrowColors, boardStyles, colors, engineColors, radius, spacing, type, variationColor } from '../theme';
+import { arrowColors, BASE_ARROW_COLORS, boardStyles, colors, DARK_TINT, engineColors, radius, spacing, type, variationColor } from '../theme';
 import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, isOpponentArrow, type NumberedArrow } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts } from '../components/PieceAnimation';
 import { alertDialog, confirmDialog, dismissSnackbar, showOverlay, showSnackbar, SnackbarLayer, useOverlayBack } from '../overlay';
@@ -124,20 +124,18 @@ function isStartingFace(face: BoardFace): boolean {
 // (drawn dashed and darker, see isOpponentArrow) are numbered separately,
 // among themselves, so they never shift your own arrows' numbers.
 function toEditorNumberedArrows(arrows: Arrow[], pieces: Partial<Record<string, PieceCode>>, yourColor: 'w' | 'b'): NumberedArrow[] {
+  // Threat arrows (Summary only) show "!" and stay out of the numbering.
   const groupOf = (a: Arrow) => `${isOpponentArrow(a.from, pieces, yourColor) ? 'opp' : 'own'}-${a.color}`;
+  const numbered = arrows.filter((a) => !a.notes?.threat);
   const countByGroup = new Map<string, number>();
-  for (const a of arrows) countByGroup.set(groupOf(a), (countByGroup.get(groupOf(a)) ?? 0) + 1);
+  for (const a of numbered) countByGroup.set(groupOf(a), (countByGroup.get(groupOf(a)) ?? 0) + 1);
   const seenByGroup = new Map<string, number>();
   return arrows.map((a, i) => {
+    const base = { id: `${a.from}-${a.to}-${a.color}-${i}`, from: a.from, to: a.to, color: arrowColors[a.color] };
+    if (a.notes?.threat) return { ...base, label: '!' };
     const seen = (seenByGroup.get(groupOf(a)) ?? 0) + 1;
     seenByGroup.set(groupOf(a), seen);
-    return {
-      id: `${a.from}-${a.to}-${a.color}-${i}`,
-      from: a.from,
-      to: a.to,
-      color: arrowColors[a.color],
-      number: (countByGroup.get(groupOf(a)) ?? 0) > 1 ? seen : undefined
-    };
+    return { ...base, number: (countByGroup.get(groupOf(a)) ?? 0) > 1 ? seen : undefined };
   });
 }
 
@@ -1682,7 +1680,6 @@ function ReactionBoardEditorOverlay({
             <NumberedArrowsSvg arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} pieces={engineState.pieces} yourColor={yourColor} />
             <NumberedArrowsSvg arrows={branchArrows} size={BOARD_SIZE} flipped={flipped} />
             <CirclesSvg circles={visibleCircles} size={BOARD_SIZE} flipped={flipped} pieces={engineState.pieces} yourColor={yourColor} />
-            <NumberedArrowBadges arrows={committedNumberedArrows} size={BOARD_SIZE} flipped={flipped} pieces={engineState.pieces} yourColor={yourColor} />
             <NumberedArrowBadges arrows={branchArrows} size={BOARD_SIZE} flipped={flipped} />
             <PieceAnimationGhosts ghosts={ghosts} cell={CELL} />
           </View>
@@ -1701,6 +1698,10 @@ function ReactionBoardEditorOverlay({
               />
             </View>
           )}
+          {/* Number badges sit above the note badges, so a note's "+" never hides an arrow's number. */}
+          <View style={StyleSheet.absoluteFill} pointerEvents="none">
+            <NumberedArrowBadges arrows={committedNumberedArrows} size={BOARD_SIZE} flipped={flipped} pieces={engineState.pieces} yourColor={yourColor} />
+          </View>
         </View>
         {!hideEngine && <EngineEvalBar lines={panelLines} stale={engineStale} flipped={flipped} height={BOARD_SIZE} />}
         </View>
@@ -1740,25 +1741,30 @@ function ReactionBoardEditorOverlay({
             drawing, not one-time setup like board style (now global). */}
         <View style={styles.row}>
           <Text style={styles.label}>Color</Text>
-          <View ref={swatchesRef} collapsable={false} style={styles.swatchRow}>
-            {ARROW_KEYS.map((color) => (
-              <Pressable
-                key={color}
-                ref={color === 'green' ? swatchGreenRef : color === 'orange' ? swatchOrangeRef : undefined}
-                collapsable={false}
-                onPress={() => {
-                  setAnnotateColor(color);
-                  setTool('annotate');
-                  setSelected(null);
-                  tutorial.event(`colorPicked:${color}`);
-                }}
-                hitSlop={9}
-                style={[
-                  styles.arrowSwatch,
-                  { backgroundColor: arrowColors[color] },
-                  tool === 'annotate' && annotateColor === color && styles.swatchActive
-                ]}
-              />
+          {/* Two rows: the base colours, and under each its dark tint. */}
+          <View ref={swatchesRef} collapsable={false} style={styles.swatchGrid}>
+            {[BASE_ARROW_COLORS, BASE_ARROW_COLORS.map((c) => DARK_TINT[c])].map((row, r) => (
+              <View key={r} style={styles.swatchRow}>
+                {row.map((color: ArrowColor) => (
+                  <Pressable
+                    key={color}
+                    ref={color === 'green' ? swatchGreenRef : color === 'orange' ? swatchOrangeRef : undefined}
+                    collapsable={false}
+                    onPress={() => {
+                      setAnnotateColor(color);
+                      setTool('annotate');
+                      setSelected(null);
+                      tutorial.event(`colorPicked:${color}`);
+                    }}
+                    hitSlop={5}
+                    style={[
+                      styles.arrowSwatch,
+                      { backgroundColor: arrowColors[color] },
+                      tool === 'annotate' && annotateColor === color && styles.swatchActive
+                    ]}
+                  />
+                ))}
+              </View>
             ))}
           </View>
           <View style={{ flex: 1 }} />
@@ -2178,6 +2184,7 @@ const styles = StyleSheet.create({
   },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14 },
   label: { color: colors.textDim, fontSize: 12, minWidth: 70 },
+  swatchGrid: { gap: 8 },
   swatchRow: { flexDirection: 'row', gap: 8 },
   arrowSwatch: { width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: 'transparent' },
   swatchActive: { borderColor: colors.accent },

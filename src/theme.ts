@@ -115,11 +115,32 @@ export const type = {
 // use the Android figure rather than iOS's 44pt.
 export const touchTarget = 48;
 
-export const arrowColors: Record<'green' | 'orange' | 'red' | 'blue', string> = {
+export const arrowColors: Record<'green' | 'darkGreen' | 'orange' | 'darkOrange' | 'red' | 'darkRed' | 'blue' | 'darkBlue', string> = {
   green: '#7CDB8A',
+  darkGreen: '#2F9E44',
   orange: '#F5B266',
+  darkOrange: '#D9730D',
   red: '#F27C7C',
-  blue: '#7EB8F2'
+  darkRed: '#C92A2A',
+  blue: '#7EB8F2',
+  darkBlue: '#1C64C8'
+};
+
+// The base colours and, under each, its dark tint — the palette's two rows.
+export const BASE_ARROW_COLORS = ['green', 'orange', 'red', 'blue'] as const;
+export const DARK_TINT = { green: 'darkGreen', orange: 'darkOrange', red: 'darkRed', blue: 'darkBlue' } as const;
+// The order Plan/Summary study asks for the colour groups: each colour, then its tint.
+export const ARROW_COLOR_ORDER = ['green', 'darkGreen', 'orange', 'darkOrange', 'red', 'darkRed', 'blue', 'darkBlue'] as const;
+// Readable names for the study status line ("Dark green arrows: 1 of 2").
+export const ARROW_COLOR_NAMES: Record<keyof typeof arrowColors, string> = {
+  green: 'Green',
+  darkGreen: 'Dark green',
+  orange: 'Orange',
+  darkOrange: 'Dark orange',
+  red: 'Red',
+  darkRed: 'Dark red',
+  blue: 'Blue',
+  darkBlue: 'Dark blue'
 };
 
 // Distinct from arrowColors.blue (a paler, pastel shade meant for the

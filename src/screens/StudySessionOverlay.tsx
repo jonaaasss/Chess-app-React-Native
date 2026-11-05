@@ -25,7 +25,6 @@ import { openCardEditor } from './CardEditorOverlay';
 import { openReactionBoardEditor } from './ReactionBoardEditorOverlay';
 import { ReactionStudy } from './ReactionStudy';
 import { PlanStudy } from './PlanStudy';
-import { SummaryStudy } from './SummaryStudy';
 
 // Skip-to-next glyph, drawn (not a Unicode character) like the app's other icons.
 function SkipIcon({ size, color }: { size: number; color: string }) {
@@ -812,19 +811,7 @@ function StudySessionOverlay({
               onGuideEvent={item?.guide ? handleGuideEvent : undefined}
             />
           </View>
-        ) : card.mode === 'summary' ? (
-          <View style={styles.studyCard}>
-            <SummaryStudy
-              key={`${roundNumber}-${index}`}
-              card={card}
-              yourColor={yourColor}
-              boardStyle={boardStyle}
-              boardRef={currentBoardRef}
-              // Nothing to get wrong: a Summary always counts as done.
-              onDone={previewing ? advancePreview : () => advance(null)}
-            />
-          </View>
-        ) : card.mode === 'plan' ? (
+        ) : isPlanLike(card.mode) ? (
           <View style={styles.studyCard}>
             <PlanStudy
               key={`${roundNumber}-${index}`}

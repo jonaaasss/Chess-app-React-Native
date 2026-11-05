@@ -57,29 +57,23 @@ function pointOn(arrow: Arrow, t: number, size: number, flipped: boolean, side: 
   return { x: a.x + dx * t + (-dy / len) * 12 * side, y: a.y + dy * t + (dx / len) * 12 * side };
 }
 
-export function SummaryBoard({
-  pieces,
+// The link and note badges for a set of arrows, absolutely positioned over a
+// board of `size` (also used on top of Plan study's interactive board).
+export function ArrowLinkNoteBadges({
   arrows,
-  circles,
   size,
   flipped,
-  boardStyle,
   onOpenLink,
   onShowNote
 }: {
-  pieces: Partial<Record<string, PieceCode>>;
   arrows: Arrow[];
-  circles: Circle[];
   size: number;
   flipped: boolean;
-  boardStyle: number;
-  // Leave out to show the board without badges (e.g. a linked Plan card).
   onOpenLink?: (cardId: string) => void;
   onShowNote?: (arrow: Arrow) => void;
 }) {
   return (
-    <View style={{ width: size, height: size, alignSelf: 'center' }}>
-      <ChessBoardView board={{ pieces, style: boardStyle, arrows, circles }} size={size} flipped={flipped} />
+    <View style={[StyleSheet.absoluteFill, { width: size, height: size }]} pointerEvents="box-none">
       {arrows.map((arrow, i) => {
         const side = i % 2 === 0 ? 1 : -1;
         const link = onOpenLink && arrow.notes?.linkCardId;
@@ -111,6 +105,34 @@ export function SummaryBoard({
           </React.Fragment>
         );
       })}
+    </View>
+  );
+}
+
+export function SummaryBoard({
+  pieces,
+  arrows,
+  circles,
+  size,
+  flipped,
+  boardStyle,
+  onOpenLink,
+  onShowNote
+}: {
+  pieces: Partial<Record<string, PieceCode>>;
+  arrows: Arrow[];
+  circles: Circle[];
+  size: number;
+  flipped: boolean;
+  boardStyle: number;
+  // Leave out to show the board without badges (e.g. a linked Plan card).
+  onOpenLink?: (cardId: string) => void;
+  onShowNote?: (arrow: Arrow) => void;
+}) {
+  return (
+    <View style={{ width: size, height: size, alignSelf: 'center' }}>
+      <ChessBoardView board={{ pieces, style: boardStyle, arrows, circles }} size={size} flipped={flipped} />
+      <ArrowLinkNoteBadges arrows={arrows} size={size} flipped={flipped} onOpenLink={onOpenLink} onShowNote={onShowNote} />
     </View>
   );
 }

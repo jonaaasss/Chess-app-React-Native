@@ -33,7 +33,7 @@ const MAX_BOARDS_PER_CARD = 6;
 const MAX_CARDS = 60;
 const MAX_ARROWS_PER_BOARD = 40;
 const SQUARE = /^[a-h][1-8]$/;
-const COLORS: ArrowColor[] = ['green', 'orange', 'red', 'blue'];
+const COLORS: ArrowColor[] = ['green', 'darkGreen', 'orange', 'darkOrange', 'red', 'darkRed', 'blue', 'darkBlue'];
 
 class ImportError extends Error {
   readonly isImportError = true;
@@ -203,7 +203,7 @@ function parseColor(v: unknown, where: string): ArrowColor {
   if (v === undefined) return 'green';
   if (v === 'yellow') return 'orange';
   if (typeof v === 'string' && (COLORS as string[]).includes(v)) return v as ArrowColor;
-  return fail(`${where}: colour must be green, orange, red or blue.`);
+  return fail(`${where}: colour must be green, orange, red or blue, or darkGreen, darkOrange, darkRed or darkBlue.`);
 }
 
 function parseNotes(v: unknown, where: string): ArrowNotes | undefined {

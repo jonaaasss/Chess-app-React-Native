@@ -1,6 +1,9 @@
 export type GroupId = 'white' | 'black';
 
-export type ArrowColor = 'green' | 'orange' | 'red' | 'blue';
+// Each base colour has a dark tint, a sub-group of that colour (e.g. green =
+// the general plan, dark green = "after !Nc3"). Study order follows
+// ARROW_COLOR_ORDER in theme.ts.
+export type ArrowColor = 'green' | 'darkGreen' | 'orange' | 'darkOrange' | 'red' | 'darkRed' | 'blue' | 'darkBlue';
 
 export type PieceCode =
   | 'wK' | 'wQ' | 'wR' | 'wB' | 'wN' | 'wP'
@@ -25,6 +28,10 @@ export interface ArrowNotes {
   // Summary cards only: tapping the arrow's link badge in Study opens this
   // card (same opening) in the card viewer.
   linkCardId?: string;
+  // Summary cards only: a threat (a piece landing on your half, or a trade
+  // offer) and its answer can happen at any time — shown with "!" instead of
+  // a number, and outside the numbered order.
+  threat?: boolean;
   reason?: string; // why this move
   next?: string; // the follow-up plan
   responses?: ArrowResponse[];

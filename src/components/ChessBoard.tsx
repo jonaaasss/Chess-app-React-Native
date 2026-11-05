@@ -12,7 +12,9 @@ type Pieces = Partial<Record<string, PieceCode>>;
 
 // An arrow that starts on one of the opponent's pieces (a white piece in a
 // Black repertoire, and the other way round) shows the opponent's move
-// rather than your own plan: it is drawn darker and dashed. Decided from the
+// rather than your own plan: it is drawn dashed, over a light halo that keeps
+// it readable on dark and light squares alike (any palette colour, including
+// the dark tints, stays itself). Decided from the
 // position on screen only — nothing about it is stored. A Black repertoire
 // is always shown flipped (see flipIndex), so `flipped` tells whose side
 // you're on unless `yourColor` says otherwise.
@@ -22,16 +24,10 @@ export function isOpponentArrow(from: string, pieces: Pieces | undefined, yourCo
   return !!piece && piece[0] !== yourColor;
 }
 
-// The same hue, about 40% darker — works for the palette and for the
-// resolved hex colours NumberedArrowsSvg gets.
-function darker(color: string): string {
-  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color);
-  if (!m) return color;
-  const ch = (h: string) => Math.round(parseInt(h, 16) * 0.6).toString(16).padStart(2, '0');
-  return `#${ch(m[1])}${ch(m[2])}${ch(m[3])}`;
-}
-
 const OPPONENT_DASH = '0.28 0.18';
+// The light outline under an opponent's dashed arrow (and circle).
+const HALO = 'rgba(255,255,255,0.7)';
+const HALO_EXTRA = 0.1;
 
 export function ArrowsSvg({
   arrows,
@@ -57,7 +53,7 @@ export function ArrowsSvg({
               <Path d="M0,0 L3,1.5 L0,3 Z" fill={arrowColors[color]} />
             </Marker>
             <Marker id={`arrowhead-${color}-opp`} markerWidth={3} markerHeight={3} refX={1.4} refY={1.5} orient="auto">
-              <Path d="M0,0 L3,1.5 L0,3 Z" fill={darker(arrowColors[color])} />
+              <Path d="M0,0 L3,1.5 L0,3 Z" fill={arrowColors[color]} stroke={HALO} strokeWidth={0.3} />
             </Marker>
           </React.Fragment>
         ))}
@@ -78,19 +74,21 @@ export function ArrowsSvg({
         y2 -= (dy / len) * 0.35;
         const opp = isOpponentArrow(arrow.from, pieces, side);
         return (
-          <Line
-            key={i}
-            x1={x1}
-            y1={y1}
-            x2={x2}
-            y2={y2}
-            stroke={opp ? darker(arrowColors[arrow.color]) : arrowColors[arrow.color]}
-            strokeWidth={0.16}
-            strokeLinecap={opp ? 'butt' : 'round'}
-            strokeDasharray={opp ? OPPONENT_DASH : undefined}
-            opacity={0.9}
-            markerEnd={`url(#arrowhead-${arrow.color}${opp ? '-opp' : ''})`}
-          />
+          <React.Fragment key={i}>
+            {opp && <Line x1={x1} y1={y1} x2={x2} y2={y2} stroke={HALO} strokeWidth={0.16 + HALO_EXTRA} strokeLinecap="butt" strokeDasharray={OPPONENT_DASH} />}
+            <Line
+              x1={x1}
+              y1={y1}
+              x2={x2}
+              y2={y2}
+              stroke={arrowColors[arrow.color]}
+              strokeWidth={0.16}
+              strokeLinecap={opp ? 'butt' : 'round'}
+              strokeDasharray={opp ? OPPONENT_DASH : undefined}
+              opacity={opp ? 1 : 0.9}
+              markerEnd={`url(#arrowhead-${arrow.color}${opp ? '-opp' : ''})`}
+            />
+          </React.Fragment>
         );
       })}
     </Svg>
@@ -103,6 +101,7 @@ export interface NumberedArrow {
   to: string;
   color: string; // resolved hex/rgba, not an ArrowColor key — callers may use non-palette colors (e.g. Study's green/red)
   number?: number; // omit to draw the arrow without a badge
+  label?: string; // shown in the badge instead of a number (e.g. "!" for a threat)
   width?: number; // stroke width in board-square units; defaults to the standard 0.16 (e.g. engine best-move arrows go slightly thicker)
 }
 
@@ -125,13 +124,12 @@ export function NumberedArrowsSvg({
   yourColor?: 'w' | 'b';
 }) {
   const side = yourColor ?? (flipped ? 'b' : 'w');
-  const colorOf = (a: NumberedArrow) => (isOpponentArrow(a.from, pieces, side) ? darker(a.color) : a.color);
   return (
     <Svg width={size} height={size} viewBox="0 0 8 8" style={StyleSheet.absoluteFill}>
       <Defs>
         {arrows.map((a) => (
           <Marker key={a.id} id={`numbered-head-${a.id}`} markerWidth={3} markerHeight={3} refX={1.4} refY={1.5} orient="auto">
-            <Path d="M0,0 L3,1.5 L0,3 Z" fill={colorOf(a)} />
+            <Path d="M0,0 L3,1.5 L0,3 Z" fill={a.color} stroke={isOpponentArrow(a.from, pieces, side) ? HALO : undefined} strokeWidth={0.3} />
           </Marker>
         ))}
       </Defs>
@@ -150,20 +148,23 @@ export function NumberedArrowsSvg({
         x2 -= (dx / len) * 0.35;
         y2 -= (dy / len) * 0.35;
         const opp = isOpponentArrow(a.from, pieces, side);
+        const width = a.width ?? 0.16;
         return (
-          <Line
-            key={a.id}
-            x1={x1}
-            y1={y1}
-            x2={x2}
-            y2={y2}
-            stroke={colorOf(a)}
-            strokeWidth={a.width ?? 0.16}
-            strokeLinecap={opp ? 'butt' : 'round'}
-            strokeDasharray={opp ? OPPONENT_DASH : undefined}
-            opacity={0.9}
-            markerEnd={`url(#numbered-head-${a.id})`}
-          />
+          <React.Fragment key={a.id}>
+            {opp && <Line x1={x1} y1={y1} x2={x2} y2={y2} stroke={HALO} strokeWidth={width + HALO_EXTRA} strokeLinecap="butt" strokeDasharray={OPPONENT_DASH} />}
+            <Line
+              x1={x1}
+              y1={y1}
+              x2={x2}
+              y2={y2}
+              stroke={a.color}
+              strokeWidth={width}
+              strokeLinecap={opp ? 'butt' : 'round'}
+              strokeDasharray={opp ? OPPONENT_DASH : undefined}
+              opacity={opp ? 1 : 0.9}
+              markerEnd={`url(#numbered-head-${a.id})`}
+            />
+          </React.Fragment>
         );
       })}
     </Svg>
@@ -198,7 +199,7 @@ export function NumberedArrowBadges({
   return (
     <>
       {arrows.map((a, i) => {
-        if (a.number === undefined) return null;
+        if (a.number === undefined && !a.label) return null;
         const from = centerPx(a.from);
         const to = centerPx(a.to);
         const dx = to.x - from.x;
@@ -213,8 +214,8 @@ export function NumberedArrowBadges({
         const bx = px + nx * offset * side;
         const by = py + ny * offset * side;
         return (
-          <View key={a.id} style={[badgeStyles.badge, { left: bx - 9, top: by - 9, backgroundColor: isOpponentArrow(a.from, pieces, yourSide) ? darker(a.color) : a.color }]}>
-            <Text style={badgeStyles.text}>{a.number}</Text>
+          <View key={a.id} style={[badgeStyles.badge, { left: bx - 9, top: by - 9, backgroundColor: a.color }, isOpponentArrow(a.from, pieces, yourSide) && badgeStyles.opponent]}>
+            <Text style={badgeStyles.text}>{a.label ?? a.number}</Text>
           </View>
         );
       })}
@@ -223,6 +224,8 @@ export function NumberedArrowBadges({
 }
 
 const badgeStyles = StyleSheet.create({
+  // An opponent's arrow badge gets the same light outline as its dashed line.
+  opponent: { borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.85)' },
   badge: {
     position: 'absolute',
     width: 18,
@@ -256,17 +259,12 @@ export function CirclesSvg({
         const raw = squareIndex(c.square);
         const file = flipIndex(raw.file, flipped);
         const rank = flipIndex(raw.rank, flipped);
+        const opp = isOpponentArrow(c.square, pieces, side);
         return (
-          <SvgCircle
-            key={i}
-            cx={file + 0.5}
-            cy={rank + 0.5}
-            r={0.42}
-            stroke={isOpponentArrow(c.square, pieces, side) ? darker(arrowColors[c.color]) : arrowColors[c.color]}
-            strokeWidth={0.09}
-            fill="none"
-            opacity={0.9}
-          />
+          <React.Fragment key={i}>
+            {opp && <SvgCircle cx={file + 0.5} cy={rank + 0.5} r={0.42} stroke={HALO} strokeWidth={0.09 + HALO_EXTRA} fill="none" />}
+            <SvgCircle cx={file + 0.5} cy={rank + 0.5} r={0.42} stroke={arrowColors[c.color]} strokeWidth={0.09} fill="none" opacity={opp ? 1 : 0.9} />
+          </React.Fragment>
         );
       })}
     </Svg>

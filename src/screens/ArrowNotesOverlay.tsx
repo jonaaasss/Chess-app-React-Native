@@ -22,11 +22,12 @@ function ArrowNotesOverlay({
   close: (result: { notes: ArrowNotes | undefined } | null) => void;
 }) {
   const [linkCardId, setLinkCardId] = useState<string | undefined>(initial?.linkCardId);
+  const [threat, setThreat] = useState(initial?.threat === true);
   const [reason, setReason] = useState(initial?.reason ?? '');
   const [next, setNext] = useState(initial?.next ?? '');
   const [responses, setResponses] = useState<ArrowResponse[]>(initial?.responses ?? []);
 
-  const current = () => cleanArrowNotes({ linkCardId, reason, next, responses });
+  const current = () => cleanArrowNotes({ linkCardId, threat, reason, next, responses });
   const initialCleaned = JSON.stringify(cleanArrowNotes(initial) ?? null);
 
   async function handleCancel() {
@@ -72,6 +73,14 @@ function ArrowNotesOverlay({
                 );
               })}
             </View>
+
+            <Pressable onPress={() => setThreat((t) => !t)} style={[styles.linkOption, styles.threatRow, threat && styles.linkOptionActive]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.linkOptionText, threat && styles.linkOptionTextActive]}>Threat (any time)</Text>
+                <Text style={styles.threatHint}>Shown with "!" instead of a number: it can happen at any moment.</Text>
+              </View>
+              <Text style={[styles.linkOptionText, threat && styles.linkOptionTextActive]}>{threat ? 'On' : 'Off'}</Text>
+            </Pressable>
           </>
         )}
 
@@ -169,6 +178,8 @@ const styles = StyleSheet.create({
   linkOptionActive: { borderColor: colors.primary, backgroundColor: colors.panel },
   linkOptionText: { color: colors.textSecondary, fontSize: 14 },
   linkOptionTextActive: { color: colors.text, fontWeight: '700' },
+  threatRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 12, paddingVertical: 10 },
+  threatHint: { color: colors.textDim, fontSize: 12, marginTop: 2 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
