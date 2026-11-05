@@ -522,6 +522,8 @@ function ReactionBoardEditorOverlay({
   const [annotateColor, setAnnotateColor] = useState<ArrowColor>('green');
   const [selected, setSelected] = useState<string | null>(null);
   const [tempArrow, setTempArrow] = useState<{ from: string; to: string } | null>(null);
+  // Summary: the threat you're drawing for (its letter), or null for normal colours.
+  const [activeThreat, setActiveThreat] = useState<string | null>(null);
   const [pendingPromotion, setPendingPromotion] = useState<{ from: string; to: string } | null>(null);
   // Reactions' setup line's own "historyIndex" — how many of
   // `board.setupMoves` are applied/viewed, same idea as Others/Plan's
@@ -683,11 +685,13 @@ function ReactionBoardEditorOverlay({
   const numberedArrows = useMemo(
     () =>
       toEditorNumberedArrows(
-        tempArrow ? [...visibleArrows, { ...tempArrow, color: annotateColor }] : visibleArrows,
+        tempArrow
+          ? [...visibleArrows, activeThreat ? { ...tempArrow, color: 'purple' as const, notes: { threat: activeThreat } } : { ...tempArrow, color: annotateColor }]
+          : visibleArrows,
         engineState.pieces,
         yourColor
       ),
-    [visibleArrows, tempArrow, annotateColor, engineState.pieces, yourColor]
+    [visibleArrows, tempArrow, annotateColor, activeThreat, engineState.pieces, yourColor]
   );
   // Badges are numbered off the committed arrows only — while a second
   // same-color arrow is still being dragged (not yet released), its number
@@ -702,8 +706,6 @@ function ReactionBoardEditorOverlay({
   // drawing with (opponent ones by their dark tint). Display only — numbers
   // are still worked out over all arrows, and nothing stored changes.
   const [onlyDrawing, setOnlyDrawing] = useState(false);
-  // Summary: the threat you're drawing for (its letter), or null for normal colours.
-  const [activeThreat, setActiveThreat] = useState<string | null>(null);
   const threatLetters = useMemo(() => {
     const set = new Set(visibleArrows.map((a) => a.notes?.threat).filter((t): t is string => !!t));
     if (activeThreat) set.add(activeThreat);
@@ -1332,7 +1334,7 @@ function ReactionBoardEditorOverlay({
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tool, annotateColor, board, cursorId, selected, pendingPromotion, branchChoices, phase, side, historyIndex, setupIndex, atHead, setupPeeking, expectMove?.from, expectMove?.to, expectArrow?.from, expectArrow?.to, expectArrow?.color]);
+  }, [tool, annotateColor, activeThreat, board, cursorId, selected, pendingPromotion, branchChoices, phase, side, historyIndex, setupIndex, atHead, setupPeeking, expectMove?.from, expectMove?.to, expectArrow?.from, expectArrow?.to, expectArrow?.color]);
 
   // "Arrows cleared" + Undo. Undo only puts the arrows back while nothing else
   // has changed on the board since; the moment something has, it goes away
