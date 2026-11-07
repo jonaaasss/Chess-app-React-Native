@@ -17,6 +17,7 @@ import { boardStyles, colors, touchTarget, type } from '../theme';
 import { Screen, TopBar } from '../components/Common';
 import { ToggleRow } from '../components/ToggleRow';
 import { AccountSection } from './AccountSection';
+import { UpdatesSection } from './UpdatesSection';
 import { openDevExportDialog } from './DevExportOverlay';
 
 const DEV_EXPORT_DESCRIPTION =
@@ -88,6 +89,7 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
     <Screen>
       <TopBar title="Settings" onBack={onBack} />
       <AccountSection />
+      <UpdatesSection />
       <ToggleRow label="Shuffle cards" value={shuffleOn} onToggle={toggleShuffle} description={SHUFFLE_DESCRIPTION} />
       <ToggleRow
         label="Show multiple repertoires"
