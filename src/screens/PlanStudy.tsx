@@ -9,7 +9,7 @@ import { CloseCircleButton } from '../overlay';
 import { MoveText } from '../components/MoveText';
 import type { Arrow, ArrowColor, Card, Circle, PieceCode, ReactionBoard } from '../types';
 import { ARROW_COLOR_NAMES, ARROW_COLOR_ORDER, arrowColors, BASE_ARROW_COLORS, boardStyles, DARK_TINT, colors, radius, touchTarget } from '../theme';
-import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, opponentTint, parallelOffsets, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
+import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, arrowIsOpponent, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, opponentTint, parallelOffsets, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
 import { PIECE_ANIM_DURATION_MS } from '../components/PieceAnimation';
 import type { GuideTargets } from '../components/GuideCoach';
 import type { CoachEvent } from '../guideContent';
@@ -230,7 +230,7 @@ export function PlanStudy({
   const finalAnnotations = useMemo(() => {
     if (!board) return { arrows: [], circles: [] };
     const a = faceAnnotations(board.back);
-    return { arrows: a.arrows.map((x) => ({ ...x, color: effectiveArrowColor(x, board.back.pieces, yourColor) })), circles: a.circles };
+    return { arrows: a.arrows.map((x) => ({ ...x, color: effectiveArrowColor(x, board.back.pieces, yourColor, a.arrows) })), circles: a.circles };
   }, [board, yourColor]);
   const colorGroups = useMemo(
     () => buildColorGroups(finalAnnotations.arrows, board?.back.pieces, yourColor),
@@ -246,7 +246,7 @@ export function PlanStudy({
   // Each is a list of steps; `threatFound` is how many are on the board.
   const threats = useMemo(() => {
     const pieces = board?.back.pieces;
-    const isOpp = (a: Arrow) => isOpponentArrow(a.from, pieces, yourColor);
+    const isOpp = (a: Arrow) => arrowIsOpponent(a, pieces, yourColor, finalAnnotations.arrows);
     const out: StudyThreat[] = [];
     for (const kind of ['opp', 'mine'] as const) {
       const letters = new Set<string>();
@@ -603,7 +603,9 @@ export function PlanStudy({
     from: a.from,
     to: a.to,
     color: arrowColors[a.color],
-    ...(threatOfArrow(a) ? { label: threatLabel(a) } : { number: arrowNumbers.get(keyOf(a)) })
+    ...(threatOfArrow(a)
+      ? { label: threatLabel(a), opponent: arrowIsOpponent(a, board?.back.pieces, yourColor, finalAnnotations.arrows) }
+      : { number: arrowNumbers.get(keyOf(a)) })
   }));
   if (wrongArrow) {
     numberedArrows.push({ id: 'wrong', from: wrongArrow.from, to: wrongArrow.to, color: colors.danger });

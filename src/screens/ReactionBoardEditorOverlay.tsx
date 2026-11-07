@@ -19,7 +19,7 @@ import {
 import { legalMovesFrom, makeMove, isPromotionMove, sansForBoardMoves, type GameState } from '../chessEngine';
 import type { Arrow, ArrowColor, BoardFace, BoardMove, CardMode, Circle, MoveNode, PieceCode, PromotionPiece, ReactionBoard } from '../types';
 import { ARROW_COLOR_NAMES, arrowColors, BASE_ARROW_COLORS, boardStyles, colors, DARK_TINT, engineColors, radius, spacing, touchTarget, type, variationColor } from '../theme';
-import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, parallelOffsets, opponentTint, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
+import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, arrowIsOpponent, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, parallelOffsets, opponentTint, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts } from '../components/PieceAnimation';
 import { alertDialog, confirmDialog, dismissSnackbar, showOverlay, showSnackbar, SnackbarLayer, useOverlayBack } from '../overlay';
 import { hasArrowNotes } from '../arrowNotes';
@@ -137,10 +137,16 @@ function toEditorNumberedArrows(arrows: Arrow[], pieces: Partial<Record<string, 
   for (const a of numbered) countByGroup.set(groupOf(a), (countByGroup.get(groupOf(a)) ?? 0) + 1);
   const seenByGroup = new Map<string, number>();
   return arrows.map((a, i) => {
-    const base = { id: `${a.from}-${a.to}-${a.color}-${i}`, from: a.from, to: a.to, color: arrowColors[effectiveArrowColor(a, pieces, yourColor)] };
+    const base = {
+      id: `${a.from}-${a.to}-${a.color}-${i}`,
+      from: a.from,
+      to: a.to,
+      color: arrowColors[effectiveArrowColor(a, pieces, yourColor, arrows)],
+      opponent: arrowIsOpponent(a, pieces, yourColor, arrows)
+    };
     const t = threatOfArrow(a);
     if (t) {
-      const opp = isOpponentArrow(a.from, pieces, yourColor);
+      const opp = base.opponent;
       if (t.kind === 'opp' && opp) return { ...base, label: `!${t.letter}` };
       if (t.kind === 'mine' && opp) return base;
       const key = `${t.kind}:${t.letter}`;
@@ -1116,7 +1122,8 @@ function ReactionBoardEditorOverlay({
     // Drawing with a threat selected (Summary): purple, tagged with its letter.
     const drawn: Arrow = activeThreat ? { ...drawnIn, color: THREAT_COLOR[activeThreat.kind], notes: threatFields(activeThreat) } : drawnIn;
     // An arrow from an opponent piece is always stored in the dark tint.
-    const arrow = { ...drawn, color: effectiveArrowColor(drawn, engineState.pieces, yourColor) };
+    // A threat arrow keeps its threat colour; whose move it is is worked out when shown.
+    const arrow = threatOfArrow(drawn) ? drawn : { ...drawn, color: effectiveArrowColor(drawn, engineState.pieces, yourColor) };
     // Compared in the colour arrows are shown in, so an older opponent arrow
     // (stored in its base colour, shown dark) is removed by drawing over it.
     const shownColor = (a: Arrow) => effectiveArrowColor(a, engineState.pieces, yourColor);
@@ -1185,7 +1192,7 @@ function ReactionBoardEditorOverlay({
     // The screen's title names the arrow: its colour and badge, as on the board.
     const idx = visibleArrows.findIndex((a) => sameArrowSpan(a, arrow) && a.color === arrow.color);
     const badge = idx >= 0 ? committedNumberedArrows[idx] : undefined;
-    const shown = effectiveArrowColor(arrow, engineState.pieces, yourColor);
+    const shown = effectiveArrowColor(arrow, engineState.pieces, yourColor, visibleArrows);
     const subject = {
       color: arrowColors[shown],
       name: ARROW_COLOR_NAMES[shown],

@@ -29,9 +29,39 @@ export function opponentTint(color: ArrowColor): ArrowColor {
   return (DARK_TINT as Record<string, ArrowColor>)[color] ?? color;
 }
 
+// Whose move a threat arrow is (Summary). 1) the piece on its start square;
+// 2) on an empty square, the piece at the start of a chain of arrows that
+// ends there (e.g. g1-f3 before f3-g5); 3) otherwise the kind of threat: an
+// opponent threat's arrow is the opponent's, one of yours is yours. Every
+// other arrow: only rule 1, as before.
+export function arrowIsOpponent(arrow: Arrow, pieces: Pieces | undefined, yourColor: 'w' | 'b', arrows: Arrow[] = []): boolean {
+  const kind = arrow.notes?.threat ? 'opp' : arrow.notes?.myThreat ? 'mine' : null;
+  if (!kind) return isOpponentArrow(arrow.from, pieces, yourColor);
+  const seen = new Set<string>();
+  const ownerOf = (square: string): 'w' | 'b' | null => {
+    const piece = pieces?.[square];
+    if (piece) return piece[0] as 'w' | 'b';
+    if (seen.has(square)) return null;
+    seen.add(square);
+    for (const a of arrows) {
+      if (a.to !== square || a === arrow) continue;
+      const owner = ownerOf(a.from);
+      if (owner) return owner;
+    }
+    return null;
+  };
+  const owner = ownerOf(arrow.from);
+  return owner ? owner !== yourColor : kind === 'opp';
+}
+
 // The colour an arrow is shown (and studied) in: its own, or for an
-// opponent's arrow the dark tint of it.
-export function effectiveArrowColor(arrow: Arrow, pieces: Pieces | undefined, yourColor: 'w' | 'b'): ArrowColor {
+// opponent's arrow the dark tint of it. A threat arrow is always its threat's
+// colour (purple / teal), dark when it is the opponent's (see arrowIsOpponent).
+export function effectiveArrowColor(arrow: Arrow, pieces: Pieces | undefined, yourColor: 'w' | 'b', arrows: Arrow[] = []): ArrowColor {
+  if (arrow.notes?.threat || arrow.notes?.myThreat) {
+    const base: ArrowColor = arrow.notes?.threat ? 'purple' : 'teal';
+    return arrowIsOpponent(arrow, pieces, yourColor, arrows) ? opponentTint(base) : base;
+  }
   return isOpponentArrow(arrow.from, pieces, yourColor) ? opponentTint(arrow.color) : arrow.color;
 }
 
@@ -110,8 +140,8 @@ export function ArrowsSvg({
       </Defs>
       {arrows.map((arrow, i) => {
         const { x1, y1, x2, y2 } = arrowLine(arrow.from, arrow.to, flipped, offsets[i]);
-        const opp = isOpponentArrow(arrow.from, pieces, side);
-        const color = opp ? opponentTint(arrow.color) : arrow.color;
+        const opp = arrowIsOpponent(arrow, pieces, side, arrows);
+        const color = effectiveArrowColor(arrow, pieces, side, arrows);
         return (
           <React.Fragment key={i}>
             {opp && <Line x1={x1} y1={y1} x2={x2} y2={y2} stroke={HALO} strokeWidth={0.16 + HALO_EXTRA} strokeLinecap="butt" strokeDasharray={OPPONENT_DASH} />}
@@ -142,6 +172,7 @@ export interface NumberedArrow {
   number?: number; // omit to draw the arrow without a badge
   label?: string; // shown in the badge instead of a number (e.g. "!" for a threat)
   width?: number; // stroke width in board-square units; defaults to the standard 0.16 (e.g. engine best-move arrows go slightly thicker)
+  opponent?: boolean; // whose arrow it is, when the start square alone can't tell (threat arrows); otherwise worked out from `pieces`
 }
 
 // Same thin-line arrow look as the board editor's plain ArrowsSvg — used
@@ -169,13 +200,13 @@ export function NumberedArrowsSvg({
       <Defs>
         {arrows.map((a) => (
           <Marker key={a.id} id={`numbered-head-${a.id}`} markerWidth={3} markerHeight={3} refX={1.4} refY={1.5} orient="auto">
-            <Path d="M0,0 L3,1.5 L0,3 Z" fill={a.color} stroke={isOpponentArrow(a.from, pieces, side) ? HALO : undefined} strokeWidth={0.3} />
+            <Path d="M0,0 L3,1.5 L0,3 Z" fill={a.color} stroke={(a.opponent ?? isOpponentArrow(a.from, pieces, side)) ? HALO : undefined} strokeWidth={0.3} />
           </Marker>
         ))}
       </Defs>
       {arrows.map((a, i) => {
         const { x1, y1, x2, y2 } = arrowLine(a.from, a.to, flipped, offsets[i]);
-        const opp = isOpponentArrow(a.from, pieces, side);
+        const opp = a.opponent ?? isOpponentArrow(a.from, pieces, side);
         const width = a.width ?? 0.16;
         return (
           <React.Fragment key={a.id}>
@@ -283,7 +314,7 @@ export function NumberedArrowBadges({
         if (a.number === undefined && !a.label) return null;
         const { x: bx, y: by } = centers?.[i] ?? numberBadgeCenter(a, i, size, flipped);
         return (
-          <View key={a.id} style={[badgeStyles.badge, { left: bx - 9, top: by - 9, backgroundColor: a.color }, isOpponentArrow(a.from, pieces, yourSide) && badgeStyles.opponent]}>
+          <View key={a.id} style={[badgeStyles.badge, { left: bx - 9, top: by - 9, backgroundColor: a.color }, (a.opponent ?? isOpponentArrow(a.from, pieces, yourSide)) && badgeStyles.opponent]}>
             <Text style={badgeStyles.text}>{a.label ?? a.number}</Text>
           </View>
         );
