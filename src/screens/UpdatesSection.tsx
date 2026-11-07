@@ -84,6 +84,7 @@ export function UpdatesSection() {
           <Text style={styles.actionSecondaryText}>Show log</Text>
         </Pressable>
       </View>
+      <Text style={styles.tip}>Tip: tap Check for updates after a new version is published. The app restarts by itself.</Text>
       {result && <Text selectable style={styles.result}>{result}</Text>}
       {log && <Text selectable style={styles.log}>{log}</Text>}
     </View>
@@ -102,6 +103,7 @@ const styles = StyleSheet.create({
   actionSecondary: { backgroundColor: colors.panel2 },
   actionSecondaryText: { color: colors.text, fontSize: 15, fontWeight: '600' },
   disabled: { opacity: 0.4 },
+  tip: { color: colors.textDim, ...type.caption, marginTop: 10 },
   result: { color: colors.text, ...type.caption, marginTop: 12 },
   log: { color: colors.textDim, fontSize: 11, marginTop: 10 }
 });
