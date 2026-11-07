@@ -1,9 +1,14 @@
 # Publishes an over-the-air update (EAS Update) for the permanent app on
 # every push to account-backup. The app downloads it on start and runs it on
 # the next start. Only JavaScript and assets travel this way; native changes
-# need a new build (bump "version" in app.json, then npm run android:permanent).
+# need a new build (bump "version" in app.json, npx expo prebuild --platform
+# android --clean, then npm run android:permanent). An update older than the
+# build on the phone is ignored, so publish again after every local build.
 name: update
 on:
+  # Also runnable by hand (Actions -> update -> Run workflow), e.g. right after
+  # a local build: the app only takes an update that is newer than its build.
+  workflow_dispatch:
   push:
     branches: [account-backup]
     paths-ignore:
@@ -42,4 +47,4 @@ jobs:
       - name: Publish update
         env:
           COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
-        run: eas update --channel production --message "$(printf '%s' "$COMMIT_MESSAGE" | head -n 1)" --environment production --non-interactive
+        run: eas update --channel production --message "$(printf '%s' "${COMMIT_MESSAGE:-Manual publish}" | head -n 1)" --environment production --non-interactive
