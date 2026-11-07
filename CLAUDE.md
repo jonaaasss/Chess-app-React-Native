@@ -9,7 +9,7 @@
 - Maak geen aannames over setup of data: vraag bij onduidelijkheid.
 - Zet alle vragen aan Jonas genummerd aan het einde van het antwoord, nooit midden in de tekst.
 - Stel wijzigingen eerst voor (oud/nieuw in een tabel) en wacht op akkoord, tenzij Jonas zegt dat het meteen mag.
-- Zeg na elke wijziging wat Jonas moet doen: alleen import = oude opening verwijderen en opnieuw importeren; DEV-app = `r` in Metro; permanente app = `npm run android:permanent`. Nooit data wissen of de app verwijderen.
+- Zeg na elke wijziging wat Jonas moet doen: alleen import = oude opening verwijderen en opnieuw importeren; DEV-app = `r` in Metro; permanente app = na de push enkele minuten wachten (GitHub publiceert een EAS Update), dan de app volledig sluiten en opnieuw openen, zo nodig twee keer; alleen bij een native wijziging (nieuwe native module, `assets/engine/`, plugins, app-icoon; dan ook `version` in `app.json` verhogen) `git pull`, `npm install` en `npm run android:permanent`. Nooit data wissen of de app verwijderen.
 - Controleer met `npx tsc --noEmit` en `npx expo export --platform android`, daarna `rm -rf dist`. Ik kan niet op het toestel testen en zeg dat eerlijk.
 - Commit en push na elke afgeronde wijziging naar de huidige branch (Jonas gaf daar blijvend toestemming voor); nooit force-pushen of geschiedenis herschrijven.
 - Gebruik geen bash-heredocs met backticks: schrijf scripts met de Write-tool.
