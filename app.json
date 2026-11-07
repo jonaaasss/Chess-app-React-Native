@@ -3,6 +3,10 @@
     "name": "Chess Playbook",
     "slug": "chess-opening-flashcards",
     "version": "1.0.0",
+    "owner": "jonaaassss-team",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -26,6 +30,17 @@
       "./plugins/withStockfishAssets.js",
       "./plugins/withPermanentBuild.js",
       "expo-sqlite"
-    ]
+    ],
+    "updates": {
+      "url": "https://u.expo.dev/4019e5fe-a3da-402e-af35-6bc5eda07cea",
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "4019e5fe-a3da-402e-af35-6bc5eda07cea"
+      }
+    }
   }
 }
