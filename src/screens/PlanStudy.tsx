@@ -571,7 +571,8 @@ export function PlanStudy({
     }
   }
   const displayGroup = colorGroups[displayIdx];
-  const visibleFamily = !showAll && !boardDone && displayGroup ? familyOf(displayGroup.color) : null;
+  // Also once the board is complete: the last colour stays alone unless "Show all colors" is on.
+  const visibleFamily = !showAll && displayGroup ? familyOf(displayGroup.color) : null;
   const visibleArrows = activeThreat
     ? threatSteps.slice(0, threatFound).map((st) => st.arrow)
     : visibleFamily
