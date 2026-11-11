@@ -1,9 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import { descriptionFace, faceAnnotations, isPlanLike } from '../chess';
-import { ChessBoardView, NumberedArrowsSvg, numberBadgeCenter, type NumberedArrow } from '../components/ChessBoard';
+import { ChessBoardView, NumberedArrowBadges, NumberedArrowsSvg, numberBadgeCenter, type NumberedArrow } from '../components/ChessBoard';
+import { toEditorNumberedArrows } from '../arrowNumbering';
+import { ReactionStudy } from './ReactionStudy';
 import { MoveText } from '../components/MoveText';
 import { showOverlay, useOverlayBack } from '../overlay';
 import { getCard, saveCard } from '../storage';
@@ -34,13 +36,15 @@ function PencilIcon({ size, color }: { size: number; color: string }) {
   );
 }
 
-// Look-only viewer for a card linked from a Summary arrow. Top to bottom:
-// "← Summary" and the full title; the board's Description; the board with
-// ‹ › beside it to switch boards (hidden for one board or a link to one
-// board); under it the pencil (Board editor for this board) and, on a
-// Reactions board, « ‹ › » through the recorded moves (« » to the previous /
-// next branching point). At a branching point the variations are purple
-// numbered arrows (1 = main line, which › follows); tap a number to follow it.
+// Look-only viewer for a card linked from a Summary arrow: "← Summary" and
+// the full title on top. A Reactions card runs in the Study view's preview
+// mode (ReactionStudy with `preview`): every move plays itself with its
+// animation, variations are walked with their numbered arrows, ‹ › and pause
+// work, no Hint or Show solution; Continue returns to the Summary. A Plan
+// card shows its Description above the board, the arrows numbered as in the
+// board editor, and ‹ › beside the board to switch boards. The pencil under
+// the board opens the Board editor (on a Reactions card at the move shown).
+// A link to one board shows only that board.
 function CardViewerOverlay({
   cardId,
   boardId,
@@ -59,6 +63,11 @@ function CardViewerOverlay({
   const [boardIdx, setBoardIdx] = useState(0);
   // Reactions: the moves played from the board's start (a path in the tree).
   const [path, setPath] = useState<MoveNode[]>([]);
+  // Reactions: the study view's pause, and where it stands (for the pencil).
+  const [paused, setPaused] = useState(false);
+  const [version, setVersion] = useState(0);
+  const studyBoardRef = useRef<ReactionBoard | null>(null);
+  const studyCursorRef = useRef<string | null>(null);
   const { width } = useWindowDimensions();
   const size = Math.min(width - 32 - 2 * (touchTarget + 8), 360);
   const flipped = yourColor === 'b';
@@ -112,18 +121,22 @@ function CardViewerOverlay({
 
   async function editBoard() {
     if (!card || !board) return;
+    const target = isReactions ? studyBoardRef.current ?? board : board;
+    setPaused(true);
     const updated = await openReactionBoardEditor(
-      board,
+      target,
       card.mode,
       yourColor,
       boardStyle,
-      isReactions ? (path.length > 0 ? path[path.length - 1].id : null) : undefined
+      isReactions ? studyCursorRef.current : undefined
     );
+    setPaused(false);
     if (!updated) return;
     const updatedCard = { ...card, boards: card.boards.map((b) => (b.id === updated.id ? updated : b)) };
     await saveCard(updatedCard);
     setCard(updatedCard);
     setPath([]);
+    setVersion((v) => v + 1);
   }
 
   let pieces: ReactionBoard['pieces'] = {};
@@ -143,6 +156,7 @@ function CardViewerOverlay({
     children.length > 1
       ? children.map((c, i) => ({ id: c.id, from: c.from, to: c.to, color: variationColor, number: i + 1 }))
       : [];
+  const numbered = toEditorNumberedArrows(annotations.arrows, pieces, yourColor);
   const description = card && board ? board[descriptionFace(card.mode)].text.trim() : '';
   const last = path[path.length - 1];
 
@@ -157,7 +171,32 @@ function CardViewerOverlay({
 
       <ScrollView contentContainerStyle={styles.content}>
         {card === null && <Text style={styles.missing}>This card no longer exists.</Text>}
-        {card && board && (
+        {card && board && isReactions && (
+          // A Reactions card plays exactly as in Study, but on its own: every
+          // move (yours too) is played for you with the same animation, the
+          // variations are walked automatically with their numbered arrows,
+          // ‹ › and pause work; no Hint or Show solution. Continue goes back.
+          <>
+            <ReactionStudy
+              key={`${card.id}-${version}`}
+              card={{ ...card, boards }}
+              yourColor={yourColor}
+              boardStyle={boardStyle}
+              onResult={() => close()}
+              boardRef={studyBoardRef}
+              cursorRef={studyCursorRef}
+              preview
+              paused={paused}
+              onTogglePause={() => setPaused((p) => !p)}
+            />
+            <View style={styles.underRow}>
+              <Pressable onPress={editBoard} style={styles.pencilBtn} accessibilityLabel="Edit this board">
+                <PencilIcon size={22} color={colors.text} />
+              </Pressable>
+            </View>
+          </>
+        )}
+        {card && board && !isReactions && (
           <>
             {!!description && <MoveText text={description} style={styles.description} />}
             {boards.length > 1 && <Text style={styles.counter}>{`Board ${boardIdx + 1} / ${boards.length}`}</Text>}
@@ -170,28 +209,12 @@ function CardViewerOverlay({
                 <View style={styles.navSpacer} />
               )}
               <View style={{ width: size, height: size }}>
-                <ChessBoardView board={{ pieces, style: boardStyle, arrows: annotations.arrows, circles: annotations.circles }} size={size} flipped={flipped} />
-                {variants.length > 0 && (
-                  <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-                    <View style={StyleSheet.absoluteFill} pointerEvents="none">
-                      <NumberedArrowsSvg arrows={variants} size={size} flipped={flipped} />
-                    </View>
-                    {variants.map((v, i) => {
-                      const c = numberBadgeCenter(v, i, size, flipped);
-                      return (
-                        <Pressable
-                          key={v.id}
-                          onPress={() => setPath([...path, children[i]])}
-                          hitSlop={11}
-                          style={[styles.variantBadge, { left: c.x - 13, top: c.y - 13 }]}
-                          accessibilityLabel={`Follow variation ${i + 1}: ${children[i].san}`}
-                        >
-                          <Text style={styles.variantBadgeText}>{i + 1}</Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                )}
+                <ChessBoardView board={{ pieces, style: boardStyle, arrows: [], circles: annotations.circles }} size={size} flipped={flipped} />
+                <View style={StyleSheet.absoluteFill} pointerEvents="none">
+                  {/* Numbered like the board editor: same-colour arrows 1, 2…, threats !A / A1 / ★A. */}
+                  <NumberedArrowsSvg arrows={numbered} size={size} flipped={flipped} pieces={pieces} yourColor={yourColor} />
+                  <NumberedArrowBadges arrows={numbered} size={size} flipped={flipped} pieces={pieces} yourColor={yourColor} />
+                </View>
               </View>
               {boards.length > 1 && boardIdx < boards.length - 1 ? (
                 <Pressable onPress={() => goToBoard(boardIdx + 1)} style={styles.sideBtn} accessibilityLabel="Next board">
@@ -201,37 +224,11 @@ function CardViewerOverlay({
                 <View style={styles.navSpacer} />
               )}
             </View>
-
             <View style={styles.underRow}>
               <Pressable onPress={editBoard} style={styles.pencilBtn} accessibilityLabel="Edit this board">
                 <PencilIcon size={22} color={colors.text} />
               </Pressable>
-              {isReactions && board.recording.length > 0 ? (
-                <View style={styles.moveNav}>
-                  <Pressable onPress={toPrevBranch} disabled={!canMoveBack} style={[styles.moveBtn, !canMoveBack && styles.moveBtnDisabled]} accessibilityLabel="Back to the previous branching point">
-                    <Text style={styles.moveBtnText}>«</Text>
-                  </Pressable>
-                  <Pressable onPress={moveBack} disabled={!canMoveBack} style={[styles.moveBtn, !canMoveBack && styles.moveBtnDisabled]} accessibilityLabel="One move back">
-                    <Text style={styles.moveBtnText}>‹</Text>
-                  </Pressable>
-                  <Pressable onPress={moveForward} disabled={!canMoveForward} style={[styles.moveBtn, !canMoveForward && styles.moveBtnDisabled]} accessibilityLabel="Next move">
-                    <Text style={styles.moveBtnText}>›</Text>
-                  </Pressable>
-                  <Pressable onPress={toNextBranch} disabled={!canMoveForward} style={[styles.moveBtn, !canMoveForward && styles.moveBtnDisabled]} accessibilityLabel="On to the next branching point">
-                    <Text style={styles.moveBtnText}>»</Text>
-                  </Pressable>
-                </View>
-              ) : (
-                <View style={{ flex: 1 }} />
-              )}
-              <View style={styles.navSpacer} />
             </View>
-            {isReactions && board.recording.length > 0 && (
-              <Text style={styles.moveInfo}>
-                {path.length === 0 ? 'Start position' : `After ${last.san}`}
-                {variants.length > 0 ? ' · tap a number to follow a variation' : ''}
-              </Text>
-            )}
           </>
         )}
       </ScrollView>
