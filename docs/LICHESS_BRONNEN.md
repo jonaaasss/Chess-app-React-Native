@@ -2,6 +2,8 @@
 
 Read this before researching an opening to make cards from sources. Jonas's rule: **only Lichess** (studies + opening explorer). No Wikipedia, Chess.com or other sites as sources; no engine to judge moves. Anything a source doesn't confirm is orange (`?`) with the source named on the card.
 
+**Use the best that is available** (Jonas, 2026-11-11): Jonas does not search himself. Where no good study exists, use the opening explorer (masters) and follow what masters play; plans derived from it are orange with "Lichess explorer (masters)" as source. An author with a ToS flag may be used when their study is the best source for a line (name it on the card).
+
 ## Access
 
 - **Lichess token**: a network secret in the cloud environment "Schaakapp" (type Bearer, header `Authorization`, hosts `explorer.lichess.ovh` and `lichess.org`). The proxy adds it; the token is never visible and must never be pasted in the chat. It has no scopes (public data only). Add `study:read` only if Jonas's own private studies must be read.
