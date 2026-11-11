@@ -111,13 +111,13 @@ function RewindIcon({ size, color }: { size: number; color: string }) {
 // order they're walked through in, so the arrow that plays first is 1 —
 // which means the recorded main line, always walked last, is the highest
 // number here (unlike in the board editor, where it's 1).
-function toVariantArrows(variants: MoveNode[], activeIdx: number): NumberedArrow[] {
+function toVariantArrows(variants: MoveNode[], activeIdx: number, numbers?: number[]): NumberedArrow[] {
   return variants.map((v, i) => ({
     id: v.id,
     from: v.from,
     to: v.to,
     color: i === activeIdx ? colors.primary : colors.danger,
-    number: i + 1
+    number: numbers?.[i] ?? i + 1
   }));
 }
 
@@ -311,11 +311,64 @@ export function ReactionStudy({
   // animation, and if it was your move to find, no chance to find it).
   // Reusing the real playing/tap/auto-play machinery is what variants 1
   // and 2 already rely on successfully.
+  // Every line the walkthrough plays, in the order it plays them: at each
+  // branching point of the main line its variations (shortest first, as
+  // walked), and the main line itself last. Each gets its number, its path
+  // (the choice made at every branching point, "4.e4 › 5...d5") and whether
+  // it has been played yet — for the path above the board and the overview.
+  const firstIsWhite = line[0] ? line[0].turnAfter === 'b' : board?.turn === 'w';
+  const moveLabel = (i: number, san: string) => {
+    const off = firstIsWhite ? 0 : 1;
+    const n = Math.floor((i + off) / 2) + 1;
+    return (i + off) % 2 === 0 ? `${n}.${san}` : `${n}...${san}`;
+  };
+  const allLines = useMemo(() => {
+    const out: { key: string; branch: number; path: string[]; tail: string[]; variantIdx: number }[] = [];
+    if (!board) return out;
+    const branches = line.map((_, i) => i).filter((i) => siblingsAt(i).length > 1);
+    for (const p of branches) {
+      const main = siblingsAt(p)[0];
+      const vars = [...siblingsAt(p)]
+        .sort((a, b) => mainLineNodes([a]).length - mainLineNodes([b]).length)
+        .filter((v) => v.id !== main.id);
+      vars.forEach((v, vi) => {
+        const before = branches.filter((q) => q < p).map((q) => moveLabel(q, line[q].san));
+        const sub = mainLineNodes([v]);
+        out.push({
+          key: v.id,
+          branch: p,
+          path: [...before, moveLabel(p, v.san)],
+          tail: sub.slice(1, 4).map((n, k) => moveLabel(p + 1 + k, n.san)),
+          variantIdx: vi
+        });
+      });
+    }
+    out.push({ key: 'main', branch: Infinity, path: branches.map((q) => moveLabel(q, line[q].san)), tail: [], variantIdx: 0 });
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [board, line]);
+  const lineDone = (l: (typeof allLines)[number]) =>
+    l.key === 'main'
+      ? allDone || (!inVariant && (!board || ply >= line.length))
+      : shownBranches.has(l.branch) && !(inVariant && branchPly === l.branch && l.variantIdx >= variantIdx);
+  const currentLineIdx = Math.max(0, allLines.findIndex((l) => !lineDone(l)));
+  const currentLine = allLines[currentLineIdx];
+  // A variation arrow carries the number of the line it starts; the main
+  // line's own move at a branch carries the number of the next line after it.
+  const lineNumberOf = (v: MoveNode) => {
+    const own = allLines.findIndex((l) => l.key === v.id);
+    if (own >= 0) return own + 1;
+    const next = allLines.findIndex((l) => l.branch > branchPly);
+    return next >= 0 ? next + 1 : allLines.length;
+  };
+  const [overviewOpen, setOverviewOpen] = useState(false);
+
   const currentVariant = showingMainline ? mainlineSibling : walkableVariants[variantIdx];
   const activeArrowIdx = orderedVariants.findIndex((v) => v.id === currentVariant?.id);
   const variantArrows = useMemo(
-    () => toVariantArrows(orderedVariants, activeArrowIdx),
-    [orderedVariants, activeArrowIdx]
+    () => toVariantArrows(orderedVariants, activeArrowIdx, allLines.length > 1 ? orderedVariants.map(lineNumberOf) : undefined),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [orderedVariants, activeArrowIdx, allLines, branchPly]
   );
   // A real variant's showcase plays out its whole recorded subtree; the
   // mainline sentinel must stop after exactly its one move — the rest of
@@ -684,6 +737,15 @@ export function ReactionStudy({
         {boards.length > 1 ? `Board ${boardIdx + 1} / ${boards.length} — ` : ''}
         {statusShown}
       </Text>
+      {allLines.length > 1 && currentLine && (
+        // Where you are: the choice made at every branching point so far.
+        <Text style={styles.linePath}>
+          {`Line ${currentLineIdx + 1} of ${allLines.length}: `}
+          <Text style={styles.linePathMoves}>
+            {currentLine.key === 'main' ? `${currentLine.path.join(' › ')}${currentLine.path.length ? ' ' : ''}(main line)` : currentLine.path.join(' › ')}
+          </Text>
+        </Text>
+      )}
 
       <View ref={guideTargets?.board} collapsable={false}>
         <View
@@ -773,6 +835,30 @@ export function ReactionStudy({
         </Text>
       ) : null}
 
+      {allLines.length > 1 && (
+        // All lines of this board, collapsed to one row until tapped.
+        <View style={styles.overview}>
+          <Pressable onPress={() => setOverviewOpen((o) => !o)} style={styles.overviewHead} accessibilityLabel={overviewOpen ? 'Hide the lines' : 'Show all lines'}>
+            <Text style={styles.overviewHeadText}>{`${allLines.length} lines ${overviewOpen ? '▴' : '▾'}`}</Text>
+          </Pressable>
+          {overviewOpen &&
+            allLines.map((l, i) => {
+              const done = lineDone(l);
+              const current = i === currentLineIdx && !allDone;
+              return (
+                <View key={l.key} style={[styles.overviewRow, current && styles.overviewRowCurrent]}>
+                  <Text style={[styles.overviewNum, done && styles.overviewDone]}>{done ? '✓' : `${i + 1}.`}</Text>
+                  <Text style={[styles.overviewText, current && styles.overviewTextCurrent]}>
+                    {l.key === 'main'
+                      ? `${l.path.join(' › ')}${l.path.length ? ' ' : ''}(main line)`
+                      : `${l.path.join(' › ')}${l.tail.length ? ` ${l.tail.join(' ')}…` : ''}`}
+                  </Text>
+                </View>
+              );
+            })}
+        </View>
+      )}
+
       {allDone ? (
         <Pressable
           ref={guideTargets?.continue}
@@ -820,6 +906,17 @@ export function ReactionStudy({
 }
 
 const styles = StyleSheet.create({
+  linePath: { color: colors.textDim, fontSize: 13, textAlign: 'center', paddingHorizontal: 16 },
+  linePathMoves: { color: colors.text, fontWeight: '700' },
+  overview: { alignSelf: 'stretch', marginHorizontal: 16, borderRadius: 10, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel2, overflow: 'hidden' },
+  overviewHead: { minHeight: touchTarget, justifyContent: 'center', paddingHorizontal: 14 },
+  overviewHeadText: { color: colors.text, fontSize: 14, fontWeight: '600' },
+  overviewRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 14, paddingVertical: 8, borderTopWidth: 1, borderTopColor: colors.border },
+  overviewRowCurrent: { backgroundColor: colors.panel },
+  overviewNum: { width: 22, color: colors.textDim, fontSize: 13, fontWeight: '700' },
+  overviewDone: { color: colors.primary },
+  overviewText: { flex: 1, color: colors.textDim, fontSize: 13 },
+  overviewTextCurrent: { color: colors.text, fontWeight: '700' },
   boardText: { color: colors.text, fontSize: 15, lineHeight: 22, textAlign: 'center', paddingHorizontal: 12 },
   status: { color: colors.textDim, fontSize: 13, fontWeight: '600' },
   board: { borderRadius: 6, overflow: 'hidden', borderWidth: 1, borderColor: colors.border },
