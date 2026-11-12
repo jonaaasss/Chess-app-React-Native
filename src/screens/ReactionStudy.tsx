@@ -418,29 +418,13 @@ export function ReactionStudy({
   // Branching points already walked stay on the board as arrows in their
   // colour, numbered with their lines, while you look at the position at or
   // after them.
-  const persistentArrows: NumberedArrow[] = !inVariant
-    ? mainBranches
-        .filter((q) => shownBranches.has(q) && viewPly >= q)
-        .flatMap((q) => {
-          const color = BRANCH_COLORS[mainBranches.indexOf(q) % BRANCH_COLORS.length];
-          const sibs = siblingsAt(q);
-          const ordered = [...sibs.slice(1).sort((a, b) => mainLineNodes([a]).length - mainLineNodes([b]).length), sibs[0]];
-          return ordered.map((v, i) => ({
-            id: `keep-${v.id}`,
-            from: v.from,
-            to: v.to,
-            color: arrowColors[v.id === sibs[0].id ? color : BRANCH_DARK[color]],
-            number: i + 1
-          }));
-        })
-    : [];
 
   const currentEntry = showingMainline ? undefined : walkEntries[variantIdx];
   const currentVariant = showingMainline ? mainlineSibling : currentEntry?.head;
   const activeArrowIdx = orderedVariants.findIndex((v) => v.id === currentVariant?.id);
   const variantArrows = useMemo(
     () => {
-      const color = BRANCH_COLORS[Math.max(0, mainBranches.indexOf(branchPly)) % BRANCH_COLORS.length];
+      const color = BRANCH_COLORS[mainBranches.filter((q) => q < branchPly).length % BRANCH_COLORS.length];
       return toVariantArrows(orderedVariants, activeArrowIdx).map((a, i) => ({
         ...a,
         color: arrowColors[i === activeArrowIdx ? color : BRANCH_DARK[color]]
@@ -457,6 +441,44 @@ export function ReactionStudy({
     () => (showingMainline ? (mainlineSibling ? [mainlineSibling] : []) : currentEntry?.nodes ?? []),
     [currentEntry, showingMainline, mainlineSibling]
   );
+
+  // The choices made so far along the line being played stay on the board as
+  // one arrow each, in the colour of their branching point in order along the
+  // line (1st green, 2nd orange, 3rd red, 4th blue, then again): the move
+  // that was played, numbered as it was at its branching point.
+  const choiceArrow = (node: MoveNode, siblings: MoveNode[], k: number): NumberedArrow => {
+    const ordered = [...siblings.slice(1).sort((a, b) => mainLineNodes([a]).length - mainLineNodes([b]).length), siblings[0]];
+    return {
+      id: `keep-${node.id}`,
+      from: node.from,
+      to: node.to,
+      color: arrowColors[BRANCH_COLORS[k % BRANCH_COLORS.length]],
+      number: ordered.findIndex((v) => v.id === node.id) + 1
+    };
+  };
+  const persistentArrows: NumberedArrow[] = (() => {
+    const out: NumberedArrow[] = [];
+    if (!board) return out;
+    if (!inVariant) {
+      mainBranches
+        .filter((q) => viewPly > q)
+        .forEach((q, k) => out.push(choiceArrow(line[q], siblingsAt(q), k)));
+      return out;
+    }
+    const before = mainBranches.filter((q) => q < branchPly);
+    before.forEach((q, k) => out.push(choiceArrow(line[q], siblingsAt(q), k)));
+    let k = before.length;
+    if (variantSubPly >= 1 && variantLine[0]) {
+      out.push(choiceArrow(variantLine[0], siblingsAt(branchPly), k));
+      k += 1;
+    }
+    // A sub-variation: the choice where it leaves its variation.
+    if (currentEntry && currentEntry.subAt > 0 && variantSubPly > currentEntry.subAt) {
+      const parent = variantLine[currentEntry.subAt - 1];
+      out.push(choiceArrow(variantLine[currentEntry.subAt], parent.children, k));
+    }
+    return out;
+  })();
 
   const variantState: GameState = useMemo(() => {
     let st = branchState;
@@ -860,8 +882,8 @@ export function ReactionStudy({
           <View style={StyleSheet.absoluteFill} pointerEvents="none">
             {showVariantArrows ? (
               <>
-                <NumberedArrowsSvg arrows={variantArrows} size={BOARD_SIZE} flipped={flipped} />
-                <NumberedArrowBadges arrows={variantArrows} size={BOARD_SIZE} flipped={flipped} />
+                <NumberedArrowsSvg arrows={[...persistentArrows, ...variantArrows]} size={BOARD_SIZE} flipped={flipped} />
+                <NumberedArrowBadges arrows={[...persistentArrows, ...variantArrows]} size={BOARD_SIZE} flipped={flipped} />
               </>
             ) : (
               <>
