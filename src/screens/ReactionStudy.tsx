@@ -363,12 +363,21 @@ export function ReactionStudy({
     return (i + off) % 2 === 0 ? `${n}.${san}` : `${n}...${san}`;
   };
   const allLines = useMemo(() => {
-    const out: { key: string; branch: number; path: string[]; tail: string[]; variantIdx: number }[] = [];
+    const out: { key: string; branch: number; path: string[]; tail: string[]; variantIdx: number; label: string; color?: string }[] = [];
     if (!board) return out;
     const branches = line.map((_, i) => i).filter((i) => siblingsAt(i).length > 1);
     for (const p of branches) {
       const before = branches.filter((q) => q < p).map((q) => moveLabel(q, line[q].san));
-      walkEntriesFor(siblingsAt(p)).forEach((e, vi) => {
+      const entries = walkEntriesFor(siblingsAt(p));
+      const heads = entries.filter((e) => e.subAt < 0).map((e) => e.head.id);
+      const color = arrowColors[BRANCH_COLORS[branches.indexOf(p) % BRANCH_COLORS.length]];
+      let subCount = 0;
+      entries.forEach((e, vi) => {
+        // The number on this variation's arrow at its branching point (1, 2, …
+        // per branching point); a sub-variation adds a letter.
+        const num = heads.indexOf(e.head.id) + 1;
+        subCount = e.subAt < 0 ? 0 : subCount + 1;
+        const label = e.subAt < 0 ? `${num}` : `${num}${String.fromCharCode(96 + subCount)}`;
         const path = e.subAt < 0 ? [moveLabel(p, e.head.san)] : [moveLabel(p, e.head.san), moveLabel(p + e.subAt, e.nodes[e.subAt].san)];
         const from = e.subAt < 0 ? 1 : e.subAt + 1;
         out.push({
@@ -376,11 +385,13 @@ export function ReactionStudy({
           branch: p,
           path: [...before, ...path],
           tail: e.nodes.slice(from, from + 3).map((n, k) => moveLabel(p + from + k, n.san)),
-          variantIdx: vi
+          variantIdx: vi,
+          label,
+          color
         });
       });
     }
-    out.push({ key: 'main', branch: Infinity, path: branches.map((q) => moveLabel(q, line[q].san)), tail: [], variantIdx: 0 });
+    out.push({ key: 'main', branch: Infinity, path: branches.map((q) => moveLabel(q, line[q].san)), tail: [], variantIdx: 0, label: 'M' });
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [board, line]);
@@ -414,12 +425,12 @@ export function ReactionStudy({
           const color = BRANCH_COLORS[mainBranches.indexOf(q) % BRANCH_COLORS.length];
           const sibs = siblingsAt(q);
           const ordered = [...sibs.slice(1).sort((a, b) => mainLineNodes([a]).length - mainLineNodes([b]).length), sibs[0]];
-          return ordered.map((v) => ({
+          return ordered.map((v, i) => ({
             id: `keep-${v.id}`,
             from: v.from,
             to: v.to,
             color: arrowColors[v.id === sibs[0].id ? color : BRANCH_DARK[color]],
-            number: lineNumberOf(v, q)
+            number: i + 1
           }));
         })
     : [];
@@ -430,7 +441,7 @@ export function ReactionStudy({
   const variantArrows = useMemo(
     () => {
       const color = BRANCH_COLORS[Math.max(0, mainBranches.indexOf(branchPly)) % BRANCH_COLORS.length];
-      return toVariantArrows(orderedVariants, activeArrowIdx, orderedVariants.map((v) => lineNumberOf(v))).map((a, i) => ({
+      return toVariantArrows(orderedVariants, activeArrowIdx).map((a, i) => ({
         ...a,
         color: arrowColors[i === activeArrowIdx ? color : BRANCH_DARK[color]]
       }));
@@ -921,7 +932,7 @@ export function ReactionStudy({
               const current = i === currentLineIdx && !allDone;
               return (
                 <View key={l.key} style={[styles.overviewRow, current && styles.overviewRowCurrent]}>
-                  <Text style={[styles.overviewNum, done && styles.overviewDone]}>{done ? '✓' : `${i + 1}.`}</Text>
+                  <Text style={[styles.overviewNum, l.color ? { color: l.color } : null, done && styles.overviewDone]}>{done ? '✓' : l.label}</Text>
                   <Text style={[styles.overviewText, current && styles.overviewTextCurrent]}>
                     {l.key === 'main'
                       ? `${l.path.join(' › ')}${l.path.length ? ' ' : ''}(main line)`
