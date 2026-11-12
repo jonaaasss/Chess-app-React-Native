@@ -4,7 +4,7 @@ import Svg, { Path } from 'react-native-svg';
 import { allSquares, flipIndex, mainLineNodes, squareFromIndex } from '../chess';
 import { legalMovesFrom, makeMove, type GameState } from '../chessEngine';
 import type { Arrow, Card, Circle, MoveNode, PieceCode, ReactionBoard } from '../types';
-import { boardStyles, colors, radius, touchTarget } from '../theme';
+import { arrowColors, boardStyles, colors, radius, touchTarget } from '../theme';
 import { BoardCoords, ArrowsSvg, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, type NumberedArrow } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts, PIECE_ANIM_DURATION_MS } from '../components/PieceAnimation';
 import type { GuideTargets } from '../components/GuideCoach';
@@ -111,6 +111,40 @@ function RewindIcon({ size, color }: { size: number; color: string }) {
 // order they're walked through in, so the arrow that plays first is 1 —
 // which means the recorded main line, always walked last, is the highest
 // number here (unlike in the board editor, where it's 1).
+// What the walkthrough plays at one branching point, in order: every
+// variation (shortest first) along its own main path, each followed by the
+// sub-variations inside it (one level deeper: the variation's moves up to
+// where it splits, then the other choice). The main line's own move is not
+// in here; it is resumed after the walkthrough.
+interface WalkEntry {
+  id: string; // the first node of what is new in this entry
+  head: MoveNode; // the variation's first move (its arrow at the branch)
+  nodes: MoveNode[]; // every move played from the branch
+  subAt: number; // index in `nodes` where a sub-variation leaves its variation (-1 for a variation)
+}
+function walkEntriesFor(siblings: MoveNode[]): WalkEntry[] {
+  if (siblings.length < 2) return [];
+  const main = siblings[0];
+  const vars = [...siblings].sort((a, b) => mainLineNodes([a]).length - mainLineNodes([b]).length).filter((v) => v.id !== main.id);
+  const out: WalkEntry[] = [];
+  for (const v of vars) {
+    const path = mainLineNodes([v]);
+    out.push({ id: v.id, head: v, nodes: path, subAt: -1 });
+    path.forEach((node, k) => {
+      for (const alt of node.children.slice(1)) {
+        out.push({ id: alt.id, head: v, nodes: [...path.slice(0, k + 1), ...mainLineNodes([alt])], subAt: k + 1 });
+      }
+    });
+  }
+  return out;
+}
+
+// Each branching point of the main line has its own colour (green, orange,
+// red, blue, then again); the variation being played is the light tint, the
+// others the dark one.
+const BRANCH_COLORS = ['green', 'orange', 'red', 'blue'] as const;
+const BRANCH_DARK = { green: 'darkGreen', orange: 'darkOrange', red: 'darkRed', blue: 'darkBlue' } as const;
+
 function toVariantArrows(variants: MoveNode[], activeIdx: number, numbers?: number[]): NumberedArrow[] {
   return variants.map((v, i) => ({
     id: v.id,
@@ -287,6 +321,12 @@ export function ReactionStudy({
     () => sortedVariants.filter((v) => v.id !== mainlineSibling?.id),
     [sortedVariants, mainlineSibling]
   );
+  // What is actually played, variation by variation, sub-variations included.
+  const walkEntries = useMemo(
+    () => (inVariant ? walkEntriesFor(siblingsAt(branchPly)) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [inVariant, board, line, branchPly]
+  );
 
   // The order the variants are actually walked in — every walkable variant
   // (shortest first), then the line's own true continuation last (it's always
@@ -303,7 +343,7 @@ export function ReactionStudy({
   // every walkable variant was — before the line resumes on it. Without
   // this, resuming the mainline sibling after the last variant's rewind
   // would skip straight to playing its move with no arrow shown at all.
-  const showingMainline = variantIdx >= walkableVariants.length;
+  const showingMainline = variantIdx >= walkEntries.length;
   // The mainline sentinel is walked through the exact same 'playing' stage
   // as every other variant (see the two effects below) rather than a
   // bespoke "just jump ply forward" shortcut — that shortcut used to mark
@@ -327,18 +367,15 @@ export function ReactionStudy({
     if (!board) return out;
     const branches = line.map((_, i) => i).filter((i) => siblingsAt(i).length > 1);
     for (const p of branches) {
-      const main = siblingsAt(p)[0];
-      const vars = [...siblingsAt(p)]
-        .sort((a, b) => mainLineNodes([a]).length - mainLineNodes([b]).length)
-        .filter((v) => v.id !== main.id);
-      vars.forEach((v, vi) => {
-        const before = branches.filter((q) => q < p).map((q) => moveLabel(q, line[q].san));
-        const sub = mainLineNodes([v]);
+      const before = branches.filter((q) => q < p).map((q) => moveLabel(q, line[q].san));
+      walkEntriesFor(siblingsAt(p)).forEach((e, vi) => {
+        const path = e.subAt < 0 ? [moveLabel(p, e.head.san)] : [moveLabel(p, e.head.san), moveLabel(p + e.subAt, e.nodes[e.subAt].san)];
+        const from = e.subAt < 0 ? 1 : e.subAt + 1;
         out.push({
-          key: v.id,
+          key: e.id,
           branch: p,
-          path: [...before, moveLabel(p, v.san)],
-          tail: sub.slice(1, 4).map((n, k) => moveLabel(p + 1 + k, n.san)),
+          path: [...before, ...path],
+          tail: e.nodes.slice(from, from + 3).map((n, k) => moveLabel(p + from + k, n.san)),
           variantIdx: vi
         });
       });
@@ -355,18 +392,49 @@ export function ReactionStudy({
   const currentLine = allLines[currentLineIdx];
   // A variation arrow carries the number of the line it starts; the main
   // line's own move at a branch carries the number of the next line after it.
-  const lineNumberOf = (v: MoveNode) => {
+  const lineNumberOf = (v: MoveNode, at: number = branchPly) => {
     const own = allLines.findIndex((l) => l.key === v.id);
     if (own >= 0) return own + 1;
-    const next = allLines.findIndex((l) => l.branch > branchPly);
+    const next = allLines.findIndex((l) => l.branch > at);
     return next >= 0 ? next + 1 : allLines.length;
   };
   const [overviewOpen, setOverviewOpen] = useState(false);
+  const mainBranches = useMemo(
+    () => line.map((_, i) => i).filter((i) => siblingsAt(i).length > 1),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [board, line]
+  );
+  // Branching points already walked stay on the board as arrows in their
+  // colour, numbered with their lines, while you look at the position at or
+  // after them.
+  const persistentArrows: NumberedArrow[] = !inVariant
+    ? mainBranches
+        .filter((q) => shownBranches.has(q) && viewPly >= q)
+        .flatMap((q) => {
+          const color = BRANCH_COLORS[mainBranches.indexOf(q) % BRANCH_COLORS.length];
+          const sibs = siblingsAt(q);
+          const ordered = [...sibs.slice(1).sort((a, b) => mainLineNodes([a]).length - mainLineNodes([b]).length), sibs[0]];
+          return ordered.map((v) => ({
+            id: `keep-${v.id}`,
+            from: v.from,
+            to: v.to,
+            color: arrowColors[v.id === sibs[0].id ? color : BRANCH_DARK[color]],
+            number: lineNumberOf(v, q)
+          }));
+        })
+    : [];
 
-  const currentVariant = showingMainline ? mainlineSibling : walkableVariants[variantIdx];
+  const currentEntry = showingMainline ? undefined : walkEntries[variantIdx];
+  const currentVariant = showingMainline ? mainlineSibling : currentEntry?.head;
   const activeArrowIdx = orderedVariants.findIndex((v) => v.id === currentVariant?.id);
   const variantArrows = useMemo(
-    () => toVariantArrows(orderedVariants, activeArrowIdx, allLines.length > 1 ? orderedVariants.map(lineNumberOf) : undefined),
+    () => {
+      const color = BRANCH_COLORS[Math.max(0, mainBranches.indexOf(branchPly)) % BRANCH_COLORS.length];
+      return toVariantArrows(orderedVariants, activeArrowIdx, orderedVariants.map((v) => lineNumberOf(v))).map((a, i) => ({
+        ...a,
+        color: arrowColors[i === activeArrowIdx ? color : BRANCH_DARK[color]]
+      }));
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [orderedVariants, activeArrowIdx, allLines, branchPly]
   );
@@ -375,8 +443,8 @@ export function ReactionStudy({
   // the line resumes through the normal ply-based flow (with its own
   // branch detection), not through this one-off showcase.
   const variantLine = useMemo(
-    () => (currentVariant ? (showingMainline ? [currentVariant] : mainLineNodes([currentVariant])) : []),
-    [currentVariant, showingMainline]
+    () => (showingMainline ? (mainlineSibling ? [mainlineSibling] : []) : currentEntry?.nodes ?? []),
+    [currentEntry, showingMainline, mainlineSibling]
   );
 
   const variantState: GameState = useMemo(() => {
@@ -578,7 +646,7 @@ export function ReactionStudy({
     }, 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variantStage, variantSubPly, variantIdx, walkableVariants.length, branchPly]);
+  }, [variantStage, variantSubPly, variantIdx, walkEntries.length, branchPly]);
 
   function handleSquareTap(sq: string) {
     if (preview) return;
@@ -787,6 +855,12 @@ export function ReactionStudy({
             ) : (
               <>
                 <ArrowsSvg arrows={visibleArrows} size={BOARD_SIZE} flipped={flipped} pieces={displayedPieces} yourColor={yourColor} />
+                {persistentArrows.length > 0 && (
+                  <>
+                    <NumberedArrowsSvg arrows={persistentArrows} size={BOARD_SIZE} flipped={flipped} />
+                    <NumberedArrowBadges arrows={persistentArrows} size={BOARD_SIZE} flipped={flipped} />
+                  </>
+                )}
                 <CirclesSvg circles={[...visibleCircles, ...hintCircles]} size={BOARD_SIZE} flipped={flipped} pieces={displayedPieces} yourColor={yourColor} />
               </>
             )}

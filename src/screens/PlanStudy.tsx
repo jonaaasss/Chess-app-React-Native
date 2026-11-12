@@ -748,36 +748,6 @@ export function PlanStudy({
         )}
       </View>
 
-      {isSummary &&
-        !preview &&
-        // Threats sit outside the colour order, in two rows (the opponent's and
-        // yours): tap one to study it, tap again to go back.
-        (['opp', 'mine'] as const).map((kind) => {
-          const list = threats.filter((t) => t.kind === kind);
-          if (list.length === 0) return null;
-          const accent = arrowColors[THREAT_COLOR[kind]];
-          const dark = arrowColors[kind === 'opp' ? 'darkPurple' : 'darkTeal'];
-          return (
-            <View key={kind} style={styles.threatGroup}>
-              <Text style={[styles.threatGroupTitle, { color: accent }]}>{kind === 'opp' ? 'Opponent threats' : 'My threats'}</Text>
-              <View style={styles.threatRow}>
-                {list.map((t) => {
-                  const on = threatMode === t.key;
-                  return (
-                    <Pressable
-                      key={t.key}
-                      onPress={() => toggleThreat(t.key)}
-                      style={[styles.threatChip, { borderColor: dark }, on && { backgroundColor: dark }]}
-                      accessibilityLabel={`Study ${kind === 'opp' ? 'opponent threat' : 'my threat'} ${t.letter}`}
-                    >
-                      <Text style={[styles.threatChipText, { color: accent }, on && styles.threatChipTextActive]}>{t.title}</Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
-          );
-        })}
 
       {!noArrows && !preview && !activeThreat && (
         <View style={styles.onlyRow}>
@@ -866,6 +836,37 @@ export function PlanStudy({
           </Pressable>
         </View>
       )}
+
+      {isSummary &&
+        !preview &&
+        // Threats sit outside the colour order, in two rows (the opponent's and
+        // yours): tap one to study it, tap again to go back.
+        (['opp', 'mine'] as const).map((kind) => {
+          const list = threats.filter((t) => t.kind === kind);
+          if (list.length === 0) return null;
+          const accent = arrowColors[THREAT_COLOR[kind]];
+          const dark = arrowColors[kind === 'opp' ? 'darkPurple' : 'darkTeal'];
+          return (
+            <View key={kind} style={styles.threatGroup}>
+              <Text style={[styles.threatGroupTitle, { color: accent }]}>{kind === 'opp' ? 'Opponent threats' : 'My threats'}</Text>
+              <View style={styles.threatRow}>
+                {list.map((t) => {
+                  const on = threatMode === t.key;
+                  return (
+                    <Pressable
+                      key={t.key}
+                      onPress={() => toggleThreat(t.key)}
+                      style={[styles.threatChip, { borderColor: dark }, on && { backgroundColor: dark }]}
+                      accessibilityLabel={`Study ${kind === 'opp' ? 'opponent threat' : 'my threat'} ${t.letter}`}
+                    >
+                      <Text style={[styles.threatChipText, { color: accent }, on && styles.threatChipTextActive]}>{t.title}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          );
+        })}
 
       {allDone ? (
         <Pressable
