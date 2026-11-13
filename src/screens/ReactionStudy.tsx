@@ -510,13 +510,37 @@ export function ReactionStudy({
       out.push(choiceArrow(variantLine[0], siblingsAt(branchPly), k));
       k += 1;
     }
-    // A sub-variation: the choice where it leaves its variation.
-    if (currentEntry && currentEntry.subAt > 0 && variantSubPly > currentEntry.subAt) {
-      const parent = variantLine[currentEntry.subAt - 1];
-      out.push(choiceArrow(variantLine[currentEntry.subAt], parent.children, k));
+    // Branching points inside the variation (where a sub-variation leaves
+    // it), in order along the line, once their move has been played.
+    for (let j = 1; j < variantSubPly && j < variantLine.length; j++) {
+      if (variantLine[j - 1].children.length > 1) {
+        out.push(choiceArrow(variantLine[j], variantLine[j - 1].children, k));
+        k += 1;
+      }
     }
     return out;
   })();
+
+  // A branching point inside the variation being played: before its move,
+  // its choices are shown like a main branching point's (the move about to
+  // be played light, the others dark, in the next colour along the line).
+  const subSplitAt = (j: number) => inVariant && j > 0 && j < variantLine.length && variantLine[j - 1].children.length > 1;
+  const subSplitArrows: NumberedArrow[] = (() => {
+    if (variantStage !== 'playing' || !subSplitAt(variantSubPly)) return [];
+    const siblings = variantLine[variantSubPly - 1].children;
+    const ordered = [...siblings.slice(1).sort((a, b) => mainLineNodes([a]).length - mainLineNodes([b]).length), siblings[0]];
+    const color = BRANCH_COLORS[persistentArrows.length % BRANCH_COLORS.length];
+    const activeId = variantLine[variantSubPly].id;
+    return ordered.map((v, i) => ({
+      id: `sub-${v.id}`,
+      from: v.from,
+      to: v.to,
+      color: arrowColors[v.id === activeId ? color : BRANCH_DARK[color]],
+      number: i + 1
+    }));
+  })();
+  // The sub-branching point whose arrows have had their pause already.
+  const [subIntroPly, setSubIntroPly] = useState(-1);
 
   const variantState: GameState = useMemo(() => {
     let st = branchState;
@@ -682,6 +706,10 @@ export function ReactionStudy({
       const t = setTimeout(() => setVariantStage('rewinding'), VARIANT_REWIND_PAUSE_MS);
       return () => clearTimeout(t);
     }
+    if (subSplitAt(variantSubPly) && subIntroPly !== variantSubPly) {
+      const t = setTimeout(() => setSubIntroPly(variantSubPly), VARIANT_INTRO_MS);
+      return () => clearTimeout(t);
+    }
     if (!activeIsYourTurn || auto) {
       const t = setTimeout(() => {
         setVariantSubPly((p) => p + 1);
@@ -691,7 +719,12 @@ export function ReactionStudy({
       return () => clearTimeout(t);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variantStage, activeLineDone, activeIsYourTurn, showingMainline, branchPly, variantLine.length, isPaused, auto]);
+  }, [variantStage, activeLineDone, activeIsYourTurn, showingMainline, branchPly, variantLine.length, isPaused, auto, variantSubPly, subIntroPly, variantIdx]);
+
+  // A new variation starts without any sub-branching point shown.
+  useEffect(() => {
+    setSubIntroPly(-1);
+  }, [variantIdx, branchPly, variantStage === 'intro']);
 
   // Spin the rewind icon for as long as the whole rewinding stage lasts —
   // kept in its own effect, keyed only on variantStage, so the loop plays
@@ -945,7 +978,8 @@ export function ReactionStudy({
   const hintCircles = hintOn && activeIsYourTurn && activeNextMove ? [{ square: activeNextMove.from, color: 'green' as const }] : [];
   const playedSans = line.slice(0, viewPly).map((n) => n.san);
   const notationParts = playedSans.length > 0 ? formatNotationParts(playedSans, line[0].turnAfter === 'b', yourColor) : [];
-  const showVariantArrows = variantArrowsVisible;
+  const showVariantArrows = variantArrowsVisible || subSplitArrows.length > 0;
+  const branchArrows = variantArrowsVisible ? variantArrows : subSplitArrows;
 
   // `activeIsYourTurn` is forced false during 'intro' (see its definition)
   // regardless of whose move is about to be shown, so this already reads
@@ -1040,8 +1074,8 @@ export function ReactionStudy({
           <View style={StyleSheet.absoluteFill} pointerEvents="none">
             {showVariantArrows ? (
               <>
-                <NumberedArrowsSvg arrows={[...persistentArrows, ...variantArrows]} size={BOARD_SIZE} flipped={flipped} />
-                <NumberedArrowBadges arrows={[...persistentArrows, ...variantArrows]} size={BOARD_SIZE} flipped={flipped} />
+                <NumberedArrowsSvg arrows={[...persistentArrows, ...branchArrows]} size={BOARD_SIZE} flipped={flipped} />
+                <NumberedArrowBadges arrows={[...persistentArrows, ...branchArrows]} size={BOARD_SIZE} flipped={flipped} />
               </>
             ) : (
               <>
