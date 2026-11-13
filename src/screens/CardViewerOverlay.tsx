@@ -37,10 +37,9 @@ function PencilIcon({ size, color }: { size: number; color: string }) {
 }
 
 // Look-only viewer for a card linked from a Summary arrow: "← Summary" and
-// the full title on top. A Reactions card runs in the Study view's preview
-// mode (ReactionStudy with `preview`): every move plays itself with its
-// animation, variations are walked with their numbered arrows, ‹ › and pause
-// work, no Hint or Show solution; Continue returns to the Summary. A Plan
+// the full title on top. A Reactions card runs exactly as in Study
+// (ReactionStudy with `viewer`): Play myself or Auto-play, the lines
+// overview, « ‹ ›, nothing scored; Continue returns to the Summary. A Plan
 // card shows its Description above the board, the arrows numbered as in the
 // board editor, and ‹ › beside the board to switch boards. The pencil under
 // the board opens the Board editor (on a Reactions card at the move shown).
@@ -172,10 +171,10 @@ function CardViewerOverlay({
       <ScrollView contentContainerStyle={styles.content}>
         {card === null && <Text style={styles.missing}>This card no longer exists.</Text>}
         {card && board && isReactions && (
-          // A Reactions card plays exactly as in Study, but on its own: every
-          // move (yours too) is played for you with the same animation, the
-          // variations are walked automatically with their numbered arrows,
-          // ‹ › and pause work; no Hint or Show solution. Continue goes back.
+          // A Reactions card plays exactly as in Study, with the same choice
+          // between Play myself and Auto-play (remembered), the lines overview
+          // and « ‹ ›; nothing is scored. Continue goes back. `paused` only
+          // freezes it while the board editor is open.
           <>
             <ReactionStudy
               key={`${card.id}-${version}`}
@@ -185,9 +184,8 @@ function CardViewerOverlay({
               onResult={() => close()}
               boardRef={studyBoardRef}
               cursorRef={studyCursorRef}
-              preview
+              viewer
               paused={paused}
-              onTogglePause={() => setPaused((p) => !p)}
             />
             <View style={styles.underRow}>
               <Pressable onPress={editBoard} style={styles.pencilBtn} accessibilityLabel="Edit this board">

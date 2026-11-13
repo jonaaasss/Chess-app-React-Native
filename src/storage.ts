@@ -708,3 +708,23 @@ export async function getDevExportEnabled(): Promise<boolean> {
 export async function setDevExportEnabled(enabled: boolean): Promise<void> {
   await setSetting(DEV_EXPORT_ENABLED_KEY, enabled);
 }
+
+// Reactions study: "Play myself" (false) or "Auto-play" (true). One remembered
+// choice for Study and the link viewer alike; the last one picked is kept.
+// Cached in memory too, so a card opened after the first one starts in the
+// right mode at once instead of flipping after the store has loaded.
+let reactionAutoPlayCache: boolean | null = null;
+
+export function getReactionAutoPlayCached(): boolean | null {
+  return reactionAutoPlayCache;
+}
+
+export async function getReactionAutoPlay(): Promise<boolean> {
+  reactionAutoPlayCache = await getSetting<boolean>('reactionAutoPlay', false);
+  return reactionAutoPlayCache;
+}
+
+export async function setReactionAutoPlay(auto: boolean): Promise<void> {
+  reactionAutoPlayCache = auto;
+  await setSetting('reactionAutoPlay', auto);
+}
