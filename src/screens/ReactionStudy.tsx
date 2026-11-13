@@ -484,8 +484,15 @@ export function ReactionStudy({
   // one arrow each, in the colour of their branching point in order along the
   // line (1st green, 2nd orange, 3rd red, 4th blue, then again): the move
   // that was played, numbered as it was at its branching point.
-  const choiceArrow = (node: MoveNode, siblings: MoveNode[], k: number): NumberedArrow => {
-    const ordered = [...siblings.slice(1).sort((a, b) => mainLineNodes([a]).length - mainLineNodes([b]).length), siblings[0]];
+  // The numbers follow the order the choices are played in: at a main-line
+  // branching point the variations (shortest first) and the main line last;
+  // inside a variation its own continuation first, then its sub-variations.
+  const playOrder = (siblings: MoveNode[], inside: boolean) =>
+    inside
+      ? siblings
+      : [...siblings.slice(1).sort((a, b) => mainLineNodes([a]).length - mainLineNodes([b]).length), siblings[0]];
+  const choiceArrow = (node: MoveNode, siblings: MoveNode[], k: number, inside = false): NumberedArrow => {
+    const ordered = playOrder(siblings, inside);
     return {
       id: `keep-${node.id}`,
       from: node.from,
@@ -514,7 +521,7 @@ export function ReactionStudy({
     // it), in order along the line, once their move has been played.
     for (let j = 1; j < variantSubPly && j < variantLine.length; j++) {
       if (variantLine[j - 1].children.length > 1) {
-        out.push(choiceArrow(variantLine[j], variantLine[j - 1].children, k));
+        out.push(choiceArrow(variantLine[j], variantLine[j - 1].children, k, true));
         k += 1;
       }
     }
@@ -528,7 +535,7 @@ export function ReactionStudy({
   const subSplitArrows: NumberedArrow[] = (() => {
     if (variantStage !== 'playing' || !subSplitAt(variantSubPly)) return [];
     const siblings = variantLine[variantSubPly - 1].children;
-    const ordered = [...siblings.slice(1).sort((a, b) => mainLineNodes([a]).length - mainLineNodes([b]).length), siblings[0]];
+    const ordered = playOrder(siblings, true);
     const color = BRANCH_COLORS[persistentArrows.length % BRANCH_COLORS.length];
     const activeId = variantLine[variantSubPly].id;
     return ordered.map((v, i) => ({
