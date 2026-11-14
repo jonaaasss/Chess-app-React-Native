@@ -25,6 +25,7 @@ import { useTutorial } from '../tutorial';
 import { openCardEditor } from './CardEditorOverlay';
 import { openReactionBoardEditor } from './ReactionBoardEditorOverlay';
 import { ReactionStudy } from './ReactionStudy';
+import { ReactionModeSwitch } from '../components/ReactionModeSwitch';
 import { PlanStudy } from './PlanStudy';
 
 // Skip-to-next glyph, drawn (not a Unicode character) like the app's other icons.
@@ -811,6 +812,7 @@ function StudySessionOverlay({
               guideTargets={item?.guide ? guideTargets : undefined}
               onGuideEvent={item?.guide ? handleGuideEvent : undefined}
               onCardSaved={item?.guide ? undefined : setCard}
+              onShowLines={() => scrollRef.current?.scrollToEnd({ animated: true })}
             />
           </View>
         ) : isPlanLike(card.mode) ? (
@@ -892,6 +894,7 @@ function StudySessionOverlay({
         )}
         <View style={styles.footerRow}>
           {item?.guide ? <View style={{ width: 38 }} /> : <EditCircleButton onPress={handleEditCard} />}
+          {cardReady && card.mode === 'reactions' && !previewing && !item?.guide && <ReactionModeSwitch />}
           <Pressable onPress={handleSkip} style={styles.footerBtn}>
             <View style={styles.skipRow}>
               <SkipIcon size={18} color={colors.textDim} />

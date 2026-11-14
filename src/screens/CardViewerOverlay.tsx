@@ -15,6 +15,7 @@ import type { Arrow, Card, Circle, MoveNode, ReactionBoard } from '../types';
 import { colors, radius, touchTarget, type, variationColor } from '../theme';
 import { openReactionBoardEditor } from './ReactionBoardEditorOverlay';
 import { EditCircleButton } from '../components/Common';
+import { ReactionModeSwitch } from '../components/ReactionModeSwitch';
 
 // Skip-to-next glyph, drawn like the app's other icons (same as in Study).
 function SkipIcon({ size, color }: { size: number; color: string }) {
@@ -79,6 +80,7 @@ function CardViewerOverlay({
   const [version, setVersion] = useState(0);
   const studyBoardRef = useRef<ReactionBoard | null>(null);
   const studyCursorRef = useRef<string | null>(null);
+  const scrollRef = useRef<ScrollView>(null);
   const { width } = useWindowDimensions();
   const size = Math.min(width - 32 - 2 * (touchTarget + 8), 360);
   const flipped = yourColor === 'b';
@@ -180,7 +182,7 @@ function CardViewerOverlay({
         <MoveText text={card?.name || (card === null ? 'Card not found' : '')} style={styles.title} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView ref={scrollRef} contentContainerStyle={styles.content}>
         {card === null && <Text style={styles.missing}>This card no longer exists.</Text>}
         {card && board && isReactions && (
           // A Reactions card plays exactly as in Study, with the same choice
@@ -198,6 +200,7 @@ function CardViewerOverlay({
               cursorRef={studyCursorRef}
               viewer
               onCardSaved={setCard}
+              onShowLines={() => scrollRef.current?.scrollToEnd({ animated: true })}
               paused={paused}
             />
           </>
@@ -248,6 +251,7 @@ function CardViewerOverlay({
       {card && board && (
         <View style={styles.bottomBar}>
           <EditCircleButton onPress={editBoard} />
+          {isReactions && <ReactionModeSwitch />}
           <Pressable onPress={close} style={styles.skipBtn} accessibilityLabel="Skip, back to the Summary">
             <View style={styles.skipRow}>
               <SkipIcon size={18} color={colors.textDim} />

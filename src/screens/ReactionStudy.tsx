@@ -10,7 +10,7 @@ import { usePieceAnimation, PieceAnimationGhosts, PIECE_ANIM_DURATION_MS } from 
 import type { GuideTargets } from '../components/GuideCoach';
 import { CollapsibleDescription } from '../components/CollapsibleDescription';
 import type { CoachEvent } from '../guideContent';
-import { getReactionAutoPlay, getReactionAutoPlayCached, setReactionAutoPlay } from '../storage';
+import { useAutoPlayMode } from '../components/ReactionModeSwitch';
 import { alertDialog, choiceDialog, showSnackbar, textDialog } from '../overlay';
 import { saveStudyBoard } from '../studyEdits';
 import type { PromotionPiece } from '../types';
@@ -225,7 +225,8 @@ export function ReactionStudy({
   onTogglePause,
   guideTargets,
   onGuideEvent,
-  onCardSaved
+  onCardSaved,
+  onShowLines
 }: {
   card: Card;
   yourColor: 'w' | 'b';
@@ -247,6 +248,8 @@ export function ReactionStudy({
   // Editing from here (the Description's pencil, "Use this move") is on when
   // set; it gets the stored card after every edit.
   onCardSaved?: (card: Card) => void;
+  // Scrolls the parent to the bottom, where the lines tree is.
+  onShowLines?: () => void;
 }) {
   // A local copy, so an edit shows at once; follows the parent's card.
   const [localCard, setLocalCard] = useState(card);
@@ -281,15 +284,9 @@ export function ReactionStudy({
 
   // "Play myself" or "Auto-play"; the last choice is remembered for Study and
   // the link viewer alike. The preview pass is always auto, the guide never.
-  const [autoMode, setAutoMode] = useState(() => getReactionAutoPlayCached() ?? false);
-  const [usedAuto, setUsedAuto] = useState(() => getReactionAutoPlayCached() ?? false);
-  useEffect(() => {
-    if (getReactionAutoPlayCached() !== null) return;
-    getReactionAutoPlay().then((v) => {
-      setAutoMode(v);
-      if (v) setUsedAuto(true);
-    });
-  }, []);
+  // The switch itself sits in the parent's fixed bottom bar.
+  const autoMode = useAutoPlayMode();
+  const [usedAuto, setUsedAuto] = useState(autoMode);
   const showModeSwitch = !preview && !guideTargets;
   const auto = Boolean(preview) || (showModeSwitch && autoMode);
   const [selfPaused, setSelfPaused] = useState(false);
@@ -660,10 +657,9 @@ export function ReactionStudy({
   }
 
   // ‹ › step back and forward along the moves on the board; nothing moves on
-  // by itself meanwhile. › at the live position on your move = Show solution.
+  // by itself meanwhile. › never plays your move (that is Show solution).
   const canGoPrev = viewPath.length > 0;
-  const nextIsSolution = !reviewing && yourTurn;
-  const canGoNext = reviewing || nextIsSolution;
+  const canGoNext = reviewing;
   function handlePrevMove() {
     if (!canGoPrev) return;
     setReviewLen(viewPath.length - 1);
@@ -672,10 +668,6 @@ export function ReactionStudy({
   }
   function handleNextMove() {
     if (!canGoNext) return;
-    if (nextIsSolution) {
-      showSolution();
-      return;
-    }
     const n = viewPath.length + 1;
     setReviewLen(n >= livePath.length ? null : n);
     setSelected(null);
@@ -694,15 +686,18 @@ export function ReactionStudy({
     return null;
   })();
 
-  function chooseMode(next: boolean) {
-    if (next === autoMode) return;
-    setAutoMode(next);
-    if (next) setUsedAuto(true);
+  // Switching mode (from the bottom bar) mid-play.
+  const firstMode = useRef(true);
+  useEffect(() => {
+    if (firstMode.current) {
+      firstMode.current = false;
+      return;
+    }
+    if (autoMode) setUsedAuto(true);
     setSelected(null);
     setHintOn(false);
     setSelfPaused(false);
-    void setReactionAutoPlay(next);
-  }
+  }, [autoMode]);
 
   const handleSquareTapRef = useRef(handleSquareTap);
   handleSquareTapRef.current = handleSquareTap;
@@ -801,31 +796,27 @@ export function ReactionStudy({
 
   return (
     <View style={{ alignItems: 'center', gap: 10, alignSelf: 'stretch' }}>
-      {showModeSwitch && (
-        <View style={styles.modeRow} accessibilityRole="radiogroup">
-          {([false, true] as const).map((v) => (
-            <Pressable
-              key={String(v)}
-              onPress={() => chooseMode(v)}
-              accessibilityRole="radio"
-              accessibilityState={{ selected: autoMode === v }}
-              style={[styles.modeBtn, autoMode === v && styles.modeBtnOn]}
-            >
-              <Text style={[styles.modeText, autoMode === v && styles.modeTextOn]}>{v ? 'Auto-play' : 'Play myself'}</Text>
-            </Pressable>
-          ))}
-        </View>
-      )}
       <CollapsibleDescription text={board.front.text} onEdit={editable ? editDescription : undefined} />
       <Text style={[styles.status, { color: statusColor }]}>
         {boards.length > 1 ? `Board ${boardIdx + 1} / ${boards.length} — ` : ''}
         {statusShown}
       </Text>
       {leaves.length > 1 && (
-        <Text style={styles.linePath}>
-          {`Line ${currentLineIdx + 1} of ${leaves.length}: `}
-          <Text style={styles.linePathMoves}>{choicesText.join(' › ')}</Text>
-        </Text>
+        // Tapping it opens the lines tree at the bottom and scrolls there.
+        <Pressable
+          onPress={() => {
+            setOverviewOpen(true);
+            if (onShowLines) setTimeout(onShowLines, 80);
+          }}
+          style={styles.linePathBtn}
+          accessibilityLabel="Show all lines"
+        >
+          <Text style={styles.linePath}>
+            {`Line ${currentLineIdx + 1} of ${leaves.length}: `}
+            <Text style={styles.linePathMoves}>{choicesText.join(' › ')}</Text>
+            <Text style={styles.linePathMore}>{'  ▾'}</Text>
+          </Text>
+        </Pressable>
       )}
 
       <View ref={guideTargets?.board} collapsable={false}>
@@ -943,7 +934,7 @@ export function ReactionStudy({
               <Text style={styles.solutionText}>Show solution</Text>
             </Pressable>
           </View>
-          {!viewer && <Text style={styles.slipNote}>Show solution (or › on your move) counts as a slip.</Text>}
+          {!viewer && <Text style={styles.slipNote}>Show solution counts as a slip.</Text>}
         </>
       )}
 
@@ -972,6 +963,8 @@ export function ReactionStudy({
 const styles = StyleSheet.create({
   linePath: { color: colors.textDim, fontSize: 13, textAlign: 'center', paddingHorizontal: 16 },
   linePathMoves: { color: colors.text, fontWeight: '700' },
+  linePathMore: { color: colors.textDim },
+  linePathBtn: { minHeight: touchTarget, justifyContent: 'center' },
   overview: { alignSelf: 'stretch', marginHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel2, overflow: 'hidden' },
   overviewHead: { minHeight: touchTarget, justifyContent: 'center', paddingHorizontal: 14 },
   overviewHeadText: { color: colors.text, fontSize: 14, fontWeight: '600' },
@@ -984,11 +977,6 @@ const styles = StyleSheet.create({
   treeDone: { color: colors.primary, fontSize: 14, fontWeight: '800' },
   treePlay: { width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center' },
   treeSegment: { color: colors.textDim, fontSize: 13, paddingRight: 14, paddingBottom: 8 },
-  modeRow: { flexDirection: 'row', alignSelf: 'center', borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel2, padding: 3 },
-  modeBtn: { minHeight: touchTarget - 6, paddingHorizontal: 18, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center' },
-  modeBtnOn: { backgroundColor: '#E2E8F0' },
-  modeText: { color: colors.textDim, fontSize: 14, fontWeight: '600' },
-  modeTextOn: { color: colors.bg, fontWeight: '700' },
   status: { color: colors.textDim, fontSize: 13, fontWeight: '600' },
   board: { borderRadius: 6, overflow: 'hidden', borderWidth: 1, borderColor: colors.border },
   selHighlight: { backgroundColor: 'rgba(21,128,61,0.35)' },

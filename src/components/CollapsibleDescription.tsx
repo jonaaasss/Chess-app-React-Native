@@ -41,7 +41,7 @@ const styles = StyleSheet.create({
   box: { alignSelf: 'stretch', marginHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel2, overflow: 'hidden' },
   head: { minHeight: touchTarget, justifyContent: 'center', paddingHorizontal: 14 },
   headText: { color: colors.text, fontSize: 14, fontWeight: '600' },
-  empty: { color: colors.textDim, fontSize: 14, textAlign: 'center', paddingBottom: 12 },
+  empty: { color: colors.textDim, fontSize: 14, paddingHorizontal: 14, paddingBottom: 12 },
   pencil: { alignSelf: 'flex-end', width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center' },
-  text: { color: colors.text, fontSize: 15, lineHeight: 22, textAlign: 'center', paddingHorizontal: 12, paddingBottom: 12 }
+  text: { color: colors.text, fontSize: 15, lineHeight: 22, paddingHorizontal: 14, paddingBottom: 12 }
 });
