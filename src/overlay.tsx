@@ -217,6 +217,34 @@ function AlertDialog({ message, close }: { message: string; close: (result: void
   );
 }
 
+// A longer text (a board's Description) edited in place: several lines,
+// may be left empty. null = cancelled.
+function TextDialog({ title, initial, close }: { title: string; initial: string; close: (result: string | null) => void }) {
+  const [value, setValue] = useState(initial);
+  useOverlayBack(() => close(null));
+  return (
+    <Backdrop>
+      <Text style={styles.title}>{title}</Text>
+      <TextInput
+        style={[styles.input, { minHeight: 140, maxHeight: 320, textAlignVertical: 'top' }]}
+        value={value}
+        onChangeText={setValue}
+        multiline
+        autoFocus
+        placeholderTextColor={colors.textDim}
+      />
+      <View style={styles.row}>
+        <DialogButton title="Cancel" variant="secondary" onPress={() => close(null)} />
+        <DialogButton title="Save" variant="primary" onPress={() => close(value.trim())} />
+      </View>
+    </Backdrop>
+  );
+}
+
+export function textDialog(title: string, initial = ''): Promise<string | null> {
+  return showOverlay<string | null>((close) => <TextDialog title={title} initial={initial} close={close} />);
+}
+
 function PromptDialog({
   title,
   initial,

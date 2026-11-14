@@ -5,7 +5,8 @@ import { allSquares, faceAnnotations, flipIndex, squareFromIndex } from '../ches
 import { hasArrowNotes } from '../arrowNotes';
 import { sameThreat, THREAT_COLOR, threatOfArrow, threatOfCircle, type ThreatKind } from '../threats';
 import { ArrowNoteBody } from '../components/ArrowNoteBody';
-import { CloseCircleButton } from '../overlay';
+import { CloseCircleButton, textDialog } from '../overlay';
+import { saveStudyBoard } from '../studyEdits';
 import { MoveText } from '../components/MoveText';
 import { CollapsibleDescription } from '../components/CollapsibleDescription';
 import type { Arrow, ArrowColor, Card, Circle, PieceCode, ReactionBoard } from '../types';
@@ -164,7 +165,8 @@ export function PlanStudy({
   paused,
   onTogglePause,
   guideTargets,
-  onGuideEvent
+  onGuideEvent,
+  onCardSaved
 }: {
   card: Card;
   yourColor: 'w' | 'b';
@@ -182,7 +184,11 @@ export function PlanStudy({
   // Show solution press a popup can wait on.
   guideTargets?: GuideTargets;
   onGuideEvent?: (event: CoachEvent) => void;
+  // Set: the Description can be edited here (pencil); gets the stored card.
+  onCardSaved?: (card: Card) => void;
 }) {
+  // Descriptions edited here, by board id, shown at once.
+  const [textEdits, setTextEdits] = useState<Record<string, string>>({});
   const isSummary = card.mode === 'summary';
   const boards = useMemo(() => [...card.boards].sort((a, b) => a.order - b.order), [card]);
   const [boardIdx, setBoardIdx] = useState(0);
@@ -233,6 +239,7 @@ export function PlanStudy({
     const a = faceAnnotations(board.back);
     return { arrows: a.arrows.map((x) => ({ ...x, color: effectiveArrowColor(x, board.back.pieces, yourColor, a.arrows) })), circles: a.circles };
   }, [board, yourColor]);
+  const arrowsKey = useMemo(() => JSON.stringify(finalAnnotations), [finalAnnotations]);
   const colorGroups = useMemo(
     () => buildColorGroups(finalAnnotations.arrows, board?.back.pieces, yourColor),
     [finalAnnotations, board, yourColor]
@@ -343,7 +350,10 @@ export function PlanStudy({
     setSummaryNote(null);
     setThreatMode(null);
     setThreatFound(0);
-  }, [colorGroups]);
+    // Only when the board or its arrows change, not when its Description is
+    // edited from here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [board?.id, arrowsKey]);
 
   function continueToNextBoard() {
     setBoardIdx((i) => i + 1);
@@ -685,7 +695,21 @@ export function PlanStudy({
 
   return (
     <View ref={containerRef} collapsable={false} style={{ alignItems: 'center', gap: 10 }}>
-      <CollapsibleDescription text={board.back.text} />
+      <CollapsibleDescription
+        text={textEdits[board.id] ?? board.back.text}
+        onEdit={
+          onCardSaved
+            ? async () => {
+                const current = textEdits[board.id] ?? board.back.text;
+                const text = await textDialog('Description', current);
+                if (text === null || text === current) return;
+                setTextEdits((m) => ({ ...m, [board.id]: text }));
+                const saved = await saveStudyBoard(card.id, { ...board, back: { ...board.back, text } });
+                if (saved) onCardSaved(saved);
+              }
+            : undefined
+        }
+      />
       {noArrows ? (
         <View style={styles.warning}>
           <Text style={styles.warningTitle}>

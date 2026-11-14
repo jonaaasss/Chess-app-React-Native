@@ -8,7 +8,8 @@ import { toEditorNumberedArrows } from '../arrowNumbering';
 import { ReactionStudy } from './ReactionStudy';
 import { MoveText } from '../components/MoveText';
 import { CollapsibleDescription } from '../components/CollapsibleDescription';
-import { showOverlay, useOverlayBack } from '../overlay';
+import { showOverlay, SnackbarLayer, textDialog, useOverlayBack } from '../overlay';
+import { saveStudyBoard } from '../studyEdits';
 import { getCard, saveCard } from '../storage';
 import type { Arrow, Card, Circle, MoveNode, ReactionBoard } from '../types';
 import { colors, radius, touchTarget, type, variationColor } from '../theme';
@@ -196,13 +197,24 @@ function CardViewerOverlay({
               boardRef={studyBoardRef}
               cursorRef={studyCursorRef}
               viewer
+              onCardSaved={setCard}
               paused={paused}
             />
           </>
         )}
         {card && board && !isReactions && (
           <>
-            <CollapsibleDescription text={description} />
+            <CollapsibleDescription
+              text={description}
+              onEdit={async () => {
+                if (!card || !board) return;
+                const face = descriptionFace(card.mode);
+                const text = await textDialog('Description', board[face].text);
+                if (text === null || text === board[face].text) return;
+                const saved = await saveStudyBoard(card.id, { ...board, [face]: { ...board[face], text } });
+                if (saved) setCard(saved);
+              }}
+            />
             {boards.length > 1 && <Text style={styles.counter}>{`Board ${boardIdx + 1} / ${boards.length}`}</Text>}
             <View style={styles.boardRow}>
               {boards.length > 1 && boardIdx > 0 ? (
@@ -245,6 +257,7 @@ function CardViewerOverlay({
           </Pressable>
         </View>
       )}
+      <SnackbarLayer bottom={72} />
     </SafeAreaView>
   );
 }

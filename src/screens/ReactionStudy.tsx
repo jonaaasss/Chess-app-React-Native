@@ -11,6 +11,9 @@ import type { GuideTargets } from '../components/GuideCoach';
 import { CollapsibleDescription } from '../components/CollapsibleDescription';
 import type { CoachEvent } from '../guideContent';
 import { getReactionAutoPlay, getReactionAutoPlayCached, setReactionAutoPlay } from '../storage';
+import { alertDialog, choiceDialog, showSnackbar, textDialog } from '../overlay';
+import { saveStudyBoard } from '../studyEdits';
+import type { PromotionPiece } from '../types';
 
 // Opponent auto-play, board-to-board transitions, and the variation
 // walkthrough all wait long enough for the slide animation to fully finish,
@@ -221,7 +224,8 @@ export function ReactionStudy({
   viewer,
   onTogglePause,
   guideTargets,
-  onGuideEvent
+  onGuideEvent,
+  onCardSaved
 }: {
   card: Card;
   yourColor: 'w' | 'b';
@@ -240,8 +244,15 @@ export function ReactionStudy({
   onTogglePause?: () => void;
   guideTargets?: GuideTargets;
   onGuideEvent?: (event: CoachEvent) => void;
+  // Editing from here (the Description's pencil, "Use this move") is on when
+  // set; it gets the stored card after every edit.
+  onCardSaved?: (card: Card) => void;
 }) {
-  const boards = useMemo(() => [...card.boards].sort((a, b) => a.order - b.order), [card]);
+  // A local copy, so an edit shows at once; follows the parent's card.
+  const [localCard, setLocalCard] = useState(card);
+  useEffect(() => setLocalCard(card), [card]);
+  const editable = Boolean(onCardSaved);
+  const boards = useMemo(() => [...localCard.boards].sort((a, b) => a.order - b.order), [localCard]);
   const [boardIdx, setBoardIdx] = useState(0);
   const board = boards[boardIdx];
   const steps = useMemo<Step[]>(() => (board ? buildTimeline(board) : [{ kind: 'start', path: [] }]), [board]);
@@ -542,6 +553,16 @@ export function ReactionStudy({
         setMistakes((m) => m + 1);
         setWrongMovePreview(makeMove(liveState, selected, sq).next.pieces);
         setSelected(null);
+        if (editable && board) {
+          const from = selected;
+          const at = { board, path: livePath, node: pendingMove };
+          showSnackbar({
+            message: 'Not the move on this card.',
+            actionLabel: 'Use this move',
+            duration: 6000,
+            onAction: () => void applyMyMove(at.board, at.path, at.node, from, sq)
+          });
+        }
         setTimeout(() => setWrongMovePreview(null), WRONG_MOVE_SHOW_MS);
         setTimeout(() => {
           setWrongMove(false);
@@ -552,6 +573,84 @@ export function ReactionStudy({
     }
     const p = liveState.pieces[sq];
     setSelected(p && p[0] === liveState.turn ? sq : null);
+  }
+
+  // Saves an edited board into the card and shows it here at once.
+  // With `focusId`, the walk goes on from that move of the new board.
+  async function storeBoard(next: ReactionBoard, focusId?: string) {
+    setLocalCard((c) => ({ ...c, boards: c.boards.map((b) => (b.id === next.id ? next : b)) }));
+    if (focusId) {
+      const at = buildTimeline(next).findIndex((s) => s.kind === 'move' && s.path[s.path.length - 1]?.id === focusId);
+      if (at >= 0) goTo(at);
+    }
+    const saved = await saveStudyBoard(localCard.id, next);
+    if (saved) onCardSaved?.(saved);
+  }
+
+  async function editDescription() {
+    if (!board) return;
+    const text = await textDialog('Description', board.front.text);
+    if (text === null || text === board.front.text) return;
+    await storeBoard({ ...board, front: { ...board.front, text } });
+  }
+
+  // "Use this move": your move replaces the recorded one. When every move
+  // after it is still legal, a popup asks whether to keep them or delete
+  // them; otherwise they are deleted. Undo for 6 s either way.
+  async function applyMyMove(target: ReactionBoard, parentPath: MoveNode[], node: MoveNode, from: string, to: string) {
+    let st: GameState = { pieces: target.pieces, turn: target.turn, castling: target.castling, enPassant: target.enPassant };
+    for (const n of parentPath) st = makeMove(st, n.from, n.to, n.promotion).next;
+    const piece = st.pieces[from];
+    const promotion: PromotionPiece | undefined = piece?.[1] === 'P' && (to[1] === '8' || to[1] === '1') ? 'Q' : undefined;
+    const siblings = childrenAfter(target, parentPath);
+    if (siblings.some((v) => v.id !== node.id && v.from === from && v.to === to)) {
+      await alertDialog('This move is already a variation here. Edit the board to change it.');
+      return;
+    }
+    const res = makeMove(st, from, to, promotion);
+    const replay = (children: MoveNode[], state: GameState): MoveNode[] | null => {
+      const out: MoveNode[] = [];
+      for (const c of children) {
+        const p = state.pieces[c.from];
+        if (!p || p[0] !== state.turn || !legalMovesFrom(state, c.from).includes(c.to)) return null;
+        const m = makeMove(state, c.from, c.to, c.promotion);
+        const kids = replay(c.children, m.next);
+        if (!kids) return null;
+        out.push({ ...c, san: m.san, piecesAfter: m.next.pieces, turnAfter: m.next.turn, castlingAfter: m.next.castling, enPassantAfter: m.next.enPassant, children: kids });
+      }
+      return out;
+    };
+    const kept = node.children.length ? replay(node.children, res.next) : [];
+    let keep = false;
+    if (node.children.length && kept) {
+      const choice = await choiceDialog<'keep' | 'cut'>(`Use ${res.san} instead of ${node.san}?`, [
+        { label: 'Only change this move', value: 'keep', variant: 'primary' },
+        { label: 'Delete the moves after it', value: 'cut', variant: 'danger' }
+      ]);
+      if (!choice) return;
+      keep = choice === 'keep';
+    }
+    const replaced: MoveNode = {
+      ...node,
+      from,
+      to,
+      promotion,
+      san: res.san,
+      piecesAfter: res.next.pieces,
+      turnAfter: res.next.turn,
+      castlingAfter: res.next.castling,
+      enPassantAfter: res.next.enPassant,
+      children: keep && kept ? kept : []
+    };
+    const swap = (list: MoveNode[]): MoveNode[] => list.map((n) => (n.id === node.id ? replaced : { ...n, children: swap(n.children) }));
+    const next: ReactionBoard = { ...target, recording: swap(target.recording) };
+    setMistakes((m) => Math.max(0, m - 1));
+    await storeBoard(next, node.id);
+    showSnackbar({
+      message: keep ? `${res.san} saved; the moves after it stay.` : `${res.san} saved; the moves after it are deleted.`,
+      actionLabel: 'Undo',
+      onAction: () => void storeBoard(target, node.id)
+    });
   }
 
   function showSolution() {
@@ -717,7 +816,7 @@ export function ReactionStudy({
           ))}
         </View>
       )}
-      <CollapsibleDescription text={board.front.text} />
+      <CollapsibleDescription text={board.front.text} onEdit={editable ? editDescription : undefined} />
       <Text style={[styles.status, { color: statusColor }]}>
         {boards.length > 1 ? `Board ${boardIdx + 1} / ${boards.length} — ` : ''}
         {statusShown}

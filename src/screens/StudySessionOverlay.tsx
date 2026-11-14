@@ -810,6 +810,7 @@ function StudySessionOverlay({
               onTogglePause={previewing ? () => setPreviewPaused((p) => !p) : undefined}
               guideTargets={item?.guide ? guideTargets : undefined}
               onGuideEvent={item?.guide ? handleGuideEvent : undefined}
+              onCardSaved={item?.guide ? undefined : setCard}
             />
           </View>
         ) : isPlanLike(card.mode) ? (
@@ -827,6 +828,7 @@ function StudySessionOverlay({
               onTogglePause={() => setPreviewPaused((p) => !p)}
               guideTargets={item?.guide ? guideTargets : undefined}
               onGuideEvent={item?.guide ? handleGuideEvent : undefined}
+              onCardSaved={item?.guide ? undefined : setCard}
             />
           </View>
         ) : previewing ? (
