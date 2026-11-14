@@ -701,7 +701,7 @@ export function PlanStudy({
           onCardSaved
             ? async () => {
                 const current = textEdits[board.id] ?? board.back.text;
-                const text = await textDialog('Description', current);
+                const text = await textDialog('Description', current, { moves: true });
                 if (text === null || text === current) return;
                 setTextEdits((m) => ({ ...m, [board.id]: text }));
                 const saved = await saveStudyBoard(card.id, { ...board, back: { ...board.back, text } });

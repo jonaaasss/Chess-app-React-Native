@@ -212,7 +212,7 @@ function CardViewerOverlay({
               onEdit={async () => {
                 if (!card || !board) return;
                 const face = descriptionFace(card.mode);
-                const text = await textDialog('Description', board[face].text);
+                const text = await textDialog('Description', board[face].text, { moves: true });
                 if (text === null || text === board[face].text) return;
                 const saved = await saveStudyBoard(card.id, { ...board, [face]: { ...board[face], text } });
                 if (saved) setCard(saved);

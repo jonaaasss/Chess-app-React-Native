@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { Modal, View, Text, TextInput, StyleSheet, Pressable, Dimensions, Animated } from 'react-native';
+import { Modal, View, Text, TextInput, StyleSheet, Pressable, Dimensions, Animated, ScrollView } from 'react-native';
+import { MoveText } from './components/MoveText';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import { colors, radius, spacing, touchTarget, type } from './theme';
@@ -219,7 +220,9 @@ function AlertDialog({ message, close }: { message: string; close: (result: void
 
 // A longer text (a board's Description) edited in place: several lines,
 // may be left empty. null = cancelled.
-function TextDialog({ title, initial, close }: { title: string; initial: string; close: (result: string | null) => void }) {
+// With `moves`, a line explains how moves are coloured and a live preview
+// shows the text as it will look.
+function TextDialog({ title, initial, moves, close }: { title: string; initial: string; moves?: boolean; close: (result: string | null) => void }) {
   const [value, setValue] = useState(initial);
   useOverlayBack(() => close(null));
   return (
@@ -233,6 +236,16 @@ function TextDialog({ title, initial, close }: { title: string; initial: string;
         autoFocus
         placeholderTextColor={colors.textDim}
       />
+      {moves && (
+        <>
+          <MoveText style={styles.movesHint} text={'A move turns orange: Nf3. With ! in front it turns red: !Nf3'} />
+          {value.trim() ? (
+            <ScrollView style={styles.preview}>
+              <MoveText style={styles.previewText} text={value} />
+            </ScrollView>
+          ) : null}
+        </>
+      )}
       <View style={styles.row}>
         <DialogButton title="Cancel" variant="secondary" onPress={() => close(null)} />
         <DialogButton title="Save" variant="primary" onPress={() => close(value.trim())} />
@@ -241,8 +254,8 @@ function TextDialog({ title, initial, close }: { title: string; initial: string;
   );
 }
 
-export function textDialog(title: string, initial = ''): Promise<string | null> {
-  return showOverlay<string | null>((close) => <TextDialog title={title} initial={initial} close={close} />);
+export function textDialog(title: string, initial = '', options?: { moves?: boolean }): Promise<string | null> {
+  return showOverlay<string | null>((close) => <TextDialog title={title} initial={initial} moves={options?.moves} close={close} />);
 }
 
 function PromptDialog({
@@ -625,6 +638,9 @@ const styles = StyleSheet.create({
     fontSize: 15
   },
   row: { flexDirection: 'row', gap: 10, justifyContent: 'flex-end', marginTop: 16 },
+  movesHint: { color: colors.textDim, fontSize: 13, marginTop: 10 },
+  preview: { maxHeight: 160, marginTop: 10, borderRadius: 10, borderWidth: 1, borderColor: colors.border, padding: 10 },
+  previewText: { color: colors.text, fontSize: 14, lineHeight: 20 },
   btn: { borderRadius: radius.pill, paddingVertical: 12, paddingHorizontal: 18, backgroundColor: colors.panel2, alignItems: 'center' },
   btnPrimary: { backgroundColor: colors.accent },
   btnDanger: { backgroundColor: colors.danger },

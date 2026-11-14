@@ -586,7 +586,7 @@ export function ReactionStudy({
 
   async function editDescription() {
     if (!board) return;
-    const text = await textDialog('Description', board.front.text);
+    const text = await textDialog('Description', board.front.text, { moves: true });
     if (text === null || text === board.front.text) return;
     await storeBoard({ ...board, front: { ...board.front, text } });
   }
