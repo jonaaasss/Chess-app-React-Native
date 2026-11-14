@@ -415,6 +415,15 @@ export function ReactionStudy({
     setT(index);
   }
 
+  // ▶ in the lines tree: play that choice again from its branching point
+  // (its lines count as not played yet), and resume if Auto-play was paused.
+  function playChoice(introIdx: number, choice: MoveNode) {
+    const under = new Set(leavesUnder(choice).map((l) => l.key));
+    setDoneLeaves((s) => new Set([...s].filter((k) => !under.has(k))));
+    setSelfPaused(false);
+    goTo(introIdx);
+  }
+
   const leavesUnder = (c: MoveNode) => leaves.filter((l) => l.path.some((n) => n.id === c.id));
   // Start a line not played yet at the highest branching point on it where
   // nothing has been played.
@@ -622,7 +631,9 @@ export function ReactionStudy({
   const showIntro = introArrows.length > 0;
   const actionsDisabled = reviewing || !yourTurn;
 
-  const statusText = rewinding
+  const statusText = auto && isPaused && !allDone
+    ? 'Paused — tap ▶ to go on'
+    : rewinding
     ? 'Rewinding…'
     : step.kind === 'leaf'
       ? 'Line complete'
@@ -671,7 +682,7 @@ export function ReactionStudy({
             <Text style={[styles.treeMove, { color: moveColor(node.choice) }, current && styles.treeMoveCurrent]}>{node.choice.san}</Text>
             {done && <Text style={styles.treeDone}>✓</Text>}
           </Pressable>
-          <Pressable onPress={() => introIdx >= 0 && goTo(introIdx)} style={styles.treePlay} accessibilityLabel={`Play ${node.choice.san}`}>
+          <Pressable onPress={() => introIdx >= 0 && playChoice(introIdx, node.choice)} style={styles.treePlay} accessibilityLabel={`Play ${node.choice.san}`}>
             <PlayIcon size={18} color={colors.primary} />
           </Pressable>
         </View>
