@@ -728,3 +728,22 @@ export async function setReactionAutoPlay(auto: boolean): Promise<void> {
   reactionAutoPlayCache = auto;
   await setSetting('reactionAutoPlay', auto);
 }
+
+// Study: whether the board's Description above the board is collapsed. One
+// remembered choice for every card (and the link viewer); cached in memory so
+// the next card starts collapsed at once.
+let descriptionCollapsedCache: boolean | null = null;
+
+export function getDescriptionCollapsedCached(): boolean | null {
+  return descriptionCollapsedCache;
+}
+
+export async function getDescriptionCollapsed(): Promise<boolean> {
+  descriptionCollapsedCache = await getSetting<boolean>('descriptionCollapsed', false);
+  return descriptionCollapsedCache;
+}
+
+export async function setDescriptionCollapsed(collapsed: boolean): Promise<void> {
+  descriptionCollapsedCache = collapsed;
+  await setSetting('descriptionCollapsed', collapsed);
+}

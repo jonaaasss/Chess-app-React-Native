@@ -8,26 +8,33 @@ import { arrowColors, boardStyles, colors, radius, touchTarget } from '../theme'
 import { BoardCoords, ArrowsSvg, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, type NumberedArrow } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts, PIECE_ANIM_DURATION_MS } from '../components/PieceAnimation';
 import type { GuideTargets } from '../components/GuideCoach';
-import { MoveText } from '../components/MoveText';
+import { CollapsibleDescription } from '../components/CollapsibleDescription';
 import type { CoachEvent } from '../guideContent';
 import { getReactionAutoPlay, getReactionAutoPlayCached, setReactionAutoPlay } from '../storage';
 
-// Opponent auto-play, board-to-board transitions, and the variant
-// walkthrough all wait long enough for the slide animation to fully
-// finish, plus a short pause, before moving on — so a move is always
-// clearly visible, never cut off by the next one starting.
+// Opponent auto-play, board-to-board transitions, and the variation
+// walkthrough all wait long enough for the slide animation to fully finish,
+// plus a short pause, before moving on.
 const AUTO_ADVANCE_DELAY_MS = PIECE_ANIM_DURATION_MS + 300;
 const VARIANT_INTRO_MS = 1200;
 const VARIANT_REWIND_PAUSE_MS = 1000;
-// Stepping back through a variant's moves is a "rewind", not a replay — it
-// reads better sped up (75% faster) rather than pacing out at move speed.
+// Stepping back through a variation's moves is a "rewind": sped up.
 const REWIND_STEP_MS = Math.round(AUTO_ADVANCE_DELAY_MS / 1.75);
-// A wrong move is actually played out (and animated) so you can see what
-// it would have done, then held briefly before sliding back.
+// A wrong move is actually played out (and animated), then slides back.
 const WRONG_MOVE_SHOW_MS = PIECE_ANIM_DURATION_MS + 400;
 
 const BOARD_SIZE = 300;
 const CELL = BOARD_SIZE / 8;
+
+// Each branching point along the line being played has its own colour, in
+// order (green, orange, red, blue, then again); the move about to be played
+// is the light tint, the other choices the dark one.
+const BRANCH_COLORS = ['green', 'orange', 'red', 'blue'] as const;
+const BRANCH_DARK = { green: 'darkGreen', orange: 'darkOrange', red: 'darkRed', blue: 'darkBlue' } as const;
+const branchColor = (k: number, light: boolean) => {
+  const c = BRANCH_COLORS[k % BRANCH_COLORS.length];
+  return arrowColors[light ? c : BRANCH_DARK[c]];
+};
 
 function sameArrow(a: Arrow, b: Arrow) {
   return a.from === b.from && a.to === b.to && a.color === b.color;
@@ -36,15 +43,12 @@ function sameCircle(a: Circle, b: Circle) {
   return a.square === b.square && a.color === b.color;
 }
 
-// What's actually visible after `count` moves of `line` have been played:
-// the board's own (pre-Play) annotations, then each played move's
-// added/removed applied in order — same rule the editor uses, so anything
-// drawn while recording shows up at the right moment during Study too.
-function activeAnnotationsAt(base: { arrows: Arrow[]; circles: Circle[] }, line: MoveNode[], count: number) {
+// The arrows and circles visible after walking `path` from the board's own
+// start: each move adds and removes its own (same rule as the editor).
+function annotationsAlong(base: { arrows: Arrow[]; circles: Circle[] }, path: MoveNode[]) {
   let arrows = [...base.arrows];
   let circles = [...base.circles];
-  for (let i = 0; i < count; i++) {
-    const node = line[i];
+  for (const node of path) {
     arrows = arrows.filter((a) => !node.removedArrows.some((r) => sameArrow(r, a)));
     circles = circles.filter((c) => !node.removedCircles.some((r) => sameCircle(r, c)));
     arrows = [...arrows, ...node.addedArrows];
@@ -53,32 +57,7 @@ function activeAnnotationsAt(base: { arrows: Arrow[]; circles: Circle[] }, line:
   return { arrows, circles };
 }
 
-// One piece per played move, tagged with whether it was yours to move —
-// so the notation can color your own moves apart from the opponent's,
-// rather than rendering the whole line as one flat string.
-function formatNotationParts(sans: string[], firstIsWhite: boolean, yourColor: 'w' | 'b'): { text: string; isYours: boolean }[] {
-  let moveNumber = 1;
-  let whiteToMove = firstIsWhite;
-  const parts: { text: string; isYours: boolean }[] = [];
-  sans.forEach((san, i) => {
-    const prefix = whiteToMove ? `${moveNumber}.` : i === 0 ? `${moveNumber}...` : '';
-    const text = (prefix ? `${prefix}${san}` : san) + (i < sans.length - 1 ? ' ' : '');
-    parts.push({ text, isYours: (whiteToMove ? 'w' : 'b') === yourColor });
-    if (!whiteToMove) moveNumber += 1;
-    whiteToMove = !whiteToMove;
-  });
-  return parts;
-}
-
-// A thicker, drawn rewind icon (a circular arrow) rather than a Unicode
-// glyph, per the established pattern in this app of not trusting font
-// glyphs for anything that needs to look intentional.
-// Standard "refresh" glyph (a single circular-arrow path, arrowhead flush
-// with the arc's end) — swapped in for a hand-built arc+triangle that left
-// a visible gap between the circle and its arrowhead.
-// Drawn, not the '⏸'/'▶' text glyphs — Android renders those as colour
-// emoji (inconsistently between the two), overriding whatever text color is
-// set. A path always comes out exactly `color`, matching between both.
+// Drawn icons (not '⏸'/'▶' glyphs, which Android renders as colour emoji).
 function PauseIcon({ size, color }: { size: number; color: string }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24">
@@ -106,63 +85,130 @@ function RewindIcon({ size, color }: { size: number; color: string }) {
   );
 }
 
-// One level of branching at the position right before `siblings` were
-// recorded: every sibling is a candidate "variant", shown as a numbered
-// arrow (red, except the current one shown in green). The number is the
-// order they're walked through in, so the arrow that plays first is 1 —
-// which means the recorded main line, always walked last, is the highest
-// number here (unlike in the board editor, where it's 1).
-// What the walkthrough plays at one branching point, in order: every
-// variation (shortest first) along its own main path, each followed by the
-// sub-variations inside it (one level deeper: the variation's moves up to
-// where it splits, then the other choice). The main line's own move is not
-// in here; it is resumed after the walkthrough.
-interface WalkEntry {
-  id: string; // the first node of what is new in this entry
-  head: MoveNode; // the variation's first move (its arrow at the branch)
-  nodes: MoveNode[]; // every move played from the branch
-  subAt: number; // index in `nodes` where a sub-variation leaves its variation (-1 for a variation)
+function Chevron({ open, color }: { open: boolean; color: string }) {
+  return (
+    <Svg width={16} height={16} viewBox="0 0 24 24">
+      <Path d={open ? 'M7 10l5 5 5-5z' : 'M10 7l5 5-5 5z'} fill={color} />
+    </Svg>
+  );
 }
-function walkEntriesFor(siblings: MoveNode[]): WalkEntry[] {
-  if (siblings.length < 2) return [];
-  const main = siblings[0];
-  const vars = [...siblings].sort((a, b) => mainLineNodes([a]).length - mainLineNodes([b]).length).filter((v) => v.id !== main.id);
-  const out: WalkEntry[] = [];
-  for (const v of vars) {
-    const path = mainLineNodes([v]);
-    out.push({ id: v.id, head: v, nodes: path, subAt: -1 });
-    path.forEach((node, k) => {
-      for (const alt of node.children.slice(1)) {
-        out.push({ id: alt.id, head: v, nodes: [...path.slice(0, k + 1), ...mainLineNodes([alt])], subAt: k + 1 });
-      }
-    });
+
+// ---------- The walk through a board ----------
+//
+// Everything that happens on a board is laid out once, in order, as a list
+// of steps (each with the moves on the board at that point). At a branching
+// point every choice is shown (`intro`), played to its end (`leaf`), and
+// rewound only back to that branching point before the next choice; once
+// all its choices are played it rewinds further, to the branching point
+// before it. The order of the choices (and so their numbers):
+//   - on the main line: the variations, shortest first, the main line last
+//     (so the walk ends at the end of the main line);
+//   - inside a variation: its own continuation first, then the others.
+
+type IntroStep = { kind: 'intro'; path: MoveNode[]; choice: MoveNode; choices: MoveNode[] };
+type Step =
+  | { kind: 'start'; path: MoveNode[] }
+  | IntroStep
+  | { kind: 'move'; path: MoveNode[] }
+  | { kind: 'leaf'; path: MoveNode[] }
+  | { kind: 'rewind'; path: MoveNode[] };
+
+function playOrder(siblings: MoveNode[], inside: boolean): MoveNode[] {
+  if (inside) return siblings;
+  const vars = siblings.slice(1).sort((a, b) => mainLineNodes([a]).length - mainLineNodes([b]).length);
+  return [...vars, siblings[0]];
+}
+
+function childrenAfter(board: ReactionBoard, path: MoveNode[]): MoveNode[] {
+  return path.length ? path[path.length - 1].children : board.recording;
+}
+
+// Whether the move at index `j` of `path` is played inside a variation
+// (an earlier choice on the path left the main line).
+function insideAt(board: ReactionBoard, path: MoveNode[], j: number): boolean {
+  for (let i = 0; i < j; i++) {
+    const sib = childrenAfter(board, path.slice(0, i));
+    if (sib[0] && sib[0].id !== path[i].id) return true;
   }
-  return out;
+  return false;
 }
 
-// Each branching point of the main line has its own colour (green, orange,
-// red, blue, then again); the variation being played is the light tint, the
-// others the dark one.
-const BRANCH_COLORS = ['green', 'orange', 'red', 'blue'] as const;
-const BRANCH_DARK = { green: 'darkGreen', orange: 'darkOrange', red: 'darkRed', blue: 'darkBlue' } as const;
-
-function toVariantArrows(variants: MoveNode[], activeIdx: number, numbers?: number[]): NumberedArrow[] {
-  return variants.map((v, i) => ({
-    id: v.id,
-    from: v.from,
-    to: v.to,
-    color: i === activeIdx ? colors.primary : colors.danger,
-    number: numbers?.[i] ?? i + 1
-  }));
+function buildTimeline(board: ReactionBoard): Step[] {
+  const steps: Step[] = [{ kind: 'start', path: [] }];
+  let cur: MoveNode[] = [];
+  const walk = (inside: boolean) => {
+    for (;;) {
+      const sib = childrenAfter(board, cur);
+      if (sib.length === 0) {
+        steps.push({ kind: 'leaf', path: cur });
+        return;
+      }
+      if (sib.length === 1) {
+        cur = [...cur, sib[0]];
+        steps.push({ kind: 'move', path: cur });
+        continue;
+      }
+      const base = cur;
+      const order = playOrder(sib, inside);
+      for (const c of order) {
+        while (cur.length > base.length) {
+          cur = cur.slice(0, -1);
+          steps.push({ kind: 'rewind', path: cur });
+        }
+        steps.push({ kind: 'intro', path: base, choice: c, choices: order });
+        cur = [...base, c];
+        steps.push({ kind: 'move', path: cur });
+        walk(inside || c.id !== sib[0].id);
+      }
+      return;
+    }
+  };
+  walk(false);
+  return steps;
 }
 
-// Interactive Reactions study: no flip. The recorded line's opponent moves
-// play themselves; on your turn you must find the recorded move. A wrong
-// move shows a message and resets your selection. Hint rings the piece to
-// move; Show solution plays the recorded move for you. When the line
-// branches, all recorded continuations are shown as numbered arrows
-// (shortest = 1, green) and walked through one at a time — play it,
-// rewind, show the next — before the line resumes on its recorded path.
+const leafKey = (path: MoveNode[]) => (path.length ? path[path.length - 1].id : 'root');
+
+// One branching choice in the lines overview: the move, the moves after it up
+// to the next branching point, and the choices there.
+interface TreeNode {
+  choice: MoveNode;
+  ply: number;
+  number: number;
+  colorIdx: number;
+  segment: { ply: number; node: MoveNode }[];
+  children: TreeNode[];
+  leafKeys: string[];
+}
+
+function buildTree(board: ReactionBoard): { rootSegment: { ply: number; node: MoveNode }[]; roots: TreeNode[] } {
+  const follow = (path: MoveNode[]) => {
+    const seg: { ply: number; node: MoveNode }[] = [];
+    let p = path;
+    for (;;) {
+      const sib = childrenAfter(board, p);
+      if (sib.length !== 1) return { seg, end: p };
+      seg.push({ ply: p.length, node: sib[0] });
+      p = [...p, sib[0]];
+    }
+  };
+  const choicesAt = (base: MoveNode[], depth: number, inside: boolean): TreeNode[] => {
+    const sib = childrenAfter(board, base);
+    if (sib.length < 2) return [];
+    return playOrder(sib, inside).map((c, i) => {
+      const { seg, end } = follow([...base, c]);
+      const children = choicesAt(end, depth + 1, inside || c.id !== sib[0].id);
+      const leafKeys = children.length ? children.flatMap((ch) => ch.leafKeys) : [leafKey(end)];
+      return { choice: c, ply: base.length, number: i + 1, colorIdx: depth, segment: seg, children, leafKeys };
+    });
+  };
+  const { seg, end } = follow([]);
+  return { rootSegment: seg, roots: choicesAt(end, 0, false) };
+}
+
+// Interactive Reactions study: the recorded line (a tree of moves) is walked
+// as described above. "Play myself": the opponent's moves play themselves and
+// you find yours (Hint, Show solution). "Auto-play": every move plays itself.
 export function ReactionStudy({
   card,
   yourColor,
@@ -182,54 +228,50 @@ export function ReactionStudy({
   boardStyle: number;
   onResult: (correct: boolean) => void;
   boardRef?: React.MutableRefObject<ReactionBoard | null>;
-  // Which recorded move is currently on screen — lets Edit (in the parent's
-  // chrome) reopen the board editor at this exact point.
+  // Which recorded move is on screen — lets Edit reopen the board editor there.
   cursorRef?: React.MutableRefObject<string | null>;
-  // Guide coach hooks (all optional): `paused` freezes the automatic parts
-  // (opponent auto-play, variant walkthrough) while a popup is up;
-  // `guideTargets` are where the popups' spotlights go; `onGuideEvent`
-  // reports the moments/presses the popups wait on.
+  // Freezes everything automatic (a guide popup is up, the board editor is open).
   paused?: boolean;
-  // Passive preview: every move — yours as well as the opponent's — plays
-  // itself at the same pace, including every variation (already walked
-  // automatically as each branch is reached, preview or not). No taps, no
-  // Hint/Show solution; Continue fires itself once the card is done.
-  // `onTogglePause` backs the preview-only Pause/Play button — `paused`
-  // stays parent-owned (the guide coach already drives it the same way).
+  // The study session's preview pass: always Auto-play, no mode switch.
   preview?: boolean;
-  // Opened from a link (CardViewerOverlay): the same choices as in Study,
-  // but nothing is scored.
+  // Opened from a link (CardViewerOverlay): same choices as in Study, never scored.
   viewer?: boolean;
+  // With `preview`: the pause button drives the parent's `paused`.
   onTogglePause?: () => void;
   guideTargets?: GuideTargets;
   onGuideEvent?: (event: CoachEvent) => void;
 }) {
   const boards = useMemo(() => [...card.boards].sort((a, b) => a.order - b.order), [card]);
   const [boardIdx, setBoardIdx] = useState(0);
-  const [ply, setPly] = useState(0);
-  // Set only while the prev/next buttons have pulled the board back to
-  // review an earlier position; null means "live" (showing `ply`, the true
-  // progress driving auto-play/solving). What's displayed is derived from
-  // the two below rather than kept as its own synced state — an earlier
-  // version mirrored `ply` into a separate state via an effect, and its
-  // state-updater read a ref that had already been overwritten by the time
-  // React ran it, so the board could stay stuck on the previous position
-  // after a move.
-  const [reviewPly, setReviewPly] = useState<number | null>(null);
-  const viewPly = reviewPly ?? ply;
+  const board = boards[boardIdx];
+  const steps = useMemo<Step[]>(() => (board ? buildTimeline(board) : [{ kind: 'start', path: [] }]), [board]);
+  const tree = useMemo(() => (board ? buildTree(board) : { rootSegment: [], roots: [] as TreeNode[] }), [board]);
+  const leaves = useMemo(
+    () => steps.flatMap((s, i) => (s.kind === 'leaf' ? [{ key: leafKey(s.path), path: s.path, index: i }] : [])),
+    [steps]
+  );
+
+  // Where the walk is (an index in `steps`).
+  const [t, setT] = useState(0);
+  // Set while ‹ has stepped back along the moves on the board: how many of
+  // them are shown. null = the live position.
+  const [reviewLen, setReviewLen] = useState<number | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [wrongMove, setWrongMove] = useState(false);
-  // The square the wrong move was aimed at, flashed red while the message shows.
   const [wrongSquare, setWrongSquare] = useState<string | null>(null);
   const [wrongMovePreview, setWrongMovePreview] = useState<Partial<Record<string, PieceCode>> | null>(null);
   const [hintOn, setHintOn] = useState(false);
   const [mistakes, setMistakes] = useState(0);
   const [allDone, setAllDone] = useState(false);
+  // Lines of this board played to their end (keyed by their last move).
+  const [doneLeaves, setDoneLeaves] = useState<Set<string>>(new Set());
+  const [overviewOpen, setOverviewOpen] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  // "Play myself" or "Auto-play" (every move plays itself, yours too). The
-  // last choice is remembered for Study and the link viewer alike; the
-  // session's preview pass is always auto, the guide always plays itself.
+  // "Play myself" or "Auto-play"; the last choice is remembered for Study and
+  // the link viewer alike. The preview pass is always auto, the guide never.
   const [autoMode, setAutoMode] = useState(() => getReactionAutoPlayCached() ?? false);
+  const [usedAuto, setUsedAuto] = useState(() => getReactionAutoPlayCached() ?? false);
   useEffect(() => {
     if (getReactionAutoPlayCached() !== null) return;
     getReactionAutoPlay().then((v) => {
@@ -238,565 +280,244 @@ export function ReactionStudy({
     });
   }, []);
   const showModeSwitch = !preview && !guideTargets;
-  const auto = preview || (showModeSwitch && autoMode);
-  // Some of your moves were played for you: no "Perfect".
-  const [usedAuto, setUsedAuto] = useState(() => getReactionAutoPlayCached() ?? false);
-  // The pause button of Auto-play; the parent's `paused` (guide popup,
-  // board editor open) freezes everything regardless.
+  const auto = Boolean(preview) || (showModeSwitch && autoMode);
   const [selfPaused, setSelfPaused] = useState(false);
   const isPaused = Boolean(paused) || (auto && !onTogglePause && selfPaused);
-  // Lines of this board already played (their key in `allLines`: a walk
-  // entry's id, or 'main'); ✓ in the overview.
-  const [doneLines, setDoneLines] = useState<Set<string>>(new Set());
-  const markDone = (key: string) => setDoneLines((s) => (s.has(key) ? s : new Set(s).add(key)));
 
-  // Variant walkthrough state — inert while `variantStage` is 'none'.
-  const [shownBranches, setShownBranches] = useState<Set<number>>(new Set());
-  const [variantStage, setVariantStage] = useState<'none' | 'intro' | 'playing' | 'rewinding'>('none');
-  const [branchPly, setBranchPly] = useState(0);
-  const [variantIdx, setVariantIdx] = useState(0);
-  const [variantSubPly, setVariantSubPly] = useState(0);
-  // Explicitly toggled (not derived from stage/subPly) so every variant —
-  // the first and every one after it — turns its numbered arrows on at
-  // exactly the same two call sites: on when a variant's intro starts, off
-  // the instant its first move actually starts sliding.
-  const [variantArrowsVisible, setVariantArrowsVisible] = useState(false);
-  const inVariant = variantStage !== 'none';
-
-  // Touch handling for the board uses a PanResponder (grabbing the touch on
-  // first contact) rather than per-square Pressable/onPress — inside a
-  // ScrollView, onPress waits out a tap-vs-scroll gesture negotiation before
-  // firing, which reads as a delay between tapping a square and the piece
-  // actually starting to slide. PanResponder claims the touch immediately.
+  const flipped = yourColor === 'b';
   const gridRef = useRef<View>(null);
   const gridOrigin = useRef({ x: 0, y: 0 });
-
   function measureGrid(cb?: () => void) {
     gridRef.current?.measureInWindow((x, y) => {
       gridOrigin.current = { x, y };
       cb?.();
     });
   }
-
-  // Cards under a Black repertoire are shown from Black's side — rank 1 at
-  // the top, a-file on the right — the same 180° flip everywhere a square
-  // is placed on screen or a touch is mapped back to one.
-  const flipped = yourColor === 'b';
-
   function squareFromPage(pageX: number, pageY: number): string | null {
     const file = Math.floor((pageX - gridOrigin.current.x) / CELL);
     const rank = Math.floor((pageY - gridOrigin.current.y) / CELL);
     return squareFromIndex(flipIndex(file, flipped), flipIndex(rank, flipped));
   }
-
   useEffect(() => {
     measureGrid();
   }, []);
 
-  const board = boards[boardIdx];
-  const line = useMemo(() => (board ? mainLineNodes(board.recording) : []), [board]);
-
-  // Lets the Edit button (in the parent study session chrome) jump straight
-  // into whichever board is actually on screen right now, instead of just
-  // opening the card and making you find/open the right board yourself.
-  // Written directly during render (not a useEffect, which only runs after
-  // paint and left a real gap where a fast Edit tap could still read the
-  // previous board, or null right after mount) — safe here since it's a
-  // plain ref write with no read-back that could affect this render's
-  // output.
   if (board && boardRef) boardRef.current = board;
 
-  function siblingsAt(n: number): MoveNode[] {
-    if (!board) return [];
-    return n === 0 ? board.recording : line[n - 1]?.children ?? [];
-  }
+  const step = steps[Math.min(t, steps.length - 1)];
+  const livePath = step.path;
+  const reviewing = reviewLen !== null;
+  const viewPath = useMemo(() => (reviewLen !== null ? livePath.slice(0, reviewLen) : livePath), [livePath, reviewLen]);
+  const nextStep = steps[t + 1];
+  // The move about to be played (none while rewinding or at a line's end).
+  const pendingMove =
+    step.kind !== 'leaf' && step.kind !== 'rewind' && nextStep?.kind === 'move' ? nextStep.path[nextStep.path.length - 1] : undefined;
+  const pendingIsYours = pendingMove ? (pendingMove.turnAfter === 'w' ? 'b' : 'w') === yourColor : false;
+  const yourTurn = pendingIsYours && !auto;
 
-  // Driven by `viewPly`, not `ply` — the position actually shown/interacted
-  // with, which is the live position unless the prev/next buttons have
-  // stepped it back to review an earlier one (see `viewPly`'s declaration).
-  const engineState: GameState = useMemo(() => {
+  const liveState = useMemo<GameState>(() => {
     if (!board) return { pieces: {}, turn: 'w', castling: { wK: false, wQ: false, bK: false, bQ: false }, enPassant: null };
     let st: GameState = { pieces: board.pieces, turn: board.turn, castling: board.castling, enPassant: board.enPassant };
-    for (let i = 0; i < viewPly && i < line.length; i++) {
-      st = makeMove(st, line[i].from, line[i].to, line[i].promotion).next;
-    }
+    for (const n of viewPath) st = makeMove(st, n.from, n.to, n.promotion).next;
     return st;
-  }, [board, line, viewPly]);
+  }, [board, viewPath]);
 
-  // Position right before the branch (base for the variant walkthrough).
-  const branchState: GameState = useMemo(() => {
-    if (!board) return engineState;
-    let st: GameState = { pieces: board.pieces, turn: board.turn, castling: board.castling, enPassant: board.enPassant };
-    for (let i = 0; i < branchPly && i < line.length; i++) {
-      st = makeMove(st, line[i].from, line[i].to, line[i].promotion).next;
-    }
-    return st;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [board, line, branchPly]);
+  if (cursorRef) cursorRef.current = viewPath.length ? viewPath[viewPath.length - 1].id : null;
 
-  // All recorded continuations at this branch, shortest first. `siblings[0]`
-  // is the line's own true continuation — it's excluded from
-  // `walkableVariants` (the ones actually played through with a rewind)
-  // since resuming the line after the showcase already plays it; walking it
-  // here too would just replay the same moves a second time.
-  const sortedVariants = useMemo(() => {
-    if (!inVariant) return [];
-    return [...siblingsAt(branchPly)].sort((a, b) => mainLineNodes([a]).length - mainLineNodes([b]).length);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inVariant, board, line, branchPly]);
-
-  const mainlineSibling = board ? siblingsAt(branchPly)[0] : undefined;
-  const walkableVariants = useMemo(
-    () => sortedVariants.filter((v) => v.id !== mainlineSibling?.id),
-    [sortedVariants, mainlineSibling]
-  );
-  // What is actually played, variation by variation, sub-variations included.
-  const walkEntries = useMemo(
-    () => (inVariant ? walkEntriesFor(siblingsAt(branchPly)) : []),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [inVariant, board, line, branchPly]
-  );
-
-  // The order the variants are actually walked in — every walkable variant
-  // (shortest first), then the line's own true continuation last (it's always
-  // shown last, once the showcase resumes the main line). The numbered arrows
-  // follow this order exactly, so each number is the order it's shown in.
-  const orderedVariants = useMemo(
-    () => (mainlineSibling ? [...walkableVariants, mainlineSibling] : walkableVariants),
-    [walkableVariants, mainlineSibling]
-  );
-
-  // Once every walkable variant has been shown, `variantIdx` is pushed one
-  // past the end as a sentinel: there's one last arrow flash — the actual
-  // recorded continuation (mainlineSibling), shown in green exactly like
-  // every walkable variant was — before the line resumes on it. Without
-  // this, resuming the mainline sibling after the last variant's rewind
-  // would skip straight to playing its move with no arrow shown at all.
-  const showingMainline = variantIdx >= walkEntries.length;
-  // The mainline sentinel is walked through the exact same 'playing' stage
-  // as every other variant (see the two effects below) rather than a
-  // bespoke "just jump ply forward" shortcut — that shortcut used to mark
-  // the move as already played without it ever actually happening (no
-  // animation, and if it was your move to find, no chance to find it).
-  // Reusing the real playing/tap/auto-play machinery is what variants 1
-  // and 2 already rely on successfully.
-  // Every line the walkthrough plays, in the order it plays them: at each
-  // branching point of the main line its variations (shortest first, as
-  // walked), and the main line itself last. Each gets its number, its path
-  // (the choice made at every branching point, "4.e4 › 5...d5") and whether
-  // it has been played yet — for the path above the board and the overview.
-  const firstIsWhite = line[0] ? line[0].turnAfter === 'b' : board?.turn === 'w';
-  const moveLabel = (i: number, san: string) => {
+  // Move labels ("5.d5", "5...Bb4") by their index along a path.
+  const firstIsWhite = board ? board.turn === 'w' : true;
+  const moveLabel = (ply: number, san: string) => {
     const off = firstIsWhite ? 0 : 1;
-    const n = Math.floor((i + off) / 2) + 1;
-    return (i + off) % 2 === 0 ? `${n}.${san}` : `${n}...${san}`;
+    const n = Math.floor((ply + off) / 2) + 1;
+    return (ply + off) % 2 === 0 ? `${n}.${san}` : `${n}...${san}`;
   };
-  const allLines = useMemo(() => {
-    const out: { key: string; branch: number; path: string[]; tail: string[]; variantIdx: number; label: string; color?: string }[] = [];
-    if (!board) return out;
-    const branches = line.map((_, i) => i).filter((i) => siblingsAt(i).length > 1);
-    for (const p of branches) {
-      const before = branches.filter((q) => q < p).map((q) => moveLabel(q, line[q].san));
-      const entries = walkEntriesFor(siblingsAt(p));
-      const heads = entries.filter((e) => e.subAt < 0).map((e) => e.head.id);
-      const color = arrowColors[BRANCH_COLORS[branches.indexOf(p) % BRANCH_COLORS.length]];
-      let subCount = 0;
-      entries.forEach((e, vi) => {
-        // The number on this variation's arrow at its branching point (1, 2, …
-        // per branching point); a sub-variation adds a letter.
-        const num = heads.indexOf(e.head.id) + 1;
-        subCount = e.subAt < 0 ? 0 : subCount + 1;
-        const label = e.subAt < 0 ? `${num}` : `${num}${String.fromCharCode(96 + subCount)}`;
-        const path = e.subAt < 0 ? [moveLabel(p, e.head.san)] : [moveLabel(p, e.head.san), moveLabel(p + e.subAt, e.nodes[e.subAt].san)];
-        const from = e.subAt < 0 ? 1 : e.subAt + 1;
-        out.push({
-          key: e.id,
-          branch: p,
-          path: [...before, ...path],
-          tail: e.nodes.slice(from, from + 3).map((n, k) => moveLabel(p + from + k, n.san)),
-          variantIdx: vi,
-          label,
-          color
-        });
+
+  // The line being played: the next line end at or after this step.
+  const currentLeaf = leaves.find((l) => l.index >= t) ?? leaves[leaves.length - 1];
+  const currentLineIdx = currentLeaf ? leaves.indexOf(currentLeaf) : 0;
+  const lineChoices = (path: MoveNode[]) =>
+    board ? path.flatMap((n, j) => (childrenAfter(board, path.slice(0, j)).length > 1 ? [moveLabel(j, n.san)] : [])) : [];
+
+  // The choices made along the moves shown stay on the board as one light
+  // arrow each, numbered as at their branching point.
+  const persistentArrows: NumberedArrow[] = [];
+  if (board) {
+    let k = 0;
+    viewPath.forEach((node, j) => {
+      const sib = childrenAfter(board, viewPath.slice(0, j));
+      if (sib.length < 2) return;
+      const order = playOrder(sib, insideAt(board, viewPath, j));
+      persistentArrows.push({
+        id: `keep-${node.id}`,
+        from: node.from,
+        to: node.to,
+        color: branchColor(k, true),
+        number: order.findIndex((v) => v.id === node.id) + 1
       });
-    }
-    out.push({ key: 'main', branch: Infinity, path: branches.map((q) => moveLabel(q, line[q].san)), tail: [], variantIdx: 0, label: 'M' });
-    return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [board, line]);
-  const lineDone = (l: (typeof allLines)[number]) => doneLines.has(l.key);
-  // The line on the board: the variation being walked, else the next line
-  // still to come along the main line, else the main line itself.
-  const currentLineIdx = (() => {
-    if (inVariant && variantIdx < walkEntries.length) {
-      const own = allLines.findIndex((l) => l.key === walkEntries[variantIdx].id);
-      if (own >= 0) return own;
-    }
-    if (!inVariant) {
-      const next = allLines.findIndex((l) => l.key !== 'main' && l.branch >= ply && !lineDone(l));
-      if (next >= 0) return next;
-    }
-    return allLines.length - 1;
-  })();
-  const currentLine = allLines[currentLineIdx];
-  // A variation arrow carries the number of the line it starts; the main
-  // line's own move at a branch carries the number of the next line after it.
-  const lineNumberOf = (v: MoveNode, at: number = branchPly) => {
-    const own = allLines.findIndex((l) => l.key === v.id);
-    if (own >= 0) return own + 1;
-    const next = allLines.findIndex((l) => l.branch > at);
-    return next >= 0 ? next + 1 : allLines.length;
-  };
-  const [overviewOpen, setOverviewOpen] = useState(false);
-  const mainBranches = useMemo(
-    () => line.map((_, i) => i).filter((i) => siblingsAt(i).length > 1),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [board, line]
-  );
-  // Branching points already walked stay on the board as arrows in their
-  // colour, numbered with their lines, while you look at the position at or
-  // after them.
-
-  const currentEntry = showingMainline ? undefined : walkEntries[variantIdx];
-  const currentVariant = showingMainline ? mainlineSibling : currentEntry?.head;
-  const activeArrowIdx = orderedVariants.findIndex((v) => v.id === currentVariant?.id);
-  const variantArrows = useMemo(
-    () => {
-      const color = BRANCH_COLORS[mainBranches.filter((q) => q < branchPly).length % BRANCH_COLORS.length];
-      return toVariantArrows(orderedVariants, activeArrowIdx).map((a, i) => ({
-        ...a,
-        color: arrowColors[i === activeArrowIdx ? color : BRANCH_DARK[color]]
-      }));
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [orderedVariants, activeArrowIdx, allLines, branchPly]
-  );
-  // A real variant's showcase plays out its whole recorded subtree; the
-  // mainline sentinel must stop after exactly its one move — the rest of
-  // the line resumes through the normal ply-based flow (with its own
-  // branch detection), not through this one-off showcase.
-  const variantLine = useMemo(
-    () => (showingMainline ? (mainlineSibling ? [mainlineSibling] : []) : currentEntry?.nodes ?? []),
-    [currentEntry, showingMainline, mainlineSibling]
-  );
-
-  // The choices made so far along the line being played stay on the board as
-  // one arrow each, in the colour of their branching point in order along the
-  // line (1st green, 2nd orange, 3rd red, 4th blue, then again): the move
-  // that was played, numbered as it was at its branching point.
-  // The numbers follow the order the choices are played in: at a main-line
-  // branching point the variations (shortest first) and the main line last;
-  // inside a variation its own continuation first, then its sub-variations.
-  const playOrder = (siblings: MoveNode[], inside: boolean) =>
-    inside
-      ? siblings
-      : [...siblings.slice(1).sort((a, b) => mainLineNodes([a]).length - mainLineNodes([b]).length), siblings[0]];
-  const choiceArrow = (node: MoveNode, siblings: MoveNode[], k: number, inside = false): NumberedArrow => {
-    const ordered = playOrder(siblings, inside);
-    return {
-      id: `keep-${node.id}`,
-      from: node.from,
-      to: node.to,
-      color: arrowColors[BRANCH_COLORS[k % BRANCH_COLORS.length]],
-      number: ordered.findIndex((v) => v.id === node.id) + 1
-    };
-  };
-  const persistentArrows: NumberedArrow[] = (() => {
-    const out: NumberedArrow[] = [];
-    if (!board) return out;
-    if (!inVariant) {
-      mainBranches
-        .filter((q) => viewPly > q)
-        .forEach((q, k) => out.push(choiceArrow(line[q], siblingsAt(q), k)));
-      return out;
-    }
-    const before = mainBranches.filter((q) => q < branchPly);
-    before.forEach((q, k) => out.push(choiceArrow(line[q], siblingsAt(q), k)));
-    let k = before.length;
-    if (variantSubPly >= 1 && variantLine[0]) {
-      out.push(choiceArrow(variantLine[0], siblingsAt(branchPly), k));
       k += 1;
-    }
-    // Branching points inside the variation (where a sub-variation leaves
-    // it), in order along the line, once their move has been played.
-    for (let j = 1; j < variantSubPly && j < variantLine.length; j++) {
-      if (variantLine[j - 1].children.length > 1) {
-        out.push(choiceArrow(variantLine[j], variantLine[j - 1].children, k, true));
-        k += 1;
-      }
-    }
-    return out;
-  })();
-
-  // A branching point inside the variation being played: before its move,
-  // its choices are shown like a main branching point's (the move about to
-  // be played light, the others dark, in the next colour along the line).
-  const subSplitAt = (j: number) => inVariant && j > 0 && j < variantLine.length && variantLine[j - 1].children.length > 1;
-  const subSplitArrows: NumberedArrow[] = (() => {
-    if (variantStage !== 'playing' || !subSplitAt(variantSubPly)) return [];
-    const siblings = variantLine[variantSubPly - 1].children;
-    const ordered = playOrder(siblings, true);
-    const color = BRANCH_COLORS[persistentArrows.length % BRANCH_COLORS.length];
-    const activeId = variantLine[variantSubPly].id;
-    return ordered.map((v, i) => ({
-      id: `sub-${v.id}`,
-      from: v.from,
-      to: v.to,
-      color: arrowColors[v.id === activeId ? color : BRANCH_DARK[color]],
-      number: i + 1
-    }));
-  })();
-  // The sub-branching point whose arrows have had their pause already.
-  const [subIntroPly, setSubIntroPly] = useState(-1);
-
-  const variantState: GameState = useMemo(() => {
-    let st = branchState;
-    for (let i = 0; i < variantSubPly && i < variantLine.length; i++) {
-      st = makeMove(st, variantLine[i].from, variantLine[i].to, variantLine[i].promotion).next;
-    }
-    return st;
-  }, [branchState, variantLine, variantSubPly]);
-
-  // Whichever position is "live" right now — the main line, or the variant
-  // being walked through — drives taps, hint, and solution; these stay tied
-  // to the true `ply`/`variantSubPly` regardless of what's being reviewed,
-  // since reviewing an earlier position is never itself a solving
-  // opportunity (see `isReviewing` below, which gates taps/hint/solution).
-  const activeState = inVariant ? variantState : engineState;
-  const activeNextMove = inVariant ? variantLine[variantSubPly] : line[ply];
-  const activeMoveColor = activeNextMove ? (activeNextMove.turnAfter === 'w' ? 'b' : 'w') : null;
-  const activeIsYourTurn = variantStage === 'playing' ? activeMoveColor === yourColor : inVariant ? false : activeMoveColor === yourColor;
-  const activeLineDone = inVariant ? variantSubPly >= variantLine.length : !board || ply >= line.length;
-  // True while the prev/next buttons have stepped the board back to an
-  // earlier position — taps, Hint and Show solution are all suspended
-  // until you step back to the live position (or it catches back up to you).
-  const isReviewing = !inVariant && viewPly !== ply;
-
-  // Which recorded move Study is actually showing right now — written
-  // synchronously (same reasoning as `boardRef` above) so Edit can open the
-  // board editor at this exact point instead of always at the mainline's
-  // end. `null` means "Start" (nothing played yet).
-  if (cursorRef) {
-    cursorRef.current = inVariant
-      ? variantSubPly > 0
-        ? variantLine[variantSubPly - 1].id
-        : branchPly > 0
-          ? line[branchPly - 1].id
-          : null
-      : viewPly > 0
-        ? line[viewPly - 1].id
-        : null;
+    });
   }
+  const introArrows: NumberedArrow[] =
+    !reviewing && step.kind === 'intro'
+      ? step.choices.map((v, i) => ({
+          id: `intro-${v.id}`,
+          from: v.from,
+          to: v.to,
+          color: branchColor(persistentArrows.length, v.id === step.choice.id),
+          number: i + 1
+        }))
+      : [];
 
-  // Guide coach: the two moments its popups can wait on.
-  const yourTurnNow =
-    activeIsYourTurn && !activeLineDone && !isReviewing && (!inVariant || variantStage === 'playing');
+  const { arrows: visibleArrows, circles: visibleCircles } = useMemo(
+    () => (board ? annotationsAlong(board, viewPath) : { arrows: [], circles: [] }),
+    [board, viewPath]
+  );
+  const legalTargets = useMemo(() => (selected ? legalMovesFrom(liveState, selected) : []), [liveState, selected]);
+  const displayedPieces = wrongMovePreview ?? liveState.pieces;
+  const { hiddenSquares, ghosts } = usePieceAnimation(displayedPieces, CELL, flipped);
+  const rewindSpin = useRef(new Animated.Value(0)).current;
+
+  // Guide coach moments.
+  const yourTurnNow = yourTurn && !reviewing;
   useEffect(() => {
     if (yourTurnNow) onGuideEvent?.('yourTurn');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [yourTurnNow]);
   useEffect(() => {
-    if (variantStage === 'intro') onGuideEvent?.('branchIntro');
+    if (step.kind === 'intro') onGuideEvent?.('branchIntro');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variantStage]);
-  // The card is finished and its Continue button is on screen.
+  }, [t, boardIdx]);
   useEffect(() => {
     if (allDone) onGuideEvent?.('allDone');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allDone]);
 
-  const { arrows: visibleArrows, circles: visibleCircles } = useMemo(
-    () => (board ? activeAnnotationsAt(board, line, inVariant ? branchPly : viewPly) : { arrows: [], circles: [] }),
-    [board, line, viewPly, inVariant, branchPly]
-  );
-
-  const legalTargets = useMemo(
-    () => (selected ? legalMovesFrom(activeState, selected) : []),
-    [activeState, selected]
-  );
-
-  const displayedPieces = wrongMovePreview ?? activeState.pieces;
-  const { hiddenSquares, ghosts } = usePieceAnimation(displayedPieces, CELL, flipped);
-
-  const rewindSpin = useRef(new Animated.Value(0)).current;
-
-  // Detect a branch before revealing the next line move; show all recorded
-  // continuations instead of just continuing silently.
+  // A line reached its end.
   useEffect(() => {
-    if (inVariant || activeLineDone) return;
-    const siblings = siblingsAt(ply);
-    if (siblings.length > 1 && !shownBranches.has(ply)) {
-      setShownBranches((s) => new Set(s).add(ply));
-      setBranchPly(ply);
-      const entries = walkEntriesFor(siblings);
-      const first = entries.findIndex((e) => !doneLines.has(e.id));
-      setVariantIdx(first >= 0 ? first : entries.length);
-      setVariantSubPly(0);
-      setVariantStage('intro');
-      setVariantArrowsVisible(true);
-    }
+    if (step.kind !== 'leaf') return;
+    const key = leafKey(step.path);
+    setDoneLeaves((s) => (s.has(key) ? s : new Set(s).add(key)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inVariant, activeLineDone, ply, board]);
+  }, [t, boardIdx]);
 
-  // Auto-play the opponent's moves on the main line — and, in preview,
-  // yours too (there's no one to find them, you're just watching).
+  function clearTransient() {
+    setSelected(null);
+    setHintOn(false);
+    setWrongMove(false);
+    setWrongSquare(null);
+    setWrongMovePreview(null);
+    setReviewLen(null);
+  }
+
+  function goTo(index: number) {
+    clearTransient();
+    setAllDone(false);
+    setT(index);
+  }
+
+  const leavesUnder = (c: MoveNode) => leaves.filter((l) => l.path.some((n) => n.id === c.id));
+  // Start a line not played yet at the highest branching point on it where
+  // nothing has been played.
+  function jumpToLeaf(leaf: (typeof leaves)[number]) {
+    const intros: { s: IntroStep; i: number }[] = [];
+    steps.forEach((s, i) => {
+      if (s.kind === 'intro' && leaf.path.some((n) => n.id === s.choice.id)) intros.push({ s, i });
+    });
+    const fresh = intros.find(({ s }) => leavesUnder(s.choice).every((l) => !doneLeaves.has(l.key)));
+    const target = fresh ?? intros[intros.length - 1];
+    goTo(target ? target.i : 0);
+  }
+
+  // The walk: one step at a time, at the pace of what happens.
   useEffect(() => {
-    if (inVariant || activeLineDone || isReviewing || (activeIsYourTurn && !auto) || isPaused) return;
-    const t = setTimeout(() => {
-      setPly((p) => p + 1);
+    if (!board || reviewing || isPaused || allDone || wrongMove) return;
+    if (step.kind === 'leaf') {
+      if (!doneLeaves.has(leafKey(step.path))) return;
+      const undone = leaves.filter((l) => !doneLeaves.has(l.key));
+      if (undone.length === 0) {
+        if (boardIdx < boards.length - 1) {
+          const tm = setTimeout(() => {
+            clearTransient();
+            setBoardIdx((i) => i + 1);
+            setT(0);
+            setDoneLeaves(new Set());
+            setExpanded(new Set());
+          }, AUTO_ADVANCE_DELAY_MS);
+          return () => clearTimeout(tm);
+        }
+        setAllDone(true);
+        return;
+      }
+      if (t >= steps.length - 1) {
+        // Lines skipped by jumping ahead are played before the board ends.
+        const tm = setTimeout(() => jumpToLeaf(undone[0]), AUTO_ADVANCE_DELAY_MS);
+        return () => clearTimeout(tm);
+      }
+    }
+    if (t >= steps.length - 1) return;
+    const next = steps[t + 1];
+    if (next.kind === 'intro') {
+      // A choice whose lines were all played already (after a jump) is
+      // passed over, unless it is the last one at its branching point.
+      const idx = next.choices.findIndex((c) => c.id === next.choice.id);
+      if (idx < next.choices.length - 1 && leavesUnder(next.choice).every((l) => doneLeaves.has(l.key))) {
+        const following = steps.findIndex((s, i) => i > t + 1 && s.kind === 'intro' && s.choice.id === next.choices[idx + 1].id);
+        if (following > 0) {
+          setT(following - 1);
+          return;
+        }
+      }
+    }
+    if (next.kind === 'move' && yourTurn) return;
+    const delay =
+      next.kind === 'intro'
+        ? step.kind === 'rewind'
+          ? 300
+          : AUTO_ADVANCE_DELAY_MS
+        : next.kind === 'move'
+          ? step.kind === 'intro'
+            ? VARIANT_INTRO_MS
+            : AUTO_ADVANCE_DELAY_MS
+          : next.kind === 'leaf'
+            ? AUTO_ADVANCE_DELAY_MS
+            : step.kind === 'leaf'
+              ? VARIANT_REWIND_PAUSE_MS
+              : REWIND_STEP_MS;
+    const tm = setTimeout(() => {
+      setT((x) => x + 1);
       setSelected(null);
       setHintOn(false);
-    }, AUTO_ADVANCE_DELAY_MS);
-    return () => clearTimeout(t);
-  }, [inVariant, ply, activeIsYourTurn, activeLineDone, isReviewing, isPaused, auto]);
-
-  // Board finished → next board, or the whole card is done. Held off
-  // entirely while reviewing (see `isReviewing`) — stepping back to look at
-  // the completed line must actually give time to look at it, not just
-  // delay the inevitable by `AUTO_ADVANCE_DELAY_MS`. Returning to the live
-  // position (or letting it catch back up) re-triggers this effect and the
-  // advance proceeds from there.
-  useEffect(() => {
-    if (inVariant || !activeLineDone || isReviewing || allDone) return;
-    markDone('main');
-    // Lines skipped by jumping ahead are played before the board ends.
-    const next = allLines.findIndex((l) => l.key !== 'main' && !doneLines.has(l.key));
-    if (next >= 0) {
-      if (isPaused) return;
-      const t = setTimeout(() => startLine(next), AUTO_ADVANCE_DELAY_MS);
-      return () => clearTimeout(t);
-    }
-    if (boardIdx < boards.length - 1) {
-      if (isPaused) return;
-      const t = setTimeout(() => {
-        setBoardIdx((i) => i + 1);
-        setPly(0);
-        setReviewPly(null);
-        setSelected(null);
-        setHintOn(false);
-        setShownBranches(new Set());
-        setDoneLines(new Set());
-      }, AUTO_ADVANCE_DELAY_MS);
-      return () => clearTimeout(t);
-    }
-    setAllDone(true);
+    }, delay);
+    return () => clearTimeout(tm);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inVariant, activeLineDone, isReviewing, boardIdx, boards.length, doneLines, allDone, isPaused]);
+  }, [t, steps, board, reviewing, isPaused, allDone, wrongMove, doneLeaves, yourTurn, boardIdx]);
 
-  // Variant intro: show the numbered arrows briefly, then start playing —
-  // uniformly for a real variant and for the mainline sentinel alike (see
-  // `variantLine`/the playing effect below for how the sentinel's single
-  // move gets committed instead of rewound).
+  // Spin the rewind icon for as long as the rewinding lasts.
+  const rewinding = step.kind === 'rewind' && !reviewing;
   useEffect(() => {
-    if (variantStage !== 'intro' || isPaused) return;
-    const t = setTimeout(() => setVariantStage('playing'), VARIANT_INTRO_MS);
-    return () => clearTimeout(t);
-  }, [variantStage, isPaused]);
-
-  // Variant playing: auto-play its opponent moves; when it ends, either
-  // pause then rewind (a real, truly-alternate variant) or — for the
-  // mainline sentinel, which is never rewound — pause then commit its move
-  // straight into the real `ply` and exit variant mode, letting the normal
-  // ply-based flow (with its own branch detection) resume from there.
-  useEffect(() => {
-    if (variantStage !== 'playing' || isPaused) return;
-    if (activeLineDone) {
-      if (currentEntry) markDone(currentEntry.id);
-      if (showingMainline) {
-        const t = setTimeout(() => {
-          setVariantStage('none');
-          setVariantArrowsVisible(false);
-          setPly(branchPly + variantLine.length);
-        }, VARIANT_REWIND_PAUSE_MS);
-        return () => clearTimeout(t);
-      }
-      const t = setTimeout(() => setVariantStage('rewinding'), VARIANT_REWIND_PAUSE_MS);
-      return () => clearTimeout(t);
-    }
-    if (subSplitAt(variantSubPly) && subIntroPly !== variantSubPly) {
-      const t = setTimeout(() => setSubIntroPly(variantSubPly), VARIANT_INTRO_MS);
-      return () => clearTimeout(t);
-    }
-    if (!activeIsYourTurn || auto) {
-      const t = setTimeout(() => {
-        setVariantSubPly((p) => p + 1);
-        setSelected(null);
-        setVariantArrowsVisible(false);
-      }, AUTO_ADVANCE_DELAY_MS);
-      return () => clearTimeout(t);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variantStage, activeLineDone, activeIsYourTurn, showingMainline, branchPly, variantLine.length, isPaused, auto, variantSubPly, subIntroPly, variantIdx]);
-
-  // A new variation starts without any sub-branching point shown.
-  useEffect(() => {
-    setSubIntroPly(-1);
-  }, [variantIdx, branchPly, variantStage === 'intro']);
-
-  // Spin the rewind icon for as long as the whole rewinding stage lasts —
-  // kept in its own effect, keyed only on variantStage, so the loop plays
-  // through uninterrupted. Restarting it on every step (as a combined
-  // effect keyed on variantSubPly too would) cut the animation off partway
-  // through its cycle and snapped it back to 0, reading as a stutter.
-  useEffect(() => {
-    if (variantStage !== 'rewinding') return;
+    if (!rewinding) return;
     rewindSpin.setValue(0);
-    const anim = Animated.loop(
-      Animated.timing(rewindSpin, { toValue: 1, duration: 900, easing: Easing.linear, useNativeDriver: true })
-    );
+    const anim = Animated.loop(Animated.timing(rewindSpin, { toValue: 1, duration: 900, easing: Easing.linear, useNativeDriver: true }));
     anim.start();
     return () => {
       anim.stop();
       rewindSpin.setValue(0);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variantStage]);
+  }, [rewinding]);
 
-  // Rewinding: step the variant back to the branch one animated move at a
-  // time, then move on to the next variant. Sped up relative to normal
-  // move pacing since this is a rewind, not a replay.
-  useEffect(() => {
-    if (variantStage !== 'rewinding' || isPaused) return;
-    if (variantSubPly > 0) {
-      const t = setTimeout(() => setVariantSubPly((p) => p - 1), REWIND_STEP_MS);
-      return () => clearTimeout(t);
-    }
-    const t = setTimeout(() => {
-      // The next line of this branching point not played yet. Once none are
-      // left: the main line's own move (`variantIdx` one past the end, the
-      // sentinel that flashes its arrow) — or, when the main line was
-      // already played to its end, straight on to the next line still to
-      // play anywhere on the board, or the end of the board.
-      const next = walkEntries.findIndex((e, i) => i > variantIdx && !doneLines.has(e.id));
-      if (next >= 0) {
-        setVariantIdx(next);
-      } else if (doneLines.has('main')) {
-        const other = allLines.findIndex((l) => l.key !== 'main' && !doneLines.has(l.key));
-        if (other >= 0) {
-          startLine(other);
-          return;
-        }
-        setVariantStage('none');
-        setVariantArrowsVisible(false);
-        setPly(line.length);
-        return;
-      } else {
-        setVariantIdx(walkEntries.length);
-      }
-      setVariantStage('intro');
-      setVariantArrowsVisible(true);
-    }, 300);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variantStage, variantSubPly, variantIdx, walkEntries.length, branchPly, isPaused]);
+  function playPending(slip: boolean) {
+    setT((x) => x + 1);
+    setSelected(null);
+    setHintOn(false);
+    if (slip) setMistakes((m) => m + 1);
+  }
 
   function handleSquareTap(sq: string) {
-    if (auto) return;
-    if (inVariant && variantStage !== 'playing') return;
-    if (isReviewing || !activeIsYourTurn || activeLineDone || wrongMove) return;
+    if (auto || reviewing || !yourTurn || wrongMove || !pendingMove) return;
     if (!selected) {
-      const p = activeState.pieces[sq];
-      if (p && p[0] === activeState.turn) setSelected(sq);
+      const p = liveState.pieces[sq];
+      if (p && p[0] === liveState.turn) setSelected(sq);
       return;
     }
     if (sq === selected) {
@@ -804,24 +525,13 @@ export function ReactionStudy({
       return;
     }
     if (legalTargets.includes(sq)) {
-      if (selected === activeNextMove!.from && sq === activeNextMove!.to) {
-        if (inVariant) {
-          setVariantSubPly((p) => p + 1);
-          setVariantArrowsVisible(false);
-        } else {
-          setPly((p) => p + 1);
-        }
-        setSelected(null);
-        setHintOn(false);
+      if (selected === pendingMove.from && sq === pendingMove.to) {
+        playPending(false);
       } else {
         setWrongMove(true);
         setWrongSquare(sq);
         setMistakes((m) => m + 1);
-        setWrongMovePreview(makeMove(activeState, selected, sq).next.pieces);
-        // Clear the selection right away, not after the preview finishes —
-        // otherwise the old piece's move dots/capture ring (including one
-        // sitting right on the wrong move's own destination square) stay
-        // drawn on top of the preview animation.
+        setWrongMovePreview(makeMove(liveState, selected, sq).next.pieces);
         setSelected(null);
         setTimeout(() => setWrongMovePreview(null), WRONG_MOVE_SHOW_MS);
         setTimeout(() => {
@@ -831,87 +541,50 @@ export function ReactionStudy({
       }
       return;
     }
-    const p = activeState.pieces[sq];
-    setSelected(p && p[0] === activeState.turn ? sq : null);
+    const p = liveState.pieces[sq];
+    setSelected(p && p[0] === liveState.turn ? sq : null);
   }
 
   function showSolution() {
-    if (isReviewing || !activeIsYourTurn || activeLineDone) return;
-    if (inVariant) {
-      setVariantSubPly((p) => p + 1);
-      setVariantArrowsVisible(false);
-    } else {
-      setPly((p) => p + 1);
-    }
-    setSelected(null);
-    setHintOn(false);
-    setMistakes((m) => m + 1);
+    if (reviewing || !yourTurn) return;
+    playPending(true);
     onGuideEvent?.('solution');
   }
 
-  // Clears what belongs to the move being looked for, before a jump.
-  function resetTransient() {
+  // ‹ › step back and forward along the moves on the board; nothing moves on
+  // by itself meanwhile. › at the live position on your move = Show solution.
+  const canGoPrev = viewPath.length > 0;
+  const nextIsSolution = !reviewing && yourTurn;
+  const canGoNext = reviewing || nextIsSolution;
+  function handlePrevMove() {
+    if (!canGoPrev) return;
+    setReviewLen(viewPath.length - 1);
     setSelected(null);
     setHintOn(false);
-    setWrongMove(false);
-    setWrongSquare(null);
-    setWrongMovePreview(null);
-    setReviewPly(null);
-    setAllDone(false);
   }
-
-  // Start one line of the overview: a variation from its branching point
-  // (its arrows shown first, as in the walkthrough), the main line from the
-  // start, straight through without stopping at the branching points.
-  function startLine(idx: number) {
-    const l = allLines[idx];
-    if (!l) return;
-    resetTransient();
-    setVariantSubPly(0);
-    if (l.key === 'main') {
-      setVariantStage('none');
-      setVariantArrowsVisible(false);
-      setShownBranches(new Set(mainBranches));
-      setDoneLines((s) => {
-        const n = new Set(s);
-        n.delete('main');
-        return n;
-      });
-      setPly(0);
+  function handleNextMove() {
+    if (!canGoNext) return;
+    if (nextIsSolution) {
+      showSolution();
       return;
     }
-    setShownBranches((s) => new Set(s).add(l.branch));
-    setPly(l.branch);
-    setBranchPly(l.branch);
-    setVariantIdx(l.variantIdx);
-    setVariantStage('intro');
-    setVariantArrowsVisible(true);
+    const n = viewPath.length + 1;
+    setReviewLen(n >= livePath.length ? null : n);
+    setSelected(null);
+    setHintOn(false);
   }
 
-  // « : the branching point before the one you are at (or the one whose
-  // variation you are playing), walked again from its first line.
+  // « : back to the branching point of the last choice on the board (or,
+  // while the choices of a branching point are on screen, the one before),
+  // from where the walk goes on in its usual order.
   const prevBranch = (() => {
-    if (inVariant && variantSubPly > 0) return branchPly;
-    const before = mainBranches.filter((q) => q < (inVariant ? branchPly : viewPly));
-    return before.length ? before[before.length - 1] : null;
+    const onPath = new Set(viewPath.map((n) => n.id));
+    for (let i = Math.min(t, steps.length - 1); i >= 0; i--) {
+      const s = steps[i];
+      if (s.kind === 'intro' && onPath.has(s.choice.id)) return i;
+    }
+    return null;
   })();
-  function goPrevBranch() {
-    if (prevBranch === null) return;
-    const q = prevBranch;
-    resetTransient();
-    setDoneLines((s) => {
-      const n = new Set(s);
-      allLines.filter((l) => l.branch === q).forEach((l) => n.delete(l.key));
-      return n;
-    });
-    setShownBranches((s) => new Set(s).add(q));
-    setPly(q);
-    setBranchPly(q);
-    setVariantIdx(0);
-    setVariantSubPly(0);
-    setVariantStage('intro');
-    setVariantArrowsVisible(true);
-  }
 
   function chooseMode(next: boolean) {
     if (next === autoMode) return;
@@ -923,45 +596,8 @@ export function ReactionStudy({
     void setReactionAutoPlay(next);
   }
 
-  // Prev/next let you step back through the main line to review an earlier
-  // position (and forward again, up to the live position) — inert during
-  // the variant walkthrough, which is its own fully automatic showcase.
-  const canStepReview = !inVariant;
-  const canGoPrev = canStepReview && viewPly > 0;
-  // At the live position on your turn, › plays your move for you — exactly
-  // Show solution, so it costs one slip; stepping back and forward again
-  // over moves already played is just reviewing and costs nothing.
-  const nextIsSolution = canStepReview && !auto && !isReviewing && activeIsYourTurn && !activeLineDone;
-  const canGoNext = (canStepReview && viewPly < ply) || nextIsSolution;
-
-  function handlePrevMove() {
-    if (!canGoPrev) return;
-    setReviewPly(viewPly - 1);
-    setSelected(null);
-    setHintOn(false);
-  }
-
-  function handleNextMove() {
-    if (!canGoNext) return;
-    if (nextIsSolution) {
-      showSolution();
-      return;
-    }
-    // Stepping forward onto the live position means you're no longer
-    // reviewing — back to null so the view follows `ply` again.
-    setReviewPly(viewPly + 1 >= ply ? null : viewPly + 1);
-    setSelected(null);
-    setHintOn(false);
-  }
-
-  // The PanResponder below is created once (via useRef) so claiming the
-  // touch doesn't get re-negotiated on every render, but that means its
-  // callback would otherwise close over the very first render's
-  // handleSquareTap. Routing through a ref kept fresh on every render
-  // avoids that staleness.
   const handleSquareTapRef = useRef(handleSquareTap);
   handleSquareTapRef.current = handleSquareTap;
-
   const panResponderRef = useRef<PanResponderInstance | null>(null);
   if (!panResponderRef.current) {
     panResponderRef.current = PanResponder.create({
@@ -982,41 +618,70 @@ export function ReactionStudy({
   }
 
   const styleSet = boardStyles[boardStyle] ?? boardStyles[0];
-  const hintCircles = hintOn && activeIsYourTurn && activeNextMove ? [{ square: activeNextMove.from, color: 'green' as const }] : [];
-  const playedSans = line.slice(0, viewPly).map((n) => n.san);
-  const notationParts = playedSans.length > 0 ? formatNotationParts(playedSans, line[0].turnAfter === 'b', yourColor) : [];
-  const showVariantArrows = variantArrowsVisible || subSplitArrows.length > 0;
-  const branchArrows = variantArrowsVisible ? variantArrows : subSplitArrows;
+  const hintCircles = hintOn && yourTurn && pendingMove ? [{ square: pendingMove.from, color: 'green' as const }] : [];
+  const showIntro = introArrows.length > 0;
+  const actionsDisabled = reviewing || !yourTurn;
 
-  // `activeIsYourTurn` is forced false during 'intro' (see its definition)
-  // regardless of whose move is about to be shown, so this already reads
-  // "Opponent's move…" throughout every intro flash — a real variant's and
-  // the mainline sentinel's alike — without needing a special case for
-  // either.
-  const statusText =
-    variantStage === 'rewinding'
-      ? 'Rewinding…'
-      : activeLineDone
-        ? inVariant
-          ? 'Variation complete'
-          : 'Line complete'
-        : activeIsYourTurn
+  const statusText = rewinding
+    ? 'Rewinding…'
+    : step.kind === 'leaf'
+      ? 'Line complete'
+      : pendingMove
+        ? pendingIsYours
           ? 'Your move'
-          : "Opponent's move…";
-  const statusColor =
-    !activeLineDone && variantStage !== 'rewinding'
-      ? activeIsYourTurn
-        ? colors.primary
-        : colors.textDim
-      : colors.textDim;
-
-  // A wrong move is announced where you're looking, in the status line above
-  // the board, rather than under the buttons.
+          : "Opponent's move…"
+        : '';
   const statusShown = wrongMove ? 'Wrong move — try again' : statusText;
-  const statusColorShown = wrongMove ? colors.danger : statusColor;
+  const statusColor = wrongMove ? colors.danger : pendingMove && pendingIsYours && !rewinding ? colors.primary : colors.textDim;
+
+  const choicesText = currentLeaf ? lineChoices(currentLeaf.path) : [];
+  const onLive = new Set(livePath.map((n) => n.id));
+  if (step.kind === 'intro') onLive.add(step.choice.id);
+
+  const toggleNode = (key: string) =>
+    setExpanded((s) => {
+      const n = new Set(s);
+      if (n.has(key)) n.delete(key);
+      else n.add(key);
+      return n;
+    });
+
+  const renderNode = (node: TreeNode, depth: number): React.ReactNode => {
+    const key = node.choice.id;
+    const open = expanded.has(key);
+    const done = node.leafKeys.every((k) => doneLeaves.has(k));
+    const current = onLive.has(key) && !allDone;
+    const canOpen = node.segment.length > 0 || node.children.length > 0;
+    const introIdx = steps.findIndex((s) => s.kind === 'intro' && s.choice.id === key);
+    return (
+      <View key={key}>
+        <View style={[styles.treeRow, { paddingLeft: 10 + depth * 16 }, current && styles.treeRowCurrent]}>
+          <Pressable onPress={() => canOpen && toggleNode(key)} style={styles.treeMain} accessibilityLabel={open ? 'Fold in' : 'Fold out'}>
+            <View style={{ width: 16 }}>{canOpen && <Chevron open={open} color={colors.textDim} />}</View>
+            <Text style={[styles.treeNum, { color: branchColor(node.colorIdx, true) }]}>{node.number}</Text>
+            <Text style={[styles.treeMove, current && styles.treeMoveCurrent]}>{moveLabel(node.ply, node.choice.san)}</Text>
+            {done && <Text style={styles.treeDone}>✓</Text>}
+          </Pressable>
+          <Pressable onPress={() => introIdx >= 0 && goTo(introIdx)} style={styles.treePlay} accessibilityLabel={`Play ${node.choice.san}`}>
+            <PlayIcon size={18} color={colors.primary} />
+          </Pressable>
+        </View>
+        {open && (
+          <>
+            {node.segment.length > 0 && (
+              <Text style={[styles.treeSegment, { paddingLeft: 52 + depth * 16 }]}>
+                {node.segment.map((m) => moveLabel(m.ply, m.node.san)).join(' ')}
+              </Text>
+            )}
+            {node.children.map((ch) => renderNode(ch, depth + 1))}
+          </>
+        )}
+      </View>
+    );
+  };
 
   return (
-    <View style={{ alignItems: 'center', gap: 10 }}>
+    <View style={{ alignItems: 'center', gap: 10, alignSelf: 'stretch' }}>
       {showModeSwitch && (
         <View style={styles.modeRow} accessibilityRole="radiogroup">
           {([false, true] as const).map((v) => (
@@ -1032,28 +697,20 @@ export function ReactionStudy({
           ))}
         </View>
       )}
-      {board.front.text ? <MoveText text={board.front.text} style={styles.boardText} /> : null}
-      <Text style={[styles.status, { color: statusColorShown }]}>
+      <CollapsibleDescription text={board.front.text} />
+      <Text style={[styles.status, { color: statusColor }]}>
         {boards.length > 1 ? `Board ${boardIdx + 1} / ${boards.length} — ` : ''}
         {statusShown}
       </Text>
-      {allLines.length > 1 && currentLine && (
-        // Where you are: the choice made at every branching point so far.
+      {leaves.length > 1 && (
         <Text style={styles.linePath}>
-          {`Line ${currentLineIdx + 1} of ${allLines.length}: `}
-          <Text style={styles.linePathMoves}>
-            {currentLine.key === 'main' ? `${currentLine.path.join(' › ')}${currentLine.path.length ? ' ' : ''}(main line)` : currentLine.path.join(' › ')}
-          </Text>
+          {`Line ${currentLineIdx + 1} of ${leaves.length}: `}
+          <Text style={styles.linePathMoves}>{choicesText.join(' › ')}</Text>
         </Text>
       )}
 
       <View ref={guideTargets?.board} collapsable={false}>
-        <View
-          ref={gridRef}
-          onLayout={() => measureGrid()}
-          style={[styles.board, { width: BOARD_SIZE, height: BOARD_SIZE }]}
-          {...panResponder.panHandlers}
-        >
+        <View ref={gridRef} onLayout={() => measureGrid()} style={[styles.board, { width: BOARD_SIZE, height: BOARD_SIZE }]} {...panResponder.panHandlers}>
           <View style={{ width: BOARD_SIZE, height: BOARD_SIZE, flexDirection: 'row', flexWrap: 'wrap' }}>
             {(flipped ? [...allSquares()].reverse() : allSquares()).map((sq, i) => {
               const file = i % 8;
@@ -1062,12 +719,9 @@ export function ReactionStudy({
               const piece = displayedPieces[sq];
               const isSel = sq === selected;
               const isTarget = legalTargets.includes(sq);
-              const isCapture = isTarget && (Boolean(piece) || (selected && activeState.pieces[selected]?.[1] === 'P' && sq === activeState.enPassant));
+              const isCapture = isTarget && (Boolean(piece) || (selected && liveState.pieces[selected]?.[1] === 'P' && sq === liveState.enPassant));
               return (
-                <View
-                  key={sq}
-                  style={{ width: CELL, height: CELL, backgroundColor: isLight ? styleSet.light : styleSet.dark, alignItems: 'center', justifyContent: 'center' }}
-                >
+                <View key={sq} style={{ width: CELL, height: CELL, backgroundColor: isLight ? styleSet.light : styleSet.dark, alignItems: 'center', justifyContent: 'center' }}>
                   {piece && !hiddenSquares.has(sq) && <PieceGlyph code={piece} cell={CELL} />}
                   {isSel && <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.selHighlight]} />}
                   {isTarget && !isCapture && <View pointerEvents="none" style={styles.moveDot} />}
@@ -1079,32 +733,23 @@ export function ReactionStudy({
           </View>
           <BoardCoords size={BOARD_SIZE} flipped={flipped} styleSet={styleSet} />
           <View style={StyleSheet.absoluteFill} pointerEvents="none">
-            {showVariantArrows ? (
-              <>
-                <NumberedArrowsSvg arrows={[...persistentArrows, ...branchArrows]} size={BOARD_SIZE} flipped={flipped} />
-                <NumberedArrowBadges arrows={[...persistentArrows, ...branchArrows]} size={BOARD_SIZE} flipped={flipped} />
-              </>
-            ) : (
+            {!showIntro && (
               <>
                 <ArrowsSvg arrows={visibleArrows} size={BOARD_SIZE} flipped={flipped} pieces={displayedPieces} yourColor={yourColor} />
-                {persistentArrows.length > 0 && (
-                  <>
-                    <NumberedArrowsSvg arrows={persistentArrows} size={BOARD_SIZE} flipped={flipped} />
-                    <NumberedArrowBadges arrows={persistentArrows} size={BOARD_SIZE} flipped={flipped} />
-                  </>
-                )}
                 <CirclesSvg circles={[...visibleCircles, ...hintCircles]} size={BOARD_SIZE} flipped={flipped} pieces={displayedPieces} yourColor={yourColor} />
+              </>
+            )}
+            {(persistentArrows.length > 0 || showIntro) && (
+              <>
+                <NumberedArrowsSvg arrows={[...persistentArrows, ...introArrows]} size={BOARD_SIZE} flipped={flipped} />
+                <NumberedArrowBadges arrows={[...persistentArrows, ...introArrows]} size={BOARD_SIZE} flipped={flipped} />
               </>
             )}
             <PieceAnimationGhosts ghosts={ghosts} cell={CELL} />
           </View>
-          {variantStage === 'rewinding' && (
+          {rewinding && (
             <View style={[StyleSheet.absoluteFill, styles.rewindOverlay]} pointerEvents="none">
-              <Animated.View
-                style={{
-                  transform: [{ rotate: rewindSpin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }) }]
-                }}
-              >
+              <Animated.View style={{ transform: [{ rotate: rewindSpin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }) }] }}>
                 <RewindIcon size={72} color={colors.onPrimary} />
               </Animated.View>
             </View>
@@ -1112,15 +757,10 @@ export function ReactionStudy({
         </View>
       </View>
 
-      {/* Step back/forward through the main line to review it — always
-          shown, including once the line is complete or the whole card is
-          done, since reviewing what just happened is exactly when this is
-          most useful. Inert during the variant walkthrough, which is its
-          own automatic showcase. */}
       <View style={styles.navRow}>
-        {mainBranches.length > 0 && (
+        {tree.roots.length > 0 && (
           <Pressable
-            onPress={goPrevBranch}
+            onPress={() => prevBranch !== null && goTo(prevBranch)}
             disabled={prevBranch === null}
             style={[styles.navBtn, prevBranch === null && styles.navBtnDisabled]}
             accessibilityLabel="Back to the previous branching point"
@@ -1132,11 +772,7 @@ export function ReactionStudy({
           <Text style={styles.navBtnText}>‹</Text>
         </Pressable>
         {auto && (
-          <Pressable
-            onPress={() => (onTogglePause ? onTogglePause() : setSelfPaused((p) => !p))}
-            style={styles.navBtn}
-            accessibilityLabel={isPaused ? 'Play' : 'Pause'}
-          >
+          <Pressable onPress={() => (onTogglePause ? onTogglePause() : setSelfPaused((p) => !p))} style={styles.navBtn} accessibilityLabel={isPaused ? 'Play' : 'Pause'}>
             {(onTogglePause ? paused : selfPaused) ? <PlayIcon size={18} color={colors.gold} /> : <PauseIcon size={18} color={colors.gold} />}
           </Pressable>
         )}
@@ -1145,52 +781,13 @@ export function ReactionStudy({
         </Pressable>
       </View>
 
-      {notationParts.length > 0 ? (
-        <Text style={styles.notation}>
-          {notationParts.map((part, i) => (
-            <Text key={i} style={part.isYours ? styles.notationYours : undefined}>
-              {part.text}
-            </Text>
-          ))}
-        </Text>
-      ) : null}
-
-      {allLines.length > 1 && (
-        // All lines of this board, collapsed to one row until tapped.
-        <View style={styles.overview}>
-          <Pressable onPress={() => setOverviewOpen((o) => !o)} style={styles.overviewHead} accessibilityLabel={overviewOpen ? 'Hide the lines' : 'Show all lines'}>
-            <Text style={styles.overviewHeadText}>{`${allLines.length} lines ${overviewOpen ? '▴' : '▾'}`}</Text>
-          </Pressable>
-          {overviewOpen &&
-            allLines.map((l, i) => {
-              const done = lineDone(l);
-              const current = i === currentLineIdx && !allDone;
-              return (
-                <Pressable
-                  key={l.key}
-                  onPress={() => startLine(i)}
-                  accessibilityLabel={`Play line ${i + 1}`}
-                  style={({ pressed }) => [styles.overviewRow, current && styles.overviewRowCurrent, pressed && styles.overviewRowPressed]}
-                >
-                  <Text style={[styles.overviewNum, l.color ? { color: l.color } : null, done && styles.overviewDone]}>{done ? '✓' : l.label}</Text>
-                  <Text style={[styles.overviewText, current && styles.overviewTextCurrent]}>
-                    {l.key === 'main'
-                      ? `${l.path.join(' › ')}${l.path.length ? ' ' : ''}(main line)`
-                      : `${l.path.join(' › ')}${l.tail.length ? ` ${l.tail.join(' ')}…` : ''}`}
-                  </Text>
-                </Pressable>
-              );
-            })}
-        </View>
-      )}
-
       {allDone ? (
         <Pressable
           ref={guideTargets?.continue}
           collapsable={false}
           onPress={() => {
             onGuideEvent?.('continue');
-            onResult(preview || viewer || mistakes === 0);
+            onResult(Boolean(preview) || Boolean(viewer) || mistakes === 0);
           }}
           style={styles.continueBtn}
         >
@@ -1212,8 +809,8 @@ export function ReactionStudy({
                 setHintOn(true);
                 onGuideEvent?.('hint');
               }}
-              disabled={isReviewing || !activeIsYourTurn || activeLineDone || (inVariant && variantStage !== 'playing')}
-              style={[styles.actionBtn, styles.hintBtn, (isReviewing || !activeIsYourTurn || activeLineDone) && styles.actionDisabled]}
+              disabled={actionsDisabled}
+              style={[styles.actionBtn, styles.hintBtn, actionsDisabled && styles.actionDisabled]}
             >
               <Text style={styles.hintText}>Hint</Text>
             </Pressable>
@@ -1221,14 +818,33 @@ export function ReactionStudy({
               ref={guideTargets?.solution}
               collapsable={false}
               onPress={showSolution}
-              disabled={isReviewing || !activeIsYourTurn || activeLineDone || (inVariant && variantStage !== 'playing')}
-              style={[styles.actionBtn, styles.solutionBtn, (isReviewing || !activeIsYourTurn || activeLineDone) && styles.actionDisabled]}
+              disabled={actionsDisabled}
+              style={[styles.actionBtn, styles.solutionBtn, actionsDisabled && styles.actionDisabled]}
             >
               <Text style={styles.solutionText}>Show solution</Text>
             </Pressable>
           </View>
           {!viewer && <Text style={styles.slipNote}>Show solution (or › on your move) counts as a slip.</Text>}
         </>
+      )}
+
+      {tree.roots.length > 0 && (
+        // Every line of this board as a tree: the choices at the first
+        // branching point, each opening to the moves up to the next one and
+        // the choices there. ▶ plays from that choice.
+        <View style={styles.overview}>
+          <Pressable onPress={() => setOverviewOpen((o) => !o)} style={styles.overviewHead} accessibilityLabel={overviewOpen ? 'Hide the lines' : 'Show all lines'}>
+            <Text style={styles.overviewHeadText}>{`${leaves.length} lines ${overviewOpen ? '▴' : '▾'}`}</Text>
+          </Pressable>
+          {overviewOpen && (
+            <>
+              {tree.rootSegment.length > 0 && (
+                <Text style={[styles.treeSegment, { paddingLeft: 14 }]}>{tree.rootSegment.map((m) => moveLabel(m.ply, m.node.san)).join(' ')}</Text>
+              )}
+              {tree.roots.map((n) => renderNode(n, 0))}
+            </>
+          )}
+        </View>
       )}
     </View>
   );
@@ -1237,38 +853,33 @@ export function ReactionStudy({
 const styles = StyleSheet.create({
   linePath: { color: colors.textDim, fontSize: 13, textAlign: 'center', paddingHorizontal: 16 },
   linePathMoves: { color: colors.text, fontWeight: '700' },
-  overview: { alignSelf: 'stretch', marginHorizontal: 16, borderRadius: 10, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel2, overflow: 'hidden' },
+  overview: { alignSelf: 'stretch', marginHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel2, overflow: 'hidden' },
   overviewHead: { minHeight: touchTarget, justifyContent: 'center', paddingHorizontal: 14 },
   overviewHeadText: { color: colors.text, fontSize: 14, fontWeight: '600' },
-  overviewRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: touchTarget, paddingHorizontal: 14, paddingVertical: 8, borderTopWidth: 1, borderTopColor: colors.border },
-  overviewRowPressed: { opacity: 0.6 },
+  treeRow: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: colors.border },
+  treeRowCurrent: { backgroundColor: colors.panel },
+  treeMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: touchTarget },
+  treeNum: { width: 18, fontSize: 13, fontWeight: '800' },
+  treeMove: { color: colors.text, fontSize: 14, fontWeight: '600' },
+  treeMoveCurrent: { fontWeight: '800' },
+  treeDone: { color: colors.primary, fontSize: 14, fontWeight: '800' },
+  treePlay: { width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center' },
+  treeSegment: { color: colors.textDim, fontSize: 13, paddingRight: 14, paddingBottom: 8 },
   modeRow: { flexDirection: 'row', alignSelf: 'center', borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel2, padding: 3 },
   modeBtn: { minHeight: touchTarget - 6, paddingHorizontal: 18, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center' },
   modeBtnOn: { backgroundColor: colors.primary },
   modeText: { color: colors.textDim, fontSize: 14, fontWeight: '600' },
   modeTextOn: { color: colors.onPrimary, fontWeight: '700' },
-  overviewRowCurrent: { backgroundColor: colors.panel },
-  overviewNum: { width: 22, color: colors.textDim, fontSize: 13, fontWeight: '700' },
-  overviewDone: { color: colors.primary },
-  overviewText: { flex: 1, color: colors.textDim, fontSize: 13 },
-  overviewTextCurrent: { color: colors.text, fontWeight: '700' },
-  boardText: { color: colors.text, fontSize: 15, lineHeight: 22, textAlign: 'center', paddingHorizontal: 12 },
   status: { color: colors.textDim, fontSize: 13, fontWeight: '600' },
   board: { borderRadius: 6, overflow: 'hidden', borderWidth: 1, borderColor: colors.border },
   selHighlight: { backgroundColor: 'rgba(21,128,61,0.35)' },
   moveDot: { position: 'absolute', width: CELL * 0.28, height: CELL * 0.28, borderRadius: (CELL * 0.28) / 2, backgroundColor: 'rgba(21,128,61,0.55)' },
   captureRing: { position: 'absolute', width: CELL - 6, height: CELL - 6, borderRadius: (CELL - 6) / 2, borderWidth: 3, borderColor: 'rgba(220,38,38,0.85)' },
-  rewindOverlay: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(15,23,42,0.55)'
-  },
+  rewindOverlay: { alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(15,23,42,0.55)' },
   navRow: { flexDirection: 'row', gap: 10 },
   navBtn: { width: touchTarget, height: touchTarget, borderRadius: 10, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel2, alignItems: 'center', justifyContent: 'center' },
   navBtnDisabled: { opacity: 0.4 },
   navBtnText: { color: colors.text, fontSize: 18 },
-  notation: { color: colors.textDim, fontSize: 13, textAlign: 'center', paddingHorizontal: 12 },
-  notationYours: { color: colors.primary, fontWeight: '700' },
   slipNote: { color: colors.textDim, fontSize: 12 },
   wrongSquare: { backgroundColor: 'rgba(220,38,38,0.5)' },
   actionRow: { flexDirection: 'row', gap: 10, alignSelf: 'stretch', paddingHorizontal: 12 },

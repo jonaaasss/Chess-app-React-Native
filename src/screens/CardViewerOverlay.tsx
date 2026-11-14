@@ -7,11 +7,22 @@ import { ChessBoardView, NumberedArrowBadges, NumberedArrowsSvg, numberBadgeCent
 import { toEditorNumberedArrows } from '../arrowNumbering';
 import { ReactionStudy } from './ReactionStudy';
 import { MoveText } from '../components/MoveText';
+import { CollapsibleDescription } from '../components/CollapsibleDescription';
 import { showOverlay, useOverlayBack } from '../overlay';
 import { getCard, saveCard } from '../storage';
 import type { Arrow, Card, Circle, MoveNode, ReactionBoard } from '../types';
 import { colors, radius, touchTarget, type, variationColor } from '../theme';
 import { openReactionBoardEditor } from './ReactionBoardEditorOverlay';
+import { EditCircleButton } from '../components/Common';
+
+// Skip-to-next glyph, drawn like the app's other icons (same as in Study).
+function SkipIcon({ size, color }: { size: number; color: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" fill={color} />
+    </Svg>
+  );
+}
 
 // The arrows and circles on screen after walking `path` from the board's
 // own start: each move adds and removes its own (same rule as the editor).
@@ -187,16 +198,11 @@ function CardViewerOverlay({
               viewer
               paused={paused}
             />
-            <View style={styles.underRow}>
-              <Pressable onPress={editBoard} style={styles.pencilBtn} accessibilityLabel="Edit this board">
-                <PencilIcon size={22} color={colors.text} />
-              </Pressable>
-            </View>
           </>
         )}
         {card && board && !isReactions && (
           <>
-            {!!description && <MoveText text={description} style={styles.description} />}
+            <CollapsibleDescription text={description} />
             {boards.length > 1 && <Text style={styles.counter}>{`Board ${boardIdx + 1} / ${boards.length}`}</Text>}
             <View style={styles.boardRow}>
               {boards.length > 1 && boardIdx > 0 ? (
@@ -222,14 +228,23 @@ function CardViewerOverlay({
                 <View style={styles.navSpacer} />
               )}
             </View>
-            <View style={styles.underRow}>
-              <Pressable onPress={editBoard} style={styles.pencilBtn} accessibilityLabel="Edit this board">
-                <PencilIcon size={22} color={colors.text} />
-              </Pressable>
-            </View>
           </>
         )}
       </ScrollView>
+
+      {/* Fixed at the bottom, as in Study: the pencil and Skip (back to the Summary). */}
+      {card && board && (
+        <View style={styles.bottomBar}>
+          <EditCircleButton onPress={editBoard} />
+          <Pressable onPress={close} style={styles.skipBtn} accessibilityLabel="Skip, back to the Summary">
+            <View style={styles.skipRow}>
+              <SkipIcon size={18} color={colors.textDim} />
+              <Text style={styles.skipLabel}>Skip</Text>
+            </View>
+            <Text style={styles.skipNote}>back to the Summary</Text>
+          </Pressable>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -274,6 +289,22 @@ const styles = StyleSheet.create({
   variantBadge: { position: 'absolute', width: 26, height: 26, borderRadius: 13, backgroundColor: variationColor, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#ffffff' },
   variantBadgeText: { color: '#1d1030', fontSize: 13, fontWeight: '800' },
   content: { padding: 16, gap: 12 },
+  bottomBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 48,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 4,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    backgroundColor: colors.bg
+  },
+  skipBtn: { minHeight: 48, alignItems: 'flex-end', justifyContent: 'center', paddingHorizontal: 4 },
+  skipRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  skipLabel: { color: colors.textDim, fontSize: 14, fontWeight: '600' },
+  skipNote: { color: colors.textDim, fontSize: 11, opacity: 0.8 },
   boardRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   navBtn: {
     width: touchTarget,

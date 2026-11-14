@@ -7,6 +7,7 @@ import { sameThreat, THREAT_COLOR, threatOfArrow, threatOfCircle, type ThreatKin
 import { ArrowNoteBody } from '../components/ArrowNoteBody';
 import { CloseCircleButton } from '../overlay';
 import { MoveText } from '../components/MoveText';
+import { CollapsibleDescription } from '../components/CollapsibleDescription';
 import type { Arrow, ArrowColor, Card, Circle, PieceCode, ReactionBoard } from '../types';
 import { ARROW_COLOR_NAMES, ARROW_COLOR_ORDER, arrowColors, BASE_ARROW_COLORS, boardStyles, DARK_TINT, colors, radius, touchTarget } from '../theme';
 import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, arrowIsOpponent, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, opponentTint, parallelOffsets, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
@@ -684,7 +685,7 @@ export function PlanStudy({
 
   return (
     <View ref={containerRef} collapsable={false} style={{ alignItems: 'center', gap: 10 }}>
-      {board.back.text ? <MoveText text={board.back.text} style={styles.boardText} /> : null}
+      <CollapsibleDescription text={board.back.text} />
       {noArrows ? (
         <View style={styles.warning}>
           <Text style={styles.warningTitle}>
