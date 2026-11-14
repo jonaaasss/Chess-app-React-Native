@@ -668,7 +668,6 @@ export function ReactionStudy({
         <View style={[styles.treeRow, { paddingLeft: 10 + depth * 16 }, current && styles.treeRowCurrent]}>
           <Pressable onPress={() => canOpen && toggleNode(key)} style={styles.treeMain} accessibilityLabel={open ? 'Fold in' : 'Fold out'}>
             <View style={{ width: 16 }}>{canOpen && <Chevron open={open} color={colors.textDim} />}</View>
-            <Text style={[styles.treeNum, { color: branchColor(node.colorIdx, true) }]}>{node.number}</Text>
             <Text style={[styles.treeMove, { color: moveColor(node.choice) }, current && styles.treeMoveCurrent]}>{node.choice.san}</Text>
             {done && <Text style={styles.treeDone}>✓</Text>}
           </Pressable>
@@ -679,7 +678,7 @@ export function ReactionStudy({
         {open && (
           <>
             {node.segment.length > 0 && (
-              <Text style={[styles.treeSegment, { paddingLeft: 52 + depth * 16 }]}>
+              <Text style={[styles.treeSegment, { paddingLeft: 34 + depth * 16 }]}>
                 {coloredMoves(node.segment)}
               </Text>
             )}
