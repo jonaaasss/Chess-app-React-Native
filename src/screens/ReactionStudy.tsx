@@ -646,6 +646,16 @@ export function ReactionStudy({
       return n;
     });
 
+  // In the lines tree: no move numbers; your moves green, the opponent's red.
+  const moveColor = (n: MoveNode) => ((n.turnAfter === 'w' ? 'b' : 'w') === yourColor ? arrowColors.green : colors.dangerText);
+  const coloredMoves = (moves: { node: MoveNode }[]) =>
+    moves.map((m, i) => (
+      <Text key={m.node.id} style={{ color: moveColor(m.node) }}>
+        {m.node.san}
+        {i < moves.length - 1 ? '  ' : ''}
+      </Text>
+    ));
+
   const renderNode = (node: TreeNode, depth: number): React.ReactNode => {
     const key = node.choice.id;
     const open = expanded.has(key);
@@ -659,7 +669,7 @@ export function ReactionStudy({
           <Pressable onPress={() => canOpen && toggleNode(key)} style={styles.treeMain} accessibilityLabel={open ? 'Fold in' : 'Fold out'}>
             <View style={{ width: 16 }}>{canOpen && <Chevron open={open} color={colors.textDim} />}</View>
             <Text style={[styles.treeNum, { color: branchColor(node.colorIdx, true) }]}>{node.number}</Text>
-            <Text style={[styles.treeMove, current && styles.treeMoveCurrent]}>{moveLabel(node.ply, node.choice.san)}</Text>
+            <Text style={[styles.treeMove, { color: moveColor(node.choice) }, current && styles.treeMoveCurrent]}>{node.choice.san}</Text>
             {done && <Text style={styles.treeDone}>✓</Text>}
           </Pressable>
           <Pressable onPress={() => introIdx >= 0 && goTo(introIdx)} style={styles.treePlay} accessibilityLabel={`Play ${node.choice.san}`}>
@@ -670,7 +680,7 @@ export function ReactionStudy({
           <>
             {node.segment.length > 0 && (
               <Text style={[styles.treeSegment, { paddingLeft: 52 + depth * 16 }]}>
-                {node.segment.map((m) => moveLabel(m.ply, m.node.san)).join(' ')}
+                {coloredMoves(node.segment)}
               </Text>
             )}
             {node.children.map((ch) => renderNode(ch, depth + 1))}
@@ -839,7 +849,7 @@ export function ReactionStudy({
           {overviewOpen && (
             <>
               {tree.rootSegment.length > 0 && (
-                <Text style={[styles.treeSegment, { paddingLeft: 14 }]}>{tree.rootSegment.map((m) => moveLabel(m.ply, m.node.san)).join(' ')}</Text>
+                <Text style={[styles.treeSegment, { paddingLeft: 14 }]}>{coloredMoves(tree.rootSegment)}</Text>
               )}
               {tree.roots.map((n) => renderNode(n, 0))}
             </>
