@@ -25,13 +25,22 @@ export function CollapsibleDescription({ text, onEdit }: { text: string; onEdit?
       <Pressable onPress={toggle} style={styles.head} accessibilityLabel={collapsed ? 'Show the description' : 'Hide the description'}>
         <Text style={styles.headText}>{`Description ${collapsed ? '▾' : '▴'}`}</Text>
       </Pressable>
-      {!collapsed && (text.trim() ? <MoveText text={text} style={styles.text} /> : <Text style={styles.empty}>No description yet.</Text>)}
-      {!collapsed && onEdit && (
-        <Pressable onPress={onEdit} style={styles.pencil} accessibilityLabel="Edit the description">
-          <Svg width={20} height={20} viewBox="0 0 24 24">
-            <Path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" fill={colors.text} />
-          </Svg>
-        </Pressable>
+      {/* The pencil sits beside the last line, so it adds no height. */}
+      {!collapsed && (
+        <View>
+          {text.trim() ? (
+            <MoveText text={text} style={[styles.text, onEdit && styles.textWithPencil]} />
+          ) : (
+            <Text style={[styles.empty, onEdit && styles.textWithPencil]}>No description yet.</Text>
+          )}
+          {onEdit && (
+            <Pressable onPress={onEdit} style={styles.pencil} accessibilityLabel="Edit the description">
+              <Svg width={20} height={20} viewBox="0 0 24 24">
+                <Path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" fill={colors.text} />
+              </Svg>
+            </Pressable>
+          )}
+        </View>
       )}
     </View>
   );
@@ -42,6 +51,7 @@ const styles = StyleSheet.create({
   head: { minHeight: touchTarget, justifyContent: 'center', paddingHorizontal: 14 },
   headText: { color: colors.text, fontSize: 14, fontWeight: '600' },
   empty: { color: colors.textDim, fontSize: 14, paddingHorizontal: 14, paddingBottom: 12 },
-  pencil: { alignSelf: 'flex-end', width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center' },
+  pencil: { position: 'absolute', right: 2, bottom: -2, width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center' },
+  textWithPencil: { paddingRight: touchTarget },
   text: { color: colors.text, fontSize: 15, lineHeight: 22, paddingHorizontal: 14, paddingBottom: 12 }
 });
