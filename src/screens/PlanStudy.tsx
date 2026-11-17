@@ -638,17 +638,24 @@ export function PlanStudy({
   const displayGroup = colorGroups[displayIdx];
   // Also once the board is complete: the last colour stays alone unless "Show all colors" is on.
   const visibleFamily = !showAll && displayGroup ? familyOf(displayGroup.color) : null;
+  // With "Show all colors": every light colour, but only the dark tint of the
+  // colour family on the board now (the opponent's arrows of earlier
+  // families would crowd the board).
+  const currentFamily = displayGroup ? familyOf(displayGroup.color) : null;
+  const shownWithAll = (c: ArrowColor) => (BASE_ARROW_COLORS as readonly ArrowColor[]).includes(c) || familyOf(c) === currentFamily;
   const visibleArrows = activeThreat
     ? threatSteps.slice(0, threatFound).map((st) => st.arrow)
     : visibleFamily
       ? drawnArrows.filter((a) => familyOf(a.color) === visibleFamily)
-      : drawnArrows;
+      : drawnArrows.filter((a) => shownWithAll(a.color));
   // A colour's circles appear together with that colour's step.
   const reachedOrder = boardDone ? COLOR_CYCLE.length : COLOR_CYCLE.indexOf(activeGroup?.color ?? 'green');
   const circleColor = (c: { square: string; color: ArrowColor }) =>
     board && isOpponentArrow(c.square, board.back.pieces, yourColor) ? opponentTint(c.color) : c.color;
   const visibleCircles = activeThreat ? activeThreat.circles : finalAnnotations.circles.filter((c) => !threatOfCircle(c)).filter((c) =>
-    visibleFamily ? familyOf(circleColor(c)) === visibleFamily && COLOR_CYCLE.indexOf(circleColor(c)) <= reachedOrder : COLOR_CYCLE.indexOf(circleColor(c)) <= reachedOrder
+    visibleFamily
+      ? familyOf(circleColor(c)) === visibleFamily && COLOR_CYCLE.indexOf(circleColor(c)) <= reachedOrder
+      : shownWithAll(circleColor(c)) && COLOR_CYCLE.indexOf(circleColor(c)) <= reachedOrder
   );
 
   // Opponent threat: "!A" on their move, "A1", "A2" on your answers.
