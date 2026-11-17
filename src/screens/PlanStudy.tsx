@@ -98,8 +98,23 @@ function familyOf(c: ArrowColor): ArrowColor {
 }
 
 // A short move name for a threat chip, e.g. "Bg5" or "Nxe5".
-function sanLike(a: Arrow, pieces: Partial<Record<string, PieceCode>> | undefined): string {
-  const piece = pieces?.[a.from];
+// The piece making the move: the one on its start square, else the one at
+// the start of a chain of arrows ending there (Nc3 then c3→d5 = Nd5).
+function pieceOf(square: string, pieces: Partial<Record<string, PieceCode>> | undefined, arrows: Arrow[], seen = new Set<string>()): PieceCode | undefined {
+  const piece = pieces?.[square];
+  if (piece) return piece;
+  if (seen.has(square)) return undefined;
+  seen.add(square);
+  for (const b of arrows) {
+    if (b.to !== square) continue;
+    const p = pieceOf(b.from, pieces, arrows, seen);
+    if (p) return p;
+  }
+  return undefined;
+}
+
+function sanLike(a: Arrow, pieces: Partial<Record<string, PieceCode>> | undefined, arrows: Arrow[] = []): string {
+  const piece = pieceOf(a.from, pieces, arrows.filter((b) => b !== a));
   const kind = piece ? piece[1] : '';
   const capture = pieces?.[a.to] ? 'x' : '';
   if (kind === 'P' || !kind) return capture ? `${a.from[0]}x${a.to}` : a.to;
@@ -275,7 +290,7 @@ export function PlanStudy({
           key: `${kind}:${letter}`,
           steps: ordered.map((arrow) => ({ arrow, auto: isOpp(arrow) })),
           circles: finalAnnotations.circles.filter((c) => sameThreat(threatOfCircle(c), ref)),
-          title: `${kind === 'opp' ? '!' : '★'}${letter}${lead ? ` ${sanLike(lead, pieces)}` : ''}`
+          title: `${kind === 'opp' ? '!' : '★'}${letter}${lead ? ` ${sanLike(lead, pieces, finalAnnotations.arrows)}` : ''}`
         });
       }
     }
