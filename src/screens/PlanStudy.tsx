@@ -847,39 +847,6 @@ export function PlanStudy({
         </View>
       )}
 
-      {summaryNote && (
-        <View style={noteStyles.panel}>
-          <View style={noteStyles.panelHeader}>
-            <ArrowNoteIcon color={arrowColors[summaryNote.color]} number={arrowNumbers.get(keyOf(summaryNote))} size={24} />
-            <Text style={noteStyles.panelTitle}>Notes</Text>
-            <CloseCircleButton onPress={() => setSummaryNote(null)} />
-          </View>
-          {/* The pencil sits beside the last line, so it adds no height. */}
-          <View>
-            <ArrowNoteBody notes={summaryNote.notes} accent={arrowColors[summaryNote.color]} style={onCardSaved ? noteStyles.bodyWithPencil : undefined} />
-            {notePencil(() => void editNote(summaryNote, 'summary'))}
-          </View>
-        </View>
-      )}
-
-      {pendingNote && (
-        // Under the board (not over it), so the arrow being described stays visible.
-        <View style={noteStyles.panel}>
-          <View style={noteStyles.panelHeader}>
-            <ArrowNoteIcon color={arrowColors[pendingNote.arrow.color]} number={pendingNote.number} size={24} />
-            <Text style={noteStyles.panelTitle}>Notes</Text>
-            <CloseCircleButton onPress={dismissNote} />
-          </View>
-          <View>
-            <ArrowNoteBody notes={pendingNote.arrow.notes} accent={arrowColors[pendingNote.arrow.color]} style={onCardSaved ? noteStyles.bodyWithPencil : undefined} />
-            {notePencil(() => void editNote(pendingNote.arrow, 'pending'))}
-          </View>
-          <Pressable onPress={dismissNote} style={noteStyles.panelBtn}>
-            <Text style={noteStyles.panelBtnText}>Got it</Text>
-          </Pressable>
-        </View>
-      )}
-
       {preview && !noArrows && !pendingNote && (
         <View style={styles.navRow}>
           <Pressable onPress={stepBack} disabled={found.length === 0} style={[styles.navBtn, found.length === 0 && styles.navBtnDisabled]}>
@@ -926,6 +893,39 @@ export function PlanStudy({
           </Pressable>
           <Pressable onPress={stepNextGroup} disabled={!canNext} style={[styles.navBtn, !canNext && styles.navBtnDisabled]} accessibilityLabel="Show this colour">
             <Text style={styles.navBtnText}>»</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {summaryNote && (
+        <View style={noteStyles.panel}>
+          <View style={noteStyles.panelHeader}>
+            <ArrowNoteIcon color={arrowColors[summaryNote.color]} number={arrowNumbers.get(keyOf(summaryNote))} size={24} />
+            <Text style={noteStyles.panelTitle}>Notes</Text>
+            <CloseCircleButton onPress={() => setSummaryNote(null)} />
+          </View>
+          {/* The pencil sits beside the last line, so it adds no height. */}
+          <View>
+            <ArrowNoteBody notes={summaryNote.notes} accent={arrowColors[summaryNote.color]} style={onCardSaved ? noteStyles.bodyWithPencil : undefined} />
+            {notePencil(() => void editNote(summaryNote, 'summary'))}
+          </View>
+        </View>
+      )}
+
+      {pendingNote && (
+        // Under the board (not over it), so the arrow being described stays visible.
+        <View style={noteStyles.panel}>
+          <View style={noteStyles.panelHeader}>
+            <ArrowNoteIcon color={arrowColors[pendingNote.arrow.color]} number={pendingNote.number} size={24} />
+            <Text style={noteStyles.panelTitle}>Notes</Text>
+            <CloseCircleButton onPress={dismissNote} />
+          </View>
+          <View>
+            <ArrowNoteBody notes={pendingNote.arrow.notes} accent={arrowColors[pendingNote.arrow.color]} style={onCardSaved ? noteStyles.bodyWithPencil : undefined} />
+            {notePencil(() => void editNote(pendingNote.arrow, 'pending'))}
+          </View>
+          <Pressable onPress={dismissNote} style={noteStyles.panelBtn}>
+            <Text style={noteStyles.panelBtnText}>Got it</Text>
           </Pressable>
         </View>
       )}
