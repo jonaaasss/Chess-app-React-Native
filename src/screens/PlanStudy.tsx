@@ -486,17 +486,28 @@ export function PlanStudy({
     onGuideEvent?.('solution');
   }
 
-  const blocked = boardDone || Boolean(wrongArrow) || Boolean(pendingNote) || noArrows;
+  // An open note does not block the buttons: pressing one closes the note
+  // (like Got it) and goes on with that step.
+  const blocked = boardDone || Boolean(wrongArrow) || noArrows;
+  function closeNotes() {
+    dismissNote();
+    setSummaryNote(null);
+  }
   // › the next arrow in order (an opponent arrow still waiting comes first);
   // » the whole current step — the opponent arrows and your own of that colour
   // together (or, once a colour is complete, the next one, which is then current).
   const canNext = !blocked && (remaining.length > 0 || autoPending);
+  // With a note open and nothing left to show (e.g. the last arrow), › and »
+  // still work: they just close the note, as Got it does.
+  const nextEnabled = canNext || Boolean(pendingNote);
   function stepNext() {
+    closeNotes();
     if (!canNext) return;
     if (autoPending) setAutoShownGroup(groupIdx);
     else reveal([remaining[0]]);
   }
   function stepNextGroup() {
+    closeNotes();
     if (!canNext) return;
     if (autoPending) setAutoShownGroup(groupIdx);
     reveal(remaining);
@@ -504,9 +515,10 @@ export function PlanStudy({
   // ‹ takes back the last arrow in order; « the current colour's arrows, or
   // if there are none yet, the whole previous colour. Also after the board
   // (or the whole card) is complete.
-  const canBack = !wrongArrow && !pendingNote && (found.length > 0 || autoShownGroup >= 0);
+  const canBack = !wrongArrow && (found.length > 0 || autoShownGroup >= 0);
   function stepBack() {
     if (!canBack) return;
+    closeNotes();
     setAllDone(false);
     const last = foundInOrder[foundInOrder.length - 1];
     const lastGroup = last ? colorGroups.findIndex((g) => g.own.some((o) => keyOf(o) === keyOf(last))) : -1;
@@ -519,6 +531,7 @@ export function PlanStudy({
   }
   function stepBackGroup() {
     if (!canBack) return;
+    closeNotes();
     setAllDone(false);
     const inGroup = (a: Arrow, g: ColorGroup | undefined) => !!g && g.own.some((o) => keyOf(o) === keyOf(a));
     const currentIdx = boardDone ? colorGroups.length - 1 : groupIdx;
@@ -875,10 +888,10 @@ export function PlanStudy({
           <Pressable onPress={stepBack} disabled={!canBack} style={[styles.navBtn, !canBack && styles.navBtnDisabled]} accessibilityLabel="Take back one arrow">
             <Text style={styles.navBtnText}>‹</Text>
           </Pressable>
-          <Pressable onPress={stepNext} disabled={!canNext} style={[styles.navBtn, !canNext && styles.navBtnDisabled]} accessibilityLabel="Show the next arrow">
+          <Pressable onPress={stepNext} disabled={!nextEnabled} style={[styles.navBtn, !nextEnabled && styles.navBtnDisabled]} accessibilityLabel="Show the next arrow">
             <Text style={styles.navBtnText}>›</Text>
           </Pressable>
-          <Pressable onPress={stepNextGroup} disabled={!canNext} style={[styles.navBtn, !canNext && styles.navBtnDisabled]} accessibilityLabel="Show this colour">
+          <Pressable onPress={stepNextGroup} disabled={!nextEnabled} style={[styles.navBtn, !nextEnabled && styles.navBtnDisabled]} accessibilityLabel="Show this colour">
             <Text style={styles.navBtnText}>»</Text>
           </Pressable>
         </View>
