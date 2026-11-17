@@ -3,6 +3,7 @@ import { View, Text, Pressable, StyleSheet, PanResponder, Switch, type PanRespon
 import Svg, { Path } from 'react-native-svg';
 import { allSquares, faceAnnotations, flipIndex, squareFromIndex, withFaceAnnotationsAt } from '../chess';
 import { openArrowNotesDialog } from './ArrowNotesOverlay';
+import { sanLike } from '../threatNames';
 import { toLinkTarget } from '../linkTargets';
 import { getCards } from '../storage';
 import { hasArrowNotes } from '../arrowNotes';
@@ -101,29 +102,6 @@ function familyOf(c: ArrowColor): ArrowColor {
 }
 
 // A short move name for a threat chip, e.g. "Bg5" or "Nxe5".
-// The piece making the move: the one on its start square, else the one at
-// the start of a chain of arrows ending there (Nc3 then c3→d5 = Nd5).
-function pieceOf(square: string, pieces: Partial<Record<string, PieceCode>> | undefined, arrows: Arrow[], seen = new Set<string>()): PieceCode | undefined {
-  const piece = pieces?.[square];
-  if (piece) return piece;
-  if (seen.has(square)) return undefined;
-  seen.add(square);
-  for (const b of arrows) {
-    if (b.to !== square) continue;
-    const p = pieceOf(b.from, pieces, arrows, seen);
-    if (p) return p;
-  }
-  return undefined;
-}
-
-function sanLike(a: Arrow, pieces: Partial<Record<string, PieceCode>> | undefined, arrows: Arrow[] = []): string {
-  const piece = pieceOf(a.from, pieces, arrows.filter((b) => b !== a));
-  const kind = piece ? piece[1] : '';
-  const capture = pieces?.[a.to] ? 'x' : '';
-  if (kind === 'P' || !kind) return capture ? `${a.from[0]}x${a.to}` : a.to;
-  return `${kind}${capture}${a.to}`;
-}
-
 function allOwnOrdered(groups: ColorGroup[], keys: Set<string>): Arrow[] {
   return groups.flatMap((g) => g.own.filter((a) => keys.has(keyOf(a))));
 }

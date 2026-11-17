@@ -95,7 +95,7 @@ function ArrowNotesOverlay({
             <Text style={styles.label}>Link</Text>
             <Pressable onPress={() => setLinkOpen((o) => !o)} style={styles.select} accessibilityLabel="Choose the linked card">
               <MoveText
-                text={linkTargets.find((t) => t.id === linkCardId)?.name ?? 'None'}
+                text={linkCardId ? linkTargets.find((t) => t.id === linkCardId)?.name ?? 'Missing card (no longer exists)' : 'None'}
                 style={styles.selectText}
                 numberOfLines={1}
               />

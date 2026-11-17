@@ -1,4 +1,5 @@
 import type { LinkTarget } from '../linkTargets';
+import { threatMoveName } from '../threatNames';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, PanResponder, PanResponderInstance, ScrollView, ActivityIndicator } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
@@ -1930,7 +1931,11 @@ function ReactionBoardEditorOverlay({
                           accessibilityLabel={on ? `Stop drawing for ${title.toLowerCase()} ${l}` : `Draw for ${title.toLowerCase()} ${l}`}
                         >
                           <Text style={[styles.threatChipText, { color: accent }, on && styles.threatChipTextActive]}>
-                            {kind === 'mine' ? `★${l}` : `!${l}`}
+                            {`${kind === 'mine' ? '★' : '!'}${l}`}
+                            {(() => {
+                              const name = threatMoveName(kind, l, visibleArrows, engineState.pieces, yourColor);
+                              return name ? ` ${name}` : '';
+                            })()}
                           </Text>
                         </Pressable>
                         {on && (
