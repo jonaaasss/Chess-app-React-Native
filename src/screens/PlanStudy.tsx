@@ -665,6 +665,14 @@ export function PlanStudy({
     numberedArrows.push({ id: 'preview', from: tempArrow.from, to: tempArrow.to, color: tempColor });
   }
 
+  // The cards of this opening that exist, to hide links to deleted ones.
+  const [liveCardIds, setLiveCardIds] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    if (!isSummary) return;
+    getCards(card.openingId).then((cs) => setLiveCardIds(new Set(cs.map((c) => c.id))));
+  }, [isSummary, card.openingId]);
+  const linkAlive = (a: Arrow) => Boolean(a.notes?.linkCardId) && (liveCardIds === null || liveCardIds.has(a.notes!.linkCardId!));
+
   // All badges of the board placed together — numbers / "!" and, on a
   // Summary, link and note badges — so overlapping ones move to free space.
   // Worked out once over every arrow of the board (or of the threat being
@@ -682,7 +690,7 @@ export function PlanStudy({
       }
       if (!isSummary) return;
       const side = i % 2 === 0 ? 1 : -1;
-      if (a.notes?.linkCardId) {
+      if (linkAlive(a)) {
         kinds.push({ key: k, kind: 'link' });
         pts.push(pointOn(a, 0.4, BOARD_SIZE, flipped, side));
       }
@@ -696,7 +704,7 @@ export function PlanStudy({
     kinds.forEach((x, i) => at.set(`${x.kind}:${x.key}`, placed[i]));
     return at;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeThreat, finalAnnotations, arrowNumbers, isSummary, flipped]);
+  }, [activeThreat, finalAnnotations, arrowNumbers, isSummary, flipped, liveCardIds]);
   const numberCenters: (Point | undefined)[] = visibleArrows.map((a) => badgeLayout.get(`number:${keyOf(a)}`));
   const linkNotePositions: { link?: Point; note?: Point }[] = visibleArrows.map((a) => ({
     link: badgeLayout.get(`link:${keyOf(a)}`),
@@ -802,7 +810,8 @@ export function PlanStudy({
         </View>
         {isSummary && (
           <ArrowLinkNoteBadges
-            arrows={visibleArrows}
+            // A link to a card that no longer exists shows no badge.
+            arrows={visibleArrows.map((a) => (a.notes?.linkCardId && !linkAlive(a) ? { ...a, notes: { ...a.notes, linkCardId: undefined, linkBoardId: undefined } } : a))}
             size={BOARD_SIZE}
             flipped={flipped}
             onOpenLink={(cardId, boardId) => openCardViewer(cardId, yourColor, boardStyle, boardId)}
