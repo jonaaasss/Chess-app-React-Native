@@ -6,6 +6,7 @@ import { descriptionFace, faceAnnotations, isPlanLike } from '../chess';
 import { ChessBoardView, NumberedArrowBadges, NumberedArrowsSvg, numberBadgeCenter, type NumberedArrow } from '../components/ChessBoard';
 import { toEditorNumberedArrows } from '../arrowNumbering';
 import { ReactionStudy } from './ReactionStudy';
+import { PlanStudy } from './PlanStudy';
 import { MoveText } from '../components/MoveText';
 import { CollapsibleDescription } from '../components/CollapsibleDescription';
 import { showOverlay, SnackbarLayer, textDialog, useOverlayBack } from '../overlay';
@@ -134,7 +135,7 @@ function CardViewerOverlay({
 
   async function editBoard() {
     if (!card || !board) return;
-    const target = isReactions ? studyBoardRef.current ?? board : board;
+    const target = studyBoardRef.current ?? board;
     setPaused(true);
     const updated = await openReactionBoardEditor(
       target,
@@ -206,44 +207,18 @@ function CardViewerOverlay({
           </>
         )}
         {card && board && !isReactions && (
-          <>
-            <CollapsibleDescription
-              text={description}
-              onEdit={async () => {
-                if (!card || !board) return;
-                const face = descriptionFace(card.mode);
-                const text = await textDialog('Description', board[face].text, { moves: true });
-                if (text === null || text === board[face].text) return;
-                const saved = await saveStudyBoard(card.id, { ...board, [face]: { ...board[face], text } });
-                if (saved) setCard(saved);
-              }}
-            />
-            {boards.length > 1 && <Text style={styles.counter}>{`Board ${boardIdx + 1} / ${boards.length}`}</Text>}
-            <View style={styles.boardRow}>
-              {boards.length > 1 && boardIdx > 0 ? (
-                <Pressable onPress={() => goToBoard(boardIdx - 1)} style={styles.sideBtn} accessibilityLabel="Previous board">
-                  <Text style={styles.navText}>‹</Text>
-                </Pressable>
-              ) : (
-                <View style={styles.navSpacer} />
-              )}
-              <View style={{ width: size, height: size }}>
-                <ChessBoardView board={{ pieces, style: boardStyle, arrows: [], circles: annotations.circles }} size={size} flipped={flipped} />
-                <View style={StyleSheet.absoluteFill} pointerEvents="none">
-                  {/* Numbered like the board editor: same-colour arrows 1, 2…, threats !A / A1 / ★A. */}
-                  <NumberedArrowsSvg arrows={numbered} size={size} flipped={flipped} pieces={pieces} yourColor={yourColor} />
-                  <NumberedArrowBadges arrows={numbered} size={size} flipped={flipped} pieces={pieces} yourColor={yourColor} />
-                </View>
-              </View>
-              {boards.length > 1 && boardIdx < boards.length - 1 ? (
-                <Pressable onPress={() => goToBoard(boardIdx + 1)} style={styles.sideBtn} accessibilityLabel="Next board">
-                  <Text style={styles.navText}>›</Text>
-                </Pressable>
-              ) : (
-                <View style={styles.navSpacer} />
-              )}
-            </View>
-          </>
+          // A Plan (or Summary) card runs exactly as in Study: you draw the
+          // arrows, with « ‹ › », the colours and threats; nothing is scored.
+          <PlanStudy
+            key={`${card.id}-${version}`}
+            card={{ ...card, boards }}
+            yourColor={yourColor}
+            boardStyle={boardStyle}
+            onResult={() => close()}
+            boardRef={studyBoardRef}
+            viewer
+            onCardSaved={setCard}
+          />
         )}
       </ScrollView>
 

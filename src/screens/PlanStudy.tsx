@@ -181,7 +181,8 @@ export function PlanStudy({
   onTogglePause,
   guideTargets,
   onGuideEvent,
-  onCardSaved
+  onCardSaved,
+  viewer
 }: {
   card: Card;
   yourColor: 'w' | 'b';
@@ -201,6 +202,8 @@ export function PlanStudy({
   onGuideEvent?: (event: CoachEvent) => void;
   // Set: the Description can be edited here (pencil); gets the stored card.
   onCardSaved?: (card: Card) => void;
+  // Opened from a link (CardViewerOverlay): never scored.
+  viewer?: boolean;
 }) {
   // Descriptions edited here, by board id, shown at once.
   const [textEdits, setTextEdits] = useState<Record<string, string>>({});
@@ -216,7 +219,8 @@ export function PlanStudy({
   const [allDone, setAllDone] = useState(false);
   const [tempArrow, setTempArrow] = useState<{ from: string; to: string } | null>(null);
   // Off: only the arrows and circles of the colour being worked on are shown.
-  const [showAll, setShowAll] = useState(false);
+  // Off on a Summary (one colour family at a time), on for other cards.
+  const [showAll, setShowAll] = useState(!isSummary);
   // The last colour group whose opponent arrows are on the board already.
   const [autoShownGroup, setAutoShownGroup] = useState(-1);
   // Summary: the threat being studied (its letter) and your answers found so far.
@@ -914,19 +918,19 @@ export function PlanStudy({
           collapsable={false}
           onPress={() => {
             onGuideEvent?.('continue');
-            onResult(preview || isSummary || mistakes === 0);
+            onResult(preview || isSummary || viewer || mistakes === 0);
           }}
           style={styles.continueBtn}
         >
           <Text style={styles.continueText}>
-            {preview || isSummary ? 'Continue' : mistakes === 0 ? '✓ Perfect — continue' : `Continue (${mistakes} slip${mistakes === 1 ? '' : 's'})`}
+            {preview || isSummary || viewer ? 'Continue' : mistakes === 0 ? '✓ Perfect — continue' : `Continue (${mistakes} slip${mistakes === 1 ? '' : 's'})`}
           </Text>
         </Pressable>
       ) : noArrows || preview ? null : boardDone && boardIdx < boards.length - 1 ? (
         <Pressable onPress={continueToNextBoard} style={styles.continueBtn}>
           <Text style={styles.continueText}>Continue</Text>
         </Pressable>
-      ) : isSummary ? null : (
+      ) : isSummary || viewer ? null : (
         <Text style={styles.slipNote}>› and » show arrows for you; each shown arrow counts as a slip once.</Text>
       )}
 
