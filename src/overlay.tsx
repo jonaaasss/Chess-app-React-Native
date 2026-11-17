@@ -238,7 +238,7 @@ function TextDialog({ title, initial, moves, close }: { title: string; initial: 
       />
       {moves && (
         <>
-          <MoveText style={styles.movesHint} text={'A move turns orange: Nf3. With ! in front it turns red: !Nf3'} />
+          <MoveText style={styles.movesHint} text={'Orange = your move: Nf3\nRed = the opponent\'s move, type ! in front: !Nf3'} />
           {value.trim() ? (
             <ScrollView style={styles.preview}>
               <MoveText style={styles.previewText} text={value} />
