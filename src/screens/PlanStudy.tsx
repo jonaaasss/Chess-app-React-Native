@@ -1,7 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, PanResponder, Switch, type PanResponderInstance } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
-import { allSquares, faceAnnotations, flipIndex, squareFromIndex } from '../chess';
+import { allSquares, faceAnnotations, flipIndex, squareFromIndex, withFaceAnnotationsAt } from '../chess';
+import { openArrowNotesDialog } from './ArrowNotesOverlay';
+import { toLinkTarget } from '../linkTargets';
+import { getCards } from '../storage';
 import { hasArrowNotes } from '../arrowNotes';
 import { sameThreat, THREAT_COLOR, threatOfArrow, threatOfCircle, type ThreatKind } from '../threats';
 import { ArrowNoteBody } from '../components/ArrowNoteBody';
@@ -258,7 +261,11 @@ export function PlanStudy({
     const a = faceAnnotations(board.back);
     return { arrows: a.arrows.map((x) => ({ ...x, color: effectiveArrowColor(x, board.back.pieces, yourColor, a.arrows) })), circles: a.circles };
   }, [board, yourColor]);
-  const arrowsKey = useMemo(() => JSON.stringify(finalAnnotations), [finalAnnotations]);
+  // Notes are left out, so editing a note here does not restart the board.
+  const arrowsKey = useMemo(
+    () => JSON.stringify({ a: finalAnnotations.arrows.map((a) => [a.from, a.to, a.color]), c: finalAnnotations.circles }),
+    [finalAnnotations]
+  );
   const colorGroups = useMemo(
     () => buildColorGroups(finalAnnotations.arrows, board?.back.pieces, yourColor),
     [finalAnnotations, board, yourColor]
@@ -302,6 +309,34 @@ export function PlanStudy({
   }, [finalAnnotations, board, yourColor]);
   const activeThreat = threats.find((t) => t.key === threatMode);
   const noArrows = colorGroups.length === 0 && threats.length === 0;
+
+  // The pencil in a Notes panel: edit that arrow's notes and save them into
+  // the card. The panel shows the new notes at once.
+  async function editNote(arrow: Arrow, which: 'pending' | 'summary') {
+    if (!board || !onCardSaved) return;
+    const idx = finalAnnotations.arrows.indexOf(arrow);
+    const at = idx >= 0 ? idx : finalAnnotations.arrows.findIndex((a) => a.from === arrow.from && a.to === arrow.to && a.color === arrow.color);
+    if (at < 0) return;
+    const linkTargets = isSummary ? (await getCards(card.openingId)).filter((c) => c.id !== card.id).map(toLinkTarget) : undefined;
+    const res = await openArrowNotesDialog(arrow.notes, linkTargets);
+    if (!res) return;
+    const raw = faceAnnotations(board.back);
+    const arrows = raw.arrows.map((a, i) => (i === at ? { ...a, notes: res.notes } : a));
+    const nextBoard = { ...board, back: withFaceAnnotationsAt(board.back, board.back.moves.length, arrows, raw.circles) };
+    const updated = { ...arrow, notes: res.notes };
+    if (which === 'pending') setPendingNote((n) => (n ? { ...n, arrow: updated } : n));
+    else setSummaryNote(res.notes ? updated : null);
+    const saved = await saveStudyBoard(card.id, nextBoard);
+    if (saved) onCardSaved(saved);
+  }
+  const notePencil = (onPress: () => void) =>
+    onCardSaved ? (
+      <Pressable onPress={onPress} style={noteStyles.pencil} accessibilityLabel="Edit the notes">
+        <Svg width={20} height={20} viewBox="0 0 24 24">
+          <Path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" fill={colors.text} />
+        </Svg>
+      </Pressable>
+    ) : null;
   // Every own arrow in study order — what preview and »/› step through.
   const allOwn = useMemo(() => colorGroups.flatMap((g) => g.own), [colorGroups]);
 
@@ -812,7 +847,11 @@ export function PlanStudy({
             <Text style={noteStyles.panelTitle}>Notes</Text>
             <CloseCircleButton onPress={() => setSummaryNote(null)} />
           </View>
-          <ArrowNoteBody notes={summaryNote.notes} accent={arrowColors[summaryNote.color]} />
+          {/* The pencil sits beside the last line, so it adds no height. */}
+          <View>
+            <ArrowNoteBody notes={summaryNote.notes} accent={arrowColors[summaryNote.color]} style={onCardSaved ? noteStyles.bodyWithPencil : undefined} />
+            {notePencil(() => void editNote(summaryNote, 'summary'))}
+          </View>
         </View>
       )}
 
@@ -824,7 +863,10 @@ export function PlanStudy({
             <Text style={noteStyles.panelTitle}>Notes</Text>
             <CloseCircleButton onPress={dismissNote} />
           </View>
-          <ArrowNoteBody notes={pendingNote.arrow.notes} accent={arrowColors[pendingNote.arrow.color]} />
+          <View>
+            <ArrowNoteBody notes={pendingNote.arrow.notes} accent={arrowColors[pendingNote.arrow.color]} style={onCardSaved ? noteStyles.bodyWithPencil : undefined} />
+            {notePencil(() => void editNote(pendingNote.arrow, 'pending'))}
+          </View>
           <Pressable onPress={dismissNote} style={noteStyles.panelBtn}>
             <Text style={noteStyles.panelBtnText}>Got it</Text>
           </Pressable>
@@ -1000,6 +1042,8 @@ const styles = StyleSheet.create({
 });
 
 const noteStyles = StyleSheet.create({
+  pencil: { position: 'absolute', right: -8, bottom: -12, width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center' },
+  bodyWithPencil: { paddingRight: 36 },
   icon: { alignItems: 'center', justifyContent: 'center' },
   iconText: { color: '#fff', fontSize: 10, fontWeight: '700' },
   list: { alignSelf: 'stretch', paddingHorizontal: 12, gap: 10, marginTop: 4 },

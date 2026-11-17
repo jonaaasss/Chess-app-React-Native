@@ -34,7 +34,7 @@ export const ArrowNoteBody = forwardRef<View, { notes: ArrowNotes | undefined; a
         ) : null}
         {cleaned?.responses?.map((r, i) => (
           <View key={i} style={part}>
-            <Text style={[label, r.kind === 'exception' && styles.labelException]}>{responseKind(r)}</Text>
+            <Text style={label}>{responseKind(r)}</Text>
             {r.trigger ? <MoveText text={`if ${r.trigger}`} style={styles.trigger} /> : null}
             <MoveText text={r.text} style={text} />
           </View>
@@ -49,7 +49,6 @@ const styles = StyleSheet.create({
   part: { gap: 3, borderLeftWidth: 3, paddingLeft: 10 },
   label: { color: colors.text, fontSize: 15, fontWeight: '700' },
   labelCompact: { color: colors.text, fontSize: 14, fontWeight: '700' },
-  labelException: { color: colors.gold },
   trigger: { color: colors.textDim, fontSize: 13, lineHeight: 19 },
   text: { color: colors.text, fontSize: 14, lineHeight: 20 },
   textCompact: { color: colors.text, fontSize: 13, lineHeight: 19 }
