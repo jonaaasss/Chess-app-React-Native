@@ -419,7 +419,7 @@ export function PlanStudy({
 
   // Plan only: queue the popup for a found arrow that has notes to read.
   function popNoteFor(arrow: Arrow, delayed: boolean) {
-    if (isSummary || !hasArrowNotes(arrow) || !(arrow.notes?.reason || arrow.notes?.next || arrow.notes?.responses?.length)) return;
+    if (!hasArrowNotes(arrow) || !(arrow.notes?.reason || arrow.notes?.next || arrow.notes?.responses?.length)) return;
     if (noteDelayRef.current) {
       clearTimeout(noteDelayRef.current);
       noteDelayRef.current = null;
@@ -434,6 +434,17 @@ export function PlanStudy({
       setPendingNote(noteFor(arrow));
     }, NOTE_PREVIEW_DELAY_MS);
   }
+
+  // The opponent's arrows that appear by themselves show their note too.
+  const lastAutoShown = useRef(autoShownGroup);
+  useEffect(() => {
+    const prev = lastAutoShown.current;
+    lastAutoShown.current = autoShownGroup;
+    if (autoShownGroup <= prev) return;
+    const withNote = colorGroups[autoShownGroup]?.auto.find((a) => a.notes?.reason || a.notes?.next || a.notes?.responses?.length);
+    if (withNote) popNoteFor(withNote, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoShownGroup]);
 
   function revealNextPreviewArrow() {
     if (autoPending) {
@@ -499,7 +510,7 @@ export function PlanStudy({
   const canNext = !blocked && (remaining.length > 0 || autoPending);
   // With a note open and nothing left to show (e.g. the last arrow), › and »
   // still work: they just close the note, as Got it does.
-  const nextEnabled = canNext || Boolean(pendingNote);
+  const nextEnabled = canNext || Boolean(pendingNote) || Boolean(summaryNote);
   function stepNext() {
     closeNotes();
     if (!canNext) return;
