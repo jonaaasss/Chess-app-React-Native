@@ -17,7 +17,7 @@ import {
   toFen,
   withFaceAnnotationsAt
 } from '../chess';
-import { legalMovesFrom, makeMove, isPromotionMove, sansForBoardMoves, type GameState } from '../chessEngine';
+import { faceBaseState, legalMovesFrom, makeMove, isPromotionMove, sansForBoardMoves, type GameState } from '../chessEngine';
 import type { Arrow, ArrowColor, BoardFace, BoardMove, CardMode, Circle, MoveNode, PieceCode, PromotionPiece, ReactionBoard } from '../types';
 import { ARROW_COLOR_NAMES, arrowColors, BASE_ARROW_COLORS, boardStyles, colors, DARK_TINT, engineColors, radius, spacing, touchTarget, type, variationColor } from '../theme';
 import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, arrowIsOpponent, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, parallelOffsets, opponentTint, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
@@ -602,11 +602,14 @@ function ReactionBoardEditorOverlay({
   const atHead = historyIndex >= activeFace.moves.length;
 
   // SAN isn't stored on BoardMove (unlike Reactions' MoveNode) — Others/Plan
-  // always starts from the standard position and only ever advances via
-  // legal moves, so it's always re-derivable by replaying `.moves` through
-  // the engine. Doing it here instead of storing it means old saved cards
-  // (from before this notation existed) display correctly with no migration.
-  const activeFaceSans = useMemo(() => sansForBoardMoves(activeFace.moves), [activeFace.moves]);
+  // only ever advances via legal moves, so it's re-derivable by replaying
+  // `.moves` through the engine from the position before the first one: the
+  // standard position, or the opening's start position for boards made from
+  // it (`faceBaseState`). Doing it here instead of storing it means old saved
+  // cards (from before this notation existed) display correctly with no
+  // migration.
+  const faceBase = useMemo(() => faceBaseState(board, activeFace), [board, activeFace]);
+  const activeFaceSans = useMemo(() => sansForBoardMoves(activeFace.moves, faceBase.state), [activeFace.moves, faceBase]);
   // Reactions only — the moves played before "Play", shown ahead of the
   // recording in the notation panel so the pre-Play line isn't invisible.
   const setupSans = useMemo(() => sansForBoardMoves(board.setupMoves), [board.setupMoves]);
@@ -645,7 +648,7 @@ function ReactionBoardEditorOverlay({
     : atHead
       ? { pieces: activeFace.pieces, turn: activeFace.turn, castling: activeFace.castling, enPassant: activeFace.enPassant }
       : historyIndex === 0
-        ? { pieces: startingPosition(), turn: 'w', castling: { wK: true, wQ: true, bK: true, bQ: true }, enPassant: null }
+        ? faceBase.state
         : {
             pieces: activeFace.moves[historyIndex - 1].piecesAfter,
             turn: activeFace.moves[historyIndex - 1].turnAfter,
@@ -1584,7 +1587,7 @@ function ReactionBoardEditorOverlay({
   function truncateActiveFaceMoves(keepCount: number) {
     const prevState =
       keepCount === 0
-        ? { pieces: startingPosition(), turn: 'w' as const, castling: { wK: true, wQ: true, bK: true, bQ: true }, enPassant: null }
+        ? faceBase.state
         : {
             pieces: activeFace.moves[keepCount - 1].piecesAfter,
             turn: activeFace.moves[keepCount - 1].turnAfter,
@@ -2096,6 +2099,7 @@ function ReactionBoardEditorOverlay({
             <LinearNotation
               moves={activeFace.moves}
               sans={activeFaceSans}
+              startPly={faceBase.ply}
               historyIndex={historyIndex}
               onJump={(i) => {
                 setHistoryIndex(i);
@@ -2302,18 +2306,20 @@ function Notation({
 // PGN line rather than a recursive tree walk. `historyIndex` doubles as both
 // "how many moves are applied" and "the cursor", same as `cursorId` does for
 // Reactions: index i's move is highlighted when `historyIndex === i + 1`.
-// Always starts on White's move — Others/Plan has no Reactions-style setup
-// phase before recording begins, so `.moves[0]` is always the game's first
-// ply from the standard starting position.
+// Move numbers start after `startPly` half-moves: 0 for a board that starts
+// from the standard position, the opening's setup moves for a board made
+// from its start position (e.g. 5.Nxc6 after 4...Nf6).
 function LinearNotation({
   moves,
   sans,
+  startPly,
   historyIndex,
   onJump,
   onDelete
 }: {
   moves: BoardMove[];
   sans: string[];
+  startPly: number;
   historyIndex: number;
   onJump: (index: number) => void;
   onDelete: (index: number) => void;
@@ -2321,10 +2327,10 @@ function LinearNotation({
   if (moves.length === 0) return null;
 
   const out: React.ReactNode[] = [];
-  let moveNumber = 1;
-  let whiteToMove = true;
+  let moveNumber = Math.floor(startPly / 2) + 1;
+  let whiteToMove = startPly % 2 === 0;
   for (let i = 0; i < moves.length; i++) {
-    const prefix = whiteToMove ? `${moveNumber}. ` : '';
+    const prefix = whiteToMove ? `${moveNumber}. ` : i === 0 ? `${moveNumber}... ` : '';
     out.push(
       <Text
         key={i}

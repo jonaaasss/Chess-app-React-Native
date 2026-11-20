@@ -2,7 +2,7 @@
 // Settings' "Developer" section. Dumps a repertoire's content as plain text
 // so it can be copied out of the app and handed over to turn into
 // exampleContent.ts, without hand-typing move lists from scratch.
-import { sansForBoardMoves } from './chessEngine';
+import { faceBaseState, sansForBoardMoves } from './chessEngine';
 import { faceAnnotations, toFen } from './chess';
 import { getCards, getOpenings, getRepertoire } from './storage';
 import type { Arrow, Circle, MoveNode } from './types';
@@ -100,19 +100,19 @@ export async function buildRepertoireExportText(repertoireId: string): Promise<s
           const front = faceAnnotations(board.front);
           const back = faceAnnotations(board.back);
           lines.push('Front:');
-          lines.push(`  Moves: ${sansForBoardMoves(board.front.moves).join(' ') || '(start position)'}`);
+          lines.push(`  Moves: ${sansForBoardMoves(board.front.moves, faceBaseState(board, board.front).state).join(' ') || '(start position)'}`);
           lines.push(`  Arrows: ${arrowsText(front.arrows, cardNames)}`);
           lines.push(`  Circles: ${circlesText(front.circles)}`);
           lines.push(`  Text: ${board.front.text || '(none)'}`);
           lines.push('Back:');
-          lines.push(`  Moves: ${sansForBoardMoves(board.back.moves).join(' ') || '(start position)'}`);
+          lines.push(`  Moves: ${sansForBoardMoves(board.back.moves, faceBaseState(board, board.back).state).join(' ') || '(start position)'}`);
           lines.push(`  Arrows: ${arrowsText(back.arrows, cardNames)}`);
           lines.push(`  Circles: ${circlesText(back.circles)}`);
           lines.push(`  Text: ${board.back.text || '(none)'}`);
         } else {
           // plan / summary — only `back` matters, `front` is unused (descriptionFace).
           const back = faceAnnotations(board.back);
-          lines.push(`Moves: ${sansForBoardMoves(board.back.moves).join(' ') || '(start position)'}`);
+          lines.push(`Moves: ${sansForBoardMoves(board.back.moves, faceBaseState(board, board.back).state).join(' ') || '(start position)'}`);
           lines.push(`Plan arrows: ${arrowsText(back.arrows, cardNames)}`);
           lines.push(`Plan circles: ${circlesText(back.circles)}`);
           lines.push(`Text: ${board.back.text || '(none)'}`);

@@ -5,7 +5,7 @@
 // module implements full legality (check, castling, en passant, promotion)
 // plus SAN notation, since Reactions cards record and replay a real PGN-like
 // game tree.
-import type { CastlingRights, PieceCode, PromotionPiece } from './types';
+import type { BoardFace, BoardMove, CastlingRights, PieceCode, PromotionPiece, ReactionBoard } from './types';
 import { FILES, RANKS, pieceColor, squareFromIndex, squareIndex, startingPosition } from './chess';
 
 export type PieceType = 'K' | 'Q' | 'R' | 'B' | 'N' | 'P';
@@ -450,16 +450,50 @@ export function makeMove(state: GameState, from: string, to: string, promotion?:
 }
 
 // SAN isn't stored on Others/Plan's `BoardFace.moves` (unlike Reactions'
-// MoveNode) — those boards only ever advance via legal moves from the
-// standard starting position, so it's always re-derivable by replaying them
-// through the engine rather than persisting it redundantly.
-export function sansForBoardMoves(moves: Move[]): string[] {
-  let state = createGameState(startingPosition(), 'w');
+// MoveNode) — it is re-derived by replaying them through the engine from
+// `start`: the standard starting position (the default), or the position
+// before the face's first move (`faceBaseState`). Never throws: a move that
+// can't be replayed is shown by its squares and the replay goes on from the
+// position stored on it.
+export function sansForBoardMoves(moves: (Move & Partial<Pick<BoardMove, 'piecesAfter' | 'turnAfter' | 'castlingAfter' | 'enPassantAfter'>>)[], start?: GameState): string[] {
+  let state = start ?? createGameState(startingPosition(), 'w');
   const out: string[] = [];
   for (const m of moves) {
-    const result = makeMove(state, m.from, m.to, m.promotion);
-    out.push(result.san);
-    state = result.next;
+    try {
+      const result = makeMove(state, m.from, m.to, m.promotion);
+      out.push(result.san);
+      state = result.next;
+    } catch {
+      out.push(`${m.from}-${m.to}`);
+      if (m.piecesAfter && m.turnAfter && m.castlingAfter) state = { pieces: m.piecesAfter, turn: m.turnAfter, castling: m.castlingAfter, enPassant: m.enPassantAfter ?? null };
+    }
   }
   return out;
+}
+
+// The position before an Others/Plan face's first move. A board made from an
+// opening's start position keeps that start's moves in `setupMoves` and its
+// own moves start after them; older and imported boards start from the
+// standard position (their `moves` hold the whole line). Checked against
+// the first move, so both kinds come out right. `ply` = the half-moves
+// played before it (for the move numbers).
+export function faceBaseState(board: Pick<ReactionBoard, 'setupMoves'>, face: BoardFace): { state: GameState; ply: number } {
+  const standard: GameState = { pieces: startingPosition(), turn: 'w', castling: { wK: true, wQ: true, bK: true, bQ: true }, enPassant: null };
+  const setupPly = board.setupMoves.length;
+  if (face.moves.length === 0) return { state: { pieces: face.pieces, turn: face.turn, castling: face.castling, enPassant: face.enPassant }, ply: setupPly };
+  const last = board.setupMoves[board.setupMoves.length - 1];
+  const candidates: { state: GameState; ply: number }[] = last
+    ? [{ state: { pieces: last.piecesAfter, turn: last.turnAfter, castling: last.castlingAfter, enPassant: last.enPassantAfter }, ply: setupPly }, { state: standard, ply: 0 }]
+    : [{ state: standard, ply: 0 }];
+  const first = face.moves[0];
+  for (const c of candidates) {
+    try {
+      const after = makeMove(c.state, first.from, first.to, first.promotion).next.pieces;
+      const keys = new Set([...Object.keys(after), ...Object.keys(first.piecesAfter)]);
+      if ([...keys].every((k) => after[k] === first.piecesAfter[k])) return c;
+    } catch {
+      // The first move can't be played from here.
+    }
+  }
+  return candidates[0];
 }
