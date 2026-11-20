@@ -32,6 +32,9 @@ import { ModeTip } from '../components/ModeTip';
 import { TutorialLayer, useTutorial, useTutorialTarget } from '../tutorial';
 import { useStockfishEngine, type EngineLine } from '../engine/useStockfishEngine';
 import { ExplorerPanel } from '../components/ExplorerPanel';
+import { fetchExplorer, getLichessToken } from '../lichessExplorer';
+import { DEFAULT_PLAN_OPTIONS, generatePlan } from '../planGenerator';
+import { openGeneratePlanDialog } from './GeneratePlanDialog';
 
 const ENGINE_ANALYSIS_DEBOUNCE_MS = 350;
 
@@ -1403,6 +1406,52 @@ function ReactionBoardEditorOverlay({
     if (sameThreat(activeThreat, t)) setActiveThreat(null);
   }
 
+  // ---------- Generate plan (Plan and Summary) ----------
+  const [genStatus, setGenStatus] = useState<string | null>(null);
+  const genCancel = useRef(false);
+  async function handleGeneratePlan() {
+    if (isReactions || genStatus) return;
+    if (!(await getLichessToken())) {
+      await alertDialog('Generate plan uses the Lichess explorer. Add your Lichess token first in Settings → Lichess.');
+      return;
+    }
+    const choices = await openGeneratePlanDialog();
+    if (!choices) return;
+    genCancel.current = false;
+    setGenStatus('Starting…');
+    const startState = engineState;
+    const startFen = fen;
+    try {
+      const res = await generatePlan(
+        startState,
+        yourColor,
+        (f) => fetchExplorer(f, choices.db),
+        { ...DEFAULT_PLAN_OPTIONS, depth: choices.depth },
+        setGenStatus,
+        choices.engine && engine.ready ? async (f, turn) => (await engine.analyzeOnce(f, turn)).map((l) => ({ from: l.from, to: l.to })) : undefined,
+        () => genCancel.current
+      );
+      if (genCancel.current) return;
+      if (res.problem) {
+        await alertDialog(res.problem);
+        return;
+      }
+      const before = board;
+      setBoard((prev) => {
+        const at = faceAnnotationsAt(prev[side], historyIndex);
+        // Threat arrows stay; the plan arrows on this position are replaced.
+        const kept = at.arrows.filter((a) => threatOfArrow(a));
+        return { ...prev, [side]: withFaceAnnotationsAt(prev[side], historyIndex, [...kept, ...res.arrows], at.circles) };
+      });
+      showSnackbar({ message: `Plan drawn: ${res.arrows.length} arrows from ${res.lines} lines`, actionLabel: 'Undo', onAction: () => setBoard(before), duration: 8000 });
+    } catch (e) {
+      await alertDialog(e instanceof Error ? e.message : String(e));
+    } finally {
+      setGenStatus(null);
+      if (engine.ready) engine.evaluate(startFen, startFen.split(' ')[1] as 'w' | 'b');
+    }
+  }
+
   function handleClearArrows() {
     if (shownArrows.length === 0 && shownCircles.length === 0) return;
     clearUndo.current = { before: board, after: null, snackbar: null, message: onlyDrawing ? `${clearLabel.replace('Clear', 'Cleared')}` : undefined };
@@ -1907,6 +1956,25 @@ function ReactionBoardEditorOverlay({
           </View>
         </View>
 
+        {!isReactions && !guided && (
+          // Draws the plan from the Lichess explorer (see planGenerator.ts).
+          <View style={styles.genRow}>
+            {genStatus ? (
+              <>
+                <ActivityIndicator size="small" color={colors.textDim} />
+                <Text style={styles.genStatus}>{genStatus}</Text>
+                <Pressable onPress={() => (genCancel.current = true)} style={styles.genCancel}>
+                  <Text style={styles.clearBtnText}>Cancel</Text>
+                </Pressable>
+              </>
+            ) : (
+              <Pressable onPress={handleGeneratePlan} style={styles.genBtn} accessibilityLabel="Generate the plan from the Lichess explorer">
+                <Text style={styles.genBtnText}>Generate plan</Text>
+              </Pressable>
+            )}
+          </View>
+        )}
+
         {mode === 'summary' &&
           // Two framed groups (Law of Common Region), the same layout in their
           // own colour (Law of Similarity, Von Restorff): the opponent's threats
@@ -2400,6 +2468,11 @@ const styles = StyleSheet.create({
   toolSegTextActive: { color: colors.onPrimary },
   clearBtn: { minHeight: 48, justifyContent: 'center', paddingLeft: 12 },
   clearBtnText: { color: colors.textDim, fontSize: 13, fontWeight: '600' },
+  genRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: touchTarget, marginTop: 8, marginBottom: 4 },
+  genBtn: { flex: 1, minHeight: touchTarget, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel2, alignItems: 'center', justifyContent: 'center' },
+  genBtnText: { color: colors.text, fontSize: 15, fontWeight: '700' },
+  genStatus: { flex: 1, color: colors.textDim, fontSize: 13 },
+  genCancel: { minHeight: touchTarget, paddingHorizontal: 12, justifyContent: 'center' },
   boardRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 20 },
   board: { alignSelf: 'center', borderRadius: 6, overflow: 'hidden', borderWidth: 1, borderColor: colors.border },
   selectedHighlight: { backgroundColor: 'rgba(21,128,61,0.35)' },

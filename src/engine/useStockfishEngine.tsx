@@ -44,6 +44,9 @@ export function useStockfishEngine() {
   // are simply overwritten, never queued up).
   const searchingRef = useRef(false);
   const pendingRef = useRef<{ fen: string; turn: 'w' | 'b' } | null>(null);
+  // `analyzeOnce`: a caller waiting for one position's finished search.
+  const searchFenRef = useRef<string | null>(null);
+  const onceRef = useRef<{ fen: string; resolve: (lines: EngineLine[]) => void } | null>(null);
 
   const send = useCallback((cmd: string) => {
     webviewRef.current?.postMessage(cmd);
@@ -63,6 +66,7 @@ export function useStockfishEngine() {
       linesRef.current = new Map();
       setLines([]);
       setAnalyzedFen(fen);
+      searchFenRef.current = fen;
       send(`position fen ${fen}`);
       send(`go depth ${ANALYSIS_DEPTH}`);
     },
@@ -86,6 +90,11 @@ export function useStockfishEngine() {
       // position/go any earlier crashes this single-threaded build).
       if (line.startsWith('bestmove')) {
         searchingRef.current = false;
+        const once = onceRef.current;
+        if (once && once.fen === searchFenRef.current) {
+          onceRef.current = null;
+          once.resolve(Array.from(linesRef.current.values()).sort((a, b) => a.multipv - b.multipv));
+        }
         const next = pendingRef.current;
         pendingRef.current = null;
         if (next) startSearch(next.fen, next.turn);
@@ -137,6 +146,27 @@ export function useStockfishEngine() {
     [send, startSearch]
   );
 
+  // One position's top 3 when its search has finished (used by Generate
+  // plan); gives up after 20 s with whatever it has.
+  const analyzeOnce = useCallback(
+    (fen: string, turn: 'w' | 'b') =>
+      new Promise<EngineLine[]>((resolve) => {
+        const timer = setTimeout(() => {
+          if (onceRef.current?.fen === fen) onceRef.current = null;
+          resolve(Array.from(linesRef.current.values()));
+        }, 20000);
+        onceRef.current = {
+          fen,
+          resolve: (lines) => {
+            clearTimeout(timer);
+            resolve(lines);
+          }
+        };
+        evaluate(fen, turn);
+      }),
+    [evaluate]
+  );
+
   const stop = useCallback(() => {
     pendingRef.current = null;
     send('stop');
@@ -165,5 +195,5 @@ export function useStockfishEngine() {
     [handleMessage, handleLoadEnd]
   );
 
-  return { ready, lines, analyzedFen, evaluate, stop, element };
+  return { ready, lines, analyzedFen, evaluate, analyzeOnce, stop, element };
 }
