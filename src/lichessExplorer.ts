@@ -90,10 +90,15 @@ async function doFetch(key: string, fen: string, db: ExplorerDb): Promise<Explor
   const token = await getLichessToken();
   if (!token) throw new ExplorerError('Add your Lichess token in Settings → Lichess.', 'noToken');
   let res: Response;
-  try {
-    res = await fetch(urlFor(db, fen), { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
-  } catch {
-    throw new ExplorerError('No connection to Lichess.', 'network');
+  // Lichess answers 429 when asked too much; it asks to wait a full minute.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      res = await fetch(urlFor(db, fen), { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+    } catch {
+      throw new ExplorerError('No connection to Lichess.', 'network');
+    }
+    if (res.status !== 429 || attempt >= 2) break;
+    await new Promise((r) => setTimeout(r, 61000));
   }
   if (res.status === 401 || res.status === 403) throw new ExplorerError('Lichess refused the token. Check it in Settings → Lichess.', 'badToken');
   if (res.status === 429) throw new ExplorerError('Lichess asks to wait a minute (too many requests).', 'rateLimit');
