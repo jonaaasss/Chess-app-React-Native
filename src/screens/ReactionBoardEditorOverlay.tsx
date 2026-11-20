@@ -32,8 +32,8 @@ import { ModeTip } from '../components/ModeTip';
 import { TutorialLayer, useTutorial, useTutorialTarget } from '../tutorial';
 import { useStockfishEngine, type EngineLine } from '../engine/useStockfishEngine';
 import { ExplorerPanel } from '../components/ExplorerPanel';
-import { fetchExplorer, getLichessToken } from '../lichessExplorer';
-import { DEFAULT_PLAN_OPTIONS, generatePlan } from '../planGenerator';
+import { DB_LABEL, fetchExplorer, getLichessToken } from '../lichessExplorer';
+import { DEFAULT_PLAN_OPTIONS, generatePlan, planDescription } from '../planGenerator';
 import { openGeneratePlanDialog } from './GeneratePlanDialog';
 import { allowScreenOff, keepScreenOn } from '../keepAwake';
 
@@ -1443,7 +1443,10 @@ function ReactionBoardEditorOverlay({
         const at = faceAnnotationsAt(prev[side], historyIndex);
         // Threat arrows stay; the plan arrows on this position are replaced.
         const kept = at.arrows.filter((a) => threatOfArrow(a));
-        return { ...prev, [side]: withFaceAnnotationsAt(prev[side], historyIndex, [...kept, ...res.arrows], at.circles) };
+        const face = withFaceAnnotationsAt(prev[side], historyIndex, [...kept, ...res.arrows], at.circles);
+        // An empty Description gets "Key moves / Key reactions" in Jonas's own form.
+        const text = face.text.trim() ? face.text : planDescription(res, `Lichess explorer (${DB_LABEL[choices.db]})`);
+        return { ...prev, [side]: { ...face, text } };
       });
       showSnackbar({ message: `Plan drawn: ${res.arrows.length} arrows from ${res.lines} lines`, actionLabel: 'Undo', onAction: () => setBoard(before), duration: 8000 });
     } catch (e) {

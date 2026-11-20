@@ -418,8 +418,8 @@ export function makeReactionsBoard(order: number, history: BoardMove[], start: G
 
 // A Plan board for the position reached by `history` (from the standard
 // start), with these arrows and text — also used by the Opening map.
-export function makePlanBoard(order: number, history: BoardMove[], final: GameState, text: string, arrows: Arrow[]): ReactionBoard {
-  return buildBoard(order, { history, final, text, arrows, circles: [], line: [] });
+export function makePlanBoard(order: number, history: BoardMove[], final: GameState, text: string, arrows: Arrow[], circles: Circle[] = []): ReactionBoard {
+  return buildBoard(order, { history, final, text, arrows, circles, line: [] });
 }
 
 function buildMoveNode(m: LineMove): MoveNode {

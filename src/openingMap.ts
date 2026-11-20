@@ -271,3 +271,12 @@ export function lineShape(line: LineMove[], yourColor: 'w' | 'b'): { own: number
   }
   return { own, branches };
 }
+
+// A line is forcing when its main line has at least two captures or checks
+// in its first six moves (gambits, centre breaks, trades).
+export function isForcing(line: LineMove[]): boolean {
+  let n: LineMove | undefined = line[0];
+  let hits = 0;
+  for (let i = 0; n && i < 6; i++, n = n.children[0]) if (/[x+]/.test(n.san)) hits += 1;
+  return hits >= 2;
+}
