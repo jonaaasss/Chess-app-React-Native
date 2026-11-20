@@ -22,6 +22,7 @@ import { MoveText } from '../components/MoveText';
 import { askStudyOptions, startStudySession } from './StudySessionOverlay';
 import { openOpeningStartPositionPicker } from './OpeningStartPositionOverlay';
 import { openOpeningMap } from './OpeningMapOverlay';
+import { openVariationMap } from './VariationMapOverlay';
 import { getLichessToken } from '../lichessExplorer';
 import { openImportPgnDialog } from './ImportPgnOverlay';
 import { openAiImportDialog } from './AiImportOverlay';
@@ -193,10 +194,10 @@ export function OpeningsScreen({
     const name = await promptDialog('New opening', prefill ?? '', 'e.g. Italian');
     if (name && rep) {
       // The tutorial only knows the "make your own cards" path, so it skips this choice.
-      const how = inTutorial ? 'Make your own cards' : await simpleMenu(['Make your own cards', 'Opening map (Lichess)', 'Import PGN', 'Import PGN with AI'], 'How do you want to start?');
+      const how = inTutorial ? 'Make your own cards' : await simpleMenu(['Make your own cards', 'Variations (Lichess)', 'Opening map (Lichess)', 'Import PGN', 'Import PGN with AI'], 'How do you want to start?');
       if (how === null) return;
-      if (how === 'Opening map (Lichess)' && !(await getLichessToken())) {
-        await alertDialog('The opening map uses the Lichess explorer. Add your Lichess token first in Settings → Lichess.');
+      if ((how === 'Opening map (Lichess)' || how === 'Variations (Lichess)') && !(await getLichessToken())) {
+        await alertDialog(`${how === 'Variations (Lichess)' ? 'Variations use' : 'The opening map uses'} the Lichess explorer. Add your Lichess token first in Settings → Lichess.`);
         return;
       }
       if (how === 'Import PGN' || how === 'Import PGN with AI') {
@@ -209,8 +210,9 @@ export function OpeningsScreen({
       const boardStyle = await getBoardStyle();
       const picked = await openOpeningStartPositionPicker(name, rep.group === 'black' ? 'b' : 'w', boardStyle);
       if (picked === null) return;
-      if (how === 'Opening map (Lichess)') {
-        const openingId = await openOpeningMap(repertoireId, name, picked, rep.group === 'black' ? 'b' : 'w');
+      if (how === 'Opening map (Lichess)' || how === 'Variations (Lichess)') {
+        const open = how === 'Variations (Lichess)' ? openVariationMap : openOpeningMap;
+        const openingId = await open(repertoireId, name, picked, rep.group === 'black' ? 'b' : 'w');
         await load();
         if (openingId) onOpenOpening(openingId);
         return;

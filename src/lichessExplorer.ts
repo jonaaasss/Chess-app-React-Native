@@ -21,11 +21,13 @@ export interface ExplorerMove {
   draws: number;
   black: number;
   games: number;
+  opening?: string; // Lichess's name of the position after this move, when it has one
 }
 
 export interface ExplorerResult {
   games: number;
   moves: ExplorerMove[];
+  opening?: string; // Lichess's name of this position, when it has one
 }
 
 export async function getLichessToken(): Promise<string | null> {
@@ -75,13 +77,16 @@ function urlFor(db: ExplorerDb, fen: string): string {
 const cache = new Map<string, ExplorerResult>();
 // Answers are also kept on the phone (key `lichess.cache`, at most
 // CACHE_MAX positions, oldest dropped first), so a scan that was cut off
-// (the app closed) goes fast the next time.
-const CACHE_KEY = 'lichess.cache';
+// (the app closed) goes fast the next time. Version 2 also keeps the
+// opening names; the old key is removed.
+const CACHE_KEY = 'lichess.cache2';
+const OLD_CACHE_KEY = 'lichess.cache';
 const CACHE_MAX = 4000;
 let cacheLoaded: Promise<void> | null = null;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 function loadCache(): Promise<void> {
   if (!cacheLoaded) {
+    AsyncStorage.removeItem(OLD_CACHE_KEY).catch(() => undefined);
     cacheLoaded = AsyncStorage.getItem(CACHE_KEY)
       .then((raw) => {
         if (!raw) return;
@@ -131,10 +136,19 @@ async function doFetch(key: string, fen: string, db: ExplorerDb): Promise<Explor
   if (res.status === 401 || res.status === 403) throw new ExplorerError('Lichess refused the token. Check it in Settings → Lichess.', 'badToken');
   if (res.status === 429) throw new ExplorerError('Lichess asks to wait a minute (too many requests).', 'rateLimit');
   if (!res.ok) throw new ExplorerError(`Lichess error ${res.status}.`, 'other');
-  const body = (await res.json()) as { white: number; draws: number; black: number; moves: { san: string; white: number; draws: number; black: number }[] };
+  type Named = { opening?: { name?: string } | null };
+  const body = (await res.json()) as Named & { white: number; draws: number; black: number; moves: (Named & { san: string; white: number; draws: number; black: number })[] };
   const result: ExplorerResult = {
     games: body.white + body.draws + body.black,
-    moves: (body.moves ?? []).map((m) => ({ san: m.san, white: m.white, draws: m.draws, black: m.black, games: m.white + m.draws + m.black }))
+    moves: (body.moves ?? []).map((m) => ({
+      san: m.san,
+      white: m.white,
+      draws: m.draws,
+      black: m.black,
+      games: m.white + m.draws + m.black,
+      ...(m.opening?.name ? { opening: m.opening.name } : {})
+    })),
+    ...(body.opening?.name ? { opening: body.opening.name } : {})
   };
   cache.set(key, result);
   saveCacheSoon();
