@@ -200,7 +200,9 @@ export async function generatePlan(
   const planKeys = new Set(planOwn.map((s) => s.move.key));
 
   // Exceptions: an opponent move after which the plan move mostly is not played.
+  // The same exception goes only on the first plan move it changes.
   const exceptions = new Map<string, { trigger: string; text: string }[]>();
+  const usedTriggers = new Set<string>();
   for (const s of planOwn) {
     const key = s.move.key;
     const done = new Set<OppBranch>();
@@ -218,6 +220,9 @@ export async function generatePlan(
         .filter((x) => !planKeys.has(x.move.key) && x.weight / w >= 0.6)
         .sort((a, c) => a.idxSum / a.weight - c.idxSum / c.weight)
         .map((x) => x.move.san);
+      const trigger = `!${b.san}@${[...b.ownBefore].sort().join(',')}`;
+      if (usedTriggers.has(trigger)) continue;
+      usedTriggers.add(trigger);
       const list = exceptions.get(key) ?? [];
       list.push({ trigger: `!${b.san}`, text: instead.length ? instead.join(' ') : `no ${s.move.san}` });
       exceptions.set(key, list);

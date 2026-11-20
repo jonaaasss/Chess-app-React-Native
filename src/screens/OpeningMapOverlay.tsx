@@ -9,13 +9,14 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { showOverlay, useOverlayBack, alertDialog } from '../overlay';
 import { colors, radius, touchTarget, type } from '../theme';
-import { toFen } from '../chess';
+import { startingPosition, toFen } from '../chess';
 import { makeMove, type GameState } from '../chessEngine';
 import { fetchExplorer, getExplorerDb, type ExplorerDb } from '../lichessExplorer';
-import { DEFAULT_MAP_OPTIONS, moveLabel, scanOpening, type MapMove, type MapNode, type MapResult, type MapSplit, type Situation } from '../openingMap';
+import { DEFAULT_MAP_OPTIONS, forcedEnd, formatLine, groupLine, lineShape, moveLabel, scanOpening, type MapGroup, type MapMove, type MapNode, type MapResult, type MapSplit, type Situation } from '../openingMap';
 import { DEFAULT_PLAN_OPTIONS, generatePlan } from '../planGenerator';
-import { makePlanBoard } from '../importOpening';
-import { addOpening, deleteOpening, saveCard, uid } from '../storage';
+import { makePlanBoard, makeReactionsBoard } from '../importOpening';
+import { allowScreenOff, keepScreenOn } from '../keepAwake';
+import { addOpening, deleteOpening, saveCard, setOpeningSummary, uid } from '../storage';
 import type { Arrow, ArrowColor, BoardMove, Card, OpeningStartPosition } from '../types';
 
 const COLORS: ArrowColor[] = ['green', 'orange', 'red', 'blue'];
@@ -42,6 +43,12 @@ function OpeningMapOverlay({
   const cancelled = useRef(false);
   const startState: GameState = { pieces: start.pieces, turn: start.turn, castling: start.castling, enPassant: start.enPassant };
   const startPly = start.setupMoves.length;
+
+  useEffect(() => {
+    if (status) keepScreenOn();
+    else allowScreenOff();
+  }, [status]);
+  useEffect(() => () => allowScreenOff(), []);
 
   useOverlayBack(() => {
     cancelled.current = true;
@@ -100,6 +107,24 @@ function OpeningMapOverlay({
     return out;
   }
 
+  // The SAN of the opening's own setup moves (from the standard start).
+  function setupSans(): string[] {
+    let st: GameState = { pieces: startingPosition(), turn: 'w', castling: { wK: true, wQ: true, bK: true, bQ: true }, enPassant: null };
+    return start.setupMoves.map((m) => {
+      const r = makeMove(st, m.from, m.to, m.promotion);
+      st = r.next;
+      return r.san;
+    });
+  }
+
+  // Your moves along the forced part of the line after `node`.
+  function forcedOwn(node: MapNode): string[] {
+    const end = forcedEnd(node);
+    return end.path.slice(node.path.length).filter((m) => (m.ply % 2 === 0) === (startState.turn === yourColor)).map((m) => m.san);
+  }
+
+  const sameMove = (a: MapMove, b: MapMove) => a.san === b.san && a.ply === b.ply;
+
   async function create() {
     if (!result) return;
     const picked = result.situations.filter((s) => selected.has(s.label));
@@ -107,57 +132,111 @@ function OpeningMapOverlay({
     const opening = await addOpening(repertoireId, name, start.setupMoves.length > 0 ? start : undefined);
     try {
       const cards: Card[] = [];
+      const first: MapSplit | undefined = result.splits[0];
+      const groupOf = (s: Situation) => first?.groups.find((g) => s.decisions[0] && sameMove(g.moves[0].move, s.decisions[0]));
+      const linkFor = new Map<MapGroup, string>();
+
+      // A "Specific line" (Reactions) card per group of the first split whose
+      // line is forcing (two or more of your moves) or has variations.
+      if (first) {
+        for (const g of first.groups) {
+          if (!picked.some((s) => groupOf(s) === g)) continue;
+          const line = groupLine(first, g);
+          const shape = lineShape(line, yourColor);
+          if (shape.own < 2 && !shape.branches) continue;
+          const subs = g.splits.flatMap((sp) => sp.groups.map((sg) => `${moveLabel(sg.moves[0].move, startPly)} (${Math.round(sg.share * 100)}%)`));
+          const text = [
+            `Forcing line from the Lichess explorer, reached in about ${Math.round(g.share * 100)}% of the games here.`,
+            subs.length ? `The opponent chooses between ${subs.join(' and ')}.` : ''
+          ]
+            .filter(Boolean)
+            .join('\n');
+          const id = uid();
+          cards.push({
+            id,
+            openingId: opening.id,
+            order: 0,
+            name: `Specific line: ${moveLabel(g.moves[0].move, startPly)}`,
+            mode: 'reactions',
+            boards: [makeReactionsBoard(0, history(first.at.path), first.at.state, text, line)],
+            fastRevision: true
+          });
+          linkFor.set(g, id);
+        }
+      }
+
+      // A "Key" (Plan) card per ticked situation, from where its forced
+      // moves end, so your moves on the way are in the Specific line card.
       let k = 0;
       for (const s of picked) {
         k += 1;
-        const plan = await generatePlan(s.node.state, yourColor, (f) => fetchExplorer(f, db), { ...DEFAULT_PLAN_OPTIONS, depth: 4 }, (t) => setStatus(`Plan ${k} of ${picked.length}: ${t}`));
+        const from = forcedEnd(s.node);
+        const plan = await generatePlan(from.state, yourColor, (f) => fetchExplorer(f, db), { ...DEFAULT_PLAN_OPTIONS, depth: 4 }, (t) => setStatus(`Plan ${k} of ${picked.length}: ${t}`));
         const text = [
-          `From the Lichess explorer: ${label(s.node.path) || 'the start position'}.`,
-          `Reached in about ${Math.round(s.share * 100)}% of the games.`,
-          plan.problem ? `No plan could be made: ${plan.problem}` : ''
+          `Plan from the Lichess explorer after ${formatLine(from.path, startPly) || 'the start position'} (about ${Math.round(s.share * 100)}% of the games).`,
+          plan.problem ? `No plan could be made here: ${plan.problem}` : ''
         ]
           .filter(Boolean)
           .join('\n');
+        const id = uid();
         cards.push({
-          id: uid(),
+          id,
           openingId: opening.id,
           order: 0,
           name: `Key: ${shortName(s)}`,
           mode: 'plan',
-          boards: [makePlanBoard(0, history(s.node.path), s.node.state, text, plan.arrows)],
+          boards: [makePlanBoard(0, history(from.path), from.state, text, plan.arrows)],
           fastRevision: true
         });
+        const g = groupOf(s);
+        if (g && !linkFor.has(g)) linkFor.set(g, id);
       }
-      // Summary: the moves up to the first split, and each group of the
-      // first split as a dark arrow of its own colour, linked to its card.
-      const first: MapSplit | undefined = result.splits[0];
+
+      // Summary at the first split: per group the opponent's move (dark) and
+      // your answer in the light tint of the same colour, linked to its card.
       if (first) {
-        const arrows: Arrow[] = first.at.path.map((m) => {
-          const own = m.ply % 2 === (startState.turn === yourColor ? 0 : 1);
-          return { from: m.from, to: m.to, color: own ? 'green' : 'darkGreen' };
-        });
+        const arrows: Arrow[] = [];
+        const lines: string[] = [];
         first.groups.forEach((g, i) => {
-          const target = cards.find((c, ci) => picked[ci].decisions[0] && picked[ci].decisions[0].san === g.moves[0].move.san && picked[ci].decisions[0].ply === g.moves[0].move.ply);
-          g.moves.forEach((gm, j) => {
-            arrows.push({
-              from: gm.move.from,
-              to: gm.move.to,
-              color: DARK[COLORS[i % COLORS.length]],
-              ...(target && j === 0 ? { notes: { linkCardId: target.id } } : {})
-            });
-          });
+          const c = COLORS[i % COLORS.length];
+          const opp = g.moves[0].move;
+          const link = linkFor.get(g);
+          arrows.push({ from: opp.from, to: opp.to, color: DARK[c], ...(link ? { notes: { linkCardId: link } } : {}) });
+          const reply = g.main.mine ? g.main.children[0]?.move : undefined;
+          if (reply) arrows.push({ from: reply.from, to: reply.to, color: c });
+          lines.push(`${moveLabel(opp, startPly)} (${Math.round(g.share * 100)}%)${reply ? ` => ${reply.san}` : ''}`);
         });
-        const summaryText = first.groups.map((g) => `${g.moves.map((m) => moveLabel(m.move, startPly)).join(' / ')}: ${Math.round(g.share * 100)}%`).join('\n');
         cards.unshift({
           id: uid(),
           openingId: opening.id,
           order: 0,
           name: 'Summary',
           mode: 'summary',
-          boards: [makePlanBoard(0, history([]), startState, summaryText, arrows)],
+          boards: [makePlanBoard(0, history(first.at.path), first.at.state, lines.join('\n'), arrows)],
           fastRevision: true
         });
       }
+
+      // The opening summary tables, in the usual format.
+      const opp = (ply: number) => (ply % 2 === 0 ? 'w' : 'b') !== yourColor;
+      const allStart = [...setupSans(), ...(first ? first.at.path.map((m) => m.san) : [])];
+      const startCell = allStart.map((san, i) => `${i % 2 === 0 ? `${i / 2 + 1}. ` : ''}${opp(i) ? '!' : ''}${san}`).join(' ');
+      const tables = [`# Start | Moves\nOpening | ${startCell}`];
+      if (first) {
+        const rows = first.groups.map((g) => {
+          const m = g.moves[0].move;
+          const ply = startPly + m.ply;
+          const num = `${Math.floor(ply / 2) + 1}.${ply % 2 === 0 ? '' : '..'}`;
+          const own = forcedOwn(g.main).join(' ');
+          const except = g.splits
+            .flatMap((sp) => sp.groups.map((sg) => `?${forcedOwn(sg.main).join(' ') || '…'} after !${sg.moves[0].move.san}`))
+            .join('\\n');
+          return `${num} !${m.san} | ${own} | ${except}`;
+        });
+        tables.push(`# Reply | Moves | Except\n${rows.join('\n')}`);
+      }
+      await setOpeningSummary(opening.id, tables.join('\n\n'));
+
       for (let i = 0; i < cards.length; i++) await saveCard({ ...cards[i], order: i });
       close(opening.id);
     } catch (e) {

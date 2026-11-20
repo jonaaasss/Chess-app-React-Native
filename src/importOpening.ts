@@ -47,7 +47,7 @@ function isImportError(e: unknown): e is ImportError {
 }
 
 // One recorded move of a Reactions line; `children[0]` is the main line.
-interface LineMove {
+export interface LineMove {
   san: string;
   from: string;
   to: string;
@@ -408,6 +408,12 @@ function buildBoard(order: number, pb: ParsedBoard): ReactionBoard {
     front: faceFor(false),
     back: faceFor(true)
   };
+}
+
+// A Reactions board starting at `start` (reached by `history`), with `line`
+// as the recorded move tree — used by the Opening map.
+export function makeReactionsBoard(order: number, history: BoardMove[], start: GameState, text: string, line: LineMove[]): ReactionBoard {
+  return buildReactionsBoard(order, { history, final: start, text, arrows: [], circles: [], line });
 }
 
 // A Plan board for the position reached by `history` (from the standard

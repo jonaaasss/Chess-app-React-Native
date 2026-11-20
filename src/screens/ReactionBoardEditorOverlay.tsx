@@ -35,6 +35,7 @@ import { ExplorerPanel } from '../components/ExplorerPanel';
 import { fetchExplorer, getLichessToken } from '../lichessExplorer';
 import { DEFAULT_PLAN_OPTIONS, generatePlan } from '../planGenerator';
 import { openGeneratePlanDialog } from './GeneratePlanDialog';
+import { allowScreenOff, keepScreenOn } from '../keepAwake';
 
 const ENGINE_ANALYSIS_DEBOUNCE_MS = 350;
 
@@ -1419,6 +1420,7 @@ function ReactionBoardEditorOverlay({
     if (!choices) return;
     genCancel.current = false;
     setGenStatus('Starting…');
+    keepScreenOn();
     const startState = engineState;
     const startFen = fen;
     try {
@@ -1448,6 +1450,7 @@ function ReactionBoardEditorOverlay({
       await alertDialog(e instanceof Error ? e.message : String(e));
     } finally {
       setGenStatus(null);
+      allowScreenOff();
       if (engine.ready) engine.evaluate(startFen, startFen.split(' ')[1] as 'w' | 'b');
     }
   }

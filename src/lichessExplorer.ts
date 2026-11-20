@@ -73,6 +73,33 @@ function urlFor(db: ExplorerDb, fen: string): string {
 }
 
 const cache = new Map<string, ExplorerResult>();
+// Answers are also kept on the phone (key `lichess.cache`, at most
+// CACHE_MAX positions, oldest dropped first), so a scan that was cut off
+// (the app closed) goes fast the next time.
+const CACHE_KEY = 'lichess.cache';
+const CACHE_MAX = 4000;
+let cacheLoaded: Promise<void> | null = null;
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+function loadCache(): Promise<void> {
+  if (!cacheLoaded) {
+    cacheLoaded = AsyncStorage.getItem(CACHE_KEY)
+      .then((raw) => {
+        if (!raw) return;
+        const entries = JSON.parse(raw) as [string, ExplorerResult][];
+        for (const [k, v] of entries) if (!cache.has(k)) cache.set(k, v);
+      })
+      .catch(() => undefined);
+  }
+  return cacheLoaded;
+}
+function saveCacheSoon() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    const entries = [...cache.entries()].slice(-CACHE_MAX);
+    AsyncStorage.setItem(CACHE_KEY, JSON.stringify(entries)).catch(() => undefined);
+  }, 2000);
+}
 let queue: Promise<unknown> = Promise.resolve();
 
 export function fetchExplorer(fen: string, db: ExplorerDb): Promise<ExplorerResult> {
@@ -85,6 +112,7 @@ export function fetchExplorer(fen: string, db: ExplorerDb): Promise<ExplorerResu
 }
 
 async function doFetch(key: string, fen: string, db: ExplorerDb): Promise<ExplorerResult> {
+  await loadCache();
   const hit = cache.get(key);
   if (hit) return hit;
   const token = await getLichessToken();
@@ -109,6 +137,7 @@ async function doFetch(key: string, fen: string, db: ExplorerDb): Promise<Explor
     moves: (body.moves ?? []).map((m) => ({ san: m.san, white: m.white, draws: m.draws, black: m.black, games: m.white + m.draws + m.black }))
   };
   cache.set(key, result);
+  saveCacheSoon();
   return result;
 }
 

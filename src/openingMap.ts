@@ -16,6 +16,7 @@ import { toFen } from './chess';
 import { makeMove, type GameState } from './chessEngine';
 import { moveForSan, type ExplorerResult } from './lichessExplorer';
 import type { PromotionPiece } from './types';
+import type { LineMove } from './importOpening';
 
 export interface MapMove {
   from: string;
@@ -153,7 +154,7 @@ export async function scanOpening(
 
   // A situation must be reached in at least this share of all games; rarer
   // groups are left out, and positions rarer than twice this are not split.
-  const MIN_GROUP = 0.08;
+  const MIN_GROUP = 0.15;
   function findSplits(node: MapNode, depthLeft: number): MapSplit[] {
     if (depthLeft <= 0 || node.children.length === 0 || node.weight < MIN_GROUP * 2) return [];
     if (node.mine || node.children.length < 2) return node.children.flatMap((c) => findSplits(c.node, depthLeft));
@@ -182,7 +183,8 @@ export async function scanOpening(
       }
     ];
   }
-  const splits = findSplits(root, 3);
+  // At most two levels of splits: deeper down there are too few games.
+  const splits = findSplits(root, 2);
 
   const situations: Situation[] = [];
   const label = (n: MapNode) => n.path.map((m) => m.san).join(' ');
@@ -206,4 +208,66 @@ export function moveLabel(move: MapMove, startPly: number): string {
   const ply = startPly + move.ply;
   const n = Math.floor(ply / 2) + 1;
   return ply % 2 === 0 ? `${n}.${move.san}` : `${n}...${move.san}`;
+}
+
+// "5.Nxc6 bxc6 6.e5 Qe7" (or "5...Nf6 6.Nc3" when the line starts with Black).
+export function formatLine(moves: MapMove[], startPly: number): string {
+  return moves
+    .map((m, i) => {
+      const ply = startPly + m.ply;
+      const n = Math.floor(ply / 2) + 1;
+      if (ply % 2 === 0) return `${n}.${m.san}`;
+      return i === 0 ? `${n}...${m.san}` : m.san;
+    })
+    .join(' ');
+}
+
+// From `node`, follow the line while it is forced: your move, and an
+// opponent move played in at least 70% of the games. Stops at the first
+// real choice of the opponent (or after `maxPlies`).
+export function forcedEnd(node: MapNode, maxPlies = 8): MapNode {
+  let n = node;
+  for (let i = 0; i < maxPlies && n.children.length > 0; i++) {
+    const top = [...n.children].sort((a, b) => b.share - a.share)[0];
+    if (!n.mine && top.share < 0.7) break;
+    n = top.node;
+  }
+  return n;
+}
+
+// The recorded line of a "Specific line" card for one group of a split:
+// the group's moves (the most played first), then your moves and every
+// opponent move reached in at least 10% of all games (or the main one when
+// it has at least half of the games there), up to `ownLimit` of your moves.
+export function groupLine(split: MapSplit, group: MapGroup, ownLimit = 4): LineMove[] {
+  const rec = (node: MapNode, own: number): LineMove[] => {
+    if (node.children.length === 0) return [];
+    if (node.mine) {
+      if (own >= ownLimit) return [];
+      const c = node.children[0];
+      return [{ san: c.move.san, from: c.move.from, to: c.move.to, promotion: c.move.promotion, after: c.node.state, children: rec(c.node, own + 1) }];
+    }
+    const kids = [...node.children].sort((a, b) => b.share - a.share);
+    let pick = kids.filter((k) => k.node.weight >= 0.1);
+    if (pick.length === 0 && kids[0].share >= 0.5) pick = [kids[0]];
+    return pick.map((k) => ({ san: k.move.san, from: k.move.from, to: k.move.to, promotion: k.move.promotion, after: k.node.state, children: rec(k.node, own) }));
+  };
+  return group.moves
+    .map((gm) => split.at.children.find((c) => c.move.san === gm.move.san))
+    .filter((c): c is MapNode['children'][number] => Boolean(c))
+    .map((c) => ({ san: c.move.san, from: c.move.from, to: c.move.to, promotion: c.move.promotion, after: c.node.state, children: rec(c.node, 0) }));
+}
+
+// How many of your moves the main line of a recorded line holds, and
+// whether it has variations.
+export function lineShape(line: LineMove[], yourColor: 'w' | 'b'): { own: number; branches: boolean } {
+  let own = 0;
+  let branches = line.length > 1;
+  let n: LineMove | undefined = line[0];
+  while (n) {
+    if (n.after.turn !== yourColor) own += 1;
+    if (n.children.length > 1) branches = true;
+    n = n.children[0];
+  }
+  return { own, branches };
 }
