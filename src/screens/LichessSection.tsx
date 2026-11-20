@@ -61,7 +61,8 @@ export function LichessSection() {
       />
       <View style={styles.actionRow}>
         <Pressable onPress={save} disabled={!dirty} style={[styles.actionBtn, styles.actionPrimary, !dirty && styles.disabled]}>
-          <Text style={styles.actionPrimaryText}>Save</Text>
+          {/* Test saves too, so after a test the token is already stored. */}
+          <Text style={styles.actionPrimaryText}>{!dirty && saved ? 'Saved ✓' : 'Save'}</Text>
         </Pressable>
         <Pressable onPress={test} disabled={busy || !token.trim()} style={[styles.actionBtn, styles.actionSecondary, (busy || !token.trim()) && styles.disabled]}>
           <Text style={styles.actionSecondaryText}>Test</Text>
