@@ -31,6 +31,7 @@ import { getBoardEditorTipHidden, setBoardEditorTipHidden, uid } from '../storag
 import { ModeTip } from '../components/ModeTip';
 import { TutorialLayer, useTutorial, useTutorialTarget } from '../tutorial';
 import { useStockfishEngine, type EngineLine } from '../engine/useStockfishEngine';
+import { ExplorerPanel } from '../components/ExplorerPanel';
 
 const ENGINE_ANALYSIS_DEBOUNCE_MS = 350;
 
@@ -1825,6 +1826,9 @@ function ReactionBoardEditorOverlay({
         </View>
         {!hideEngine && <EngineEvalBar lines={panelLines} stale={engineStale} flipped={flipped} height={BOARD_SIZE} />}
         </View>
+
+        {/* Lichess opening explorer for the position on the board; tap a move to play it. */}
+        {!hideEngine && <ExplorerPanel state={engineState} onPlay={finishMove} />}
 
         {pendingPromotion && (
           <View style={styles.promoRow}>

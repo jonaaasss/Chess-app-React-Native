@@ -54,7 +54,7 @@
 
 ## Engine (Stockfish)
 
-The board editor shows an eval bar, a top-3 moves panel (tap a move to play it) and best-move arrows (hidden where the recorded line branches). Hard-won constraints — read before touching:
+The board editor shows an eval bar, a top-3 moves panel (tap a move to play it) and best-move arrows (hidden where the recorded line branches). Under the board a collapsible **Explorer** panel (`ExplorerPanel`, `src/lichessExplorer.ts`) shows the Lichess opening explorer for the position (database Lichess 2200–2500 blitz/rapid/classical or Masters, remembered; tap a move to play it). It needs a personal Lichess token, typed in under Settings → Lichess (`LichessSection`, AsyncStorage key `lichess.token`, not in the backup); one request at a time, answers cached for the session. Hard-won constraints — read before touching:
 - Hermes has no WebAssembly → the engine runs in a hidden `react-native-webview` page (`assets/engine/index.html`), talking UCI over `postMessage` (`src/engine/useStockfishEngine.tsx`).
 - Android's WebView can't start a Worker from `file://`; `index.html` fetches the engine with `XMLHttpRequest` (success reports status 0; `fetch()` hangs), wraps it in a Blob and starts the Worker from that.
 - WASM NNUE builds need SIMD, which faults on this phone. The engine is `stockfish-18-asm.js` (ASM.js, ~10.5 MB). Don't "upgrade" to WASM.
