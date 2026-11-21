@@ -10,21 +10,22 @@
 // 3. Colours (Jonas's convention, as in his Italian):
 //    - a move you play whatever the opponent does: a light colour, by when it
 //      comes (1st green, 2nd orange, 3rd red, later blue);
-//    - a move that answers an opponent move: that opponent move (dark) and
-//      your answer in the SAME dark tint, so in Study the opponent's move
-//      appears first and you then draw your answer. An answer is: taking back
-//      on the square the opponent just went to, moving a piece he just
-//      attacked, answering a check, chasing the piece he just moved, or a move
-//      you (almost) only play after that opponent move (e.g. c3 → Re8, d5);
-//    - opponent moves that change nothing for you are not drawn.
-// 4. Exceptions: an opponent move after which a light plan move is mostly
-//    not played becomes a note on that arrow (once, on the first move it
-//    changes).
-// 5. Reactions: an opponent move (at least 10% of the games) that you answer
-//    straight away with one move that is not in the plan — "If !Be3 => Bxe3".
+//    - a move that answers a THREAT of the opponent: that opponent move (dark)
+//      and your answer in the SAME dark tint, so in Study the opponent's move
+//      appears first and you then draw your answer. A threat (`threatens`,
+//      as in Jonas's Italian and docs/IMPORT_REGELS.md): it takes something,
+//      gives check, attacks one of your pieces (a trade offer too), puts a
+//      piece on your half of the board, or attacks a pawn more often than it
+//      is defended (!Qb3 on f7). An answer: taking back or taking the piece,
+//      moving the attacked piece, answering the check, or chasing the piece;
+//    - quiet opponent moves (!g3, !f4, !h3) are never reactions.
+// 4. Exceptions: a threat after which a light plan move is mostly not played
+//    becomes a note on that arrow (once, on the first move it changes).
+// 5. Reactions: a threat (at least 10% of the games) that you answer straight
+//    away with one move that is not in the plan — "If !Be3 => Bxe3".
 //    The Opening map turns these into "Reactions: first move" boards.
 // 6. Optional engine check of each light plan move against Stockfish's top 3.
-import { toFen } from './chess';
+import { squareFromIndex, squareIndex, toFen } from './chess';
 import { legalMovesFrom, makeMove, type GameState } from './chessEngine';
 import { moveForSan, type ExplorerResult } from './lichessExplorer';
 import type { Arrow, ArrowColor, ArrowNotes, PromotionPiece } from './types';
@@ -117,6 +118,66 @@ const attacks = (st: GameState, from: string, target: string, side: 'w' | 'b'): 
     return false;
   }
 };
+
+// The squares of `color`'s pieces that attack `square` (x-rays not counted).
+function attackersOf(pieces: GameState['pieces'], square: string, color: 'w' | 'b'): string[] {
+  const { file, rank } = squareIndex(square);
+  const out: string[] = [];
+  const at = (f: number, r: number) => {
+    const sq = squareFromIndex(f, r);
+    return sq ? { sq, p: pieces[sq] } : null;
+  };
+  const pawnDir = color === 'w' ? -1 : 1; // where an attacking pawn stands
+  for (const df of [-1, 1]) {
+    const c = at(file + df, rank + pawnDir);
+    if (c?.p === `${color}P`) out.push(c.sq);
+  }
+  for (const [df, dr] of [[1, 2], [2, 1], [2, -1], [1, -2], [-1, -2], [-2, -1], [-2, 1], [-1, 2]]) {
+    const c = at(file + df, rank + dr);
+    if (c?.p === `${color}N`) out.push(c.sq);
+  }
+  for (let df = -1; df <= 1; df++)
+    for (let dr = -1; dr <= 1; dr++) {
+      if (!df && !dr) continue;
+      const c = at(file + df, rank + dr);
+      if (c?.p === `${color}K`) out.push(c.sq);
+      const diag = df !== 0 && dr !== 0;
+      for (let k = 1; k < 8; k++) {
+        const s = at(file + df * k, rank + dr * k);
+        if (!s) break;
+        if (!s.p) continue;
+        if (s.p[0] === color && (s.p[1] === 'Q' || s.p[1] === (diag ? 'B' : 'R'))) out.push(s.sq);
+        break;
+      }
+    }
+  return out;
+}
+
+// Whether the opponent move `prev` threatens something, so that an answer
+// to it is a reaction worth drawing.
+export function threatens(prev: SeqItem | undefined, yourColor: 'w' | 'b'): boolean {
+  if (!prev || prev.own) return false;
+  const opp = yourColor === 'w' ? 'b' : 'w';
+  if (/[x+#]/.test(prev.occ.san)) return true; // takes something / check
+  const before = prev.before.pieces;
+  const after = prev.after.pieces;
+  const moved = after[prev.occ.to];
+  // A piece (not a pawn or the king) on your half of the board.
+  const rank = Number(prev.occ.to[1]);
+  if (moved && moved[1] !== 'P' && moved[1] !== 'K' && (yourColor === 'b' ? rank >= 5 : rank <= 4)) return true;
+  for (const [sq, p] of Object.entries(after)) {
+    if (!p || p[0] !== yourColor || p[1] === 'K') continue;
+    const attackers = attackersOf(after, sq, opp);
+    if (attackers.length === 0) continue;
+    if (p[1] !== 'P') {
+      // One of your pieces newly attacked (by the moved piece or uncovered).
+      if (attackers.includes(prev.occ.to) || attackersOf(before, sq, opp).length === 0) return true;
+    } else if (attackers.includes(prev.occ.to) && attackers.length > attackersOf(after, sq, yourColor).length) {
+      return true; // a pawn attacked more often than it is defended
+    }
+  }
+  return false;
+}
 
 // Whether your move `cur` answers the opponent move `prev` played just before it.
 export function answers(prev: SeqItem | undefined, cur: SeqItem, yourColor: 'w' | 'b'): boolean {
@@ -266,7 +327,7 @@ export async function generatePlan(
       if (i < 1 || l.seq[i - 1].own) continue;
       const e = byT.get(l.seq[i - 1].occ.key) ?? { rel: 0, all: 0, san: l.seq[i].occ.san };
       e.all += l.weight;
-      if (answers(l.seq[i - 1], l.seq[i], yourColor)) e.rel += l.weight;
+      if (threatens(l.seq[i - 1], yourColor) && answers(l.seq[i - 1], l.seq[i], yourColor)) e.rel += l.weight;
       byT.set(l.seq[i - 1].occ.key, e);
     }
     for (const [t, e] of byT) {
@@ -276,29 +337,6 @@ export async function generatePlan(
       }
     }
   }
-  // Moves you (almost) only play after one opponent move that is not the
-  // main line (e.g. c3 → Re8, d5). Moves of the plan itself stay light.
-  const planKeys = new Set(planOwn.map((s) => s.move.key));
-  const paired = () => new Set(pairs.map((p) => p.m));
-  for (const t of oppStats.values()) {
-    const wT = t.weight;
-    if (wT / total < 0.15 || wT / total > 0.5) continue;
-    const already = paired();
-    for (const m of ownStats.values()) {
-      if (already.has(m.move.key) || planKeys.has(m.move.key)) continue;
-      let both = 0;
-      let mOnly = 0;
-      for (const l of leaves) {
-        const iM = l.seq.findIndex((x) => x.own && x.occ.key === m.move.key);
-        if (iM < 0) continue;
-        const iT = l.seq.findIndex((x) => !x.own && x.occ.key === t.move.key);
-        if (iT >= 0 && iT < iM) both += l.weight;
-        else if (iT < 0) mOnly += l.weight;
-      }
-      if (both / wT >= 0.6 && mOnly / (total - wT) <= 0.2) pairs.push({ t: t.move.key, m: m.move.key, san: m.move.san, w: both });
-    }
-  }
-
   // A plan move that is mostly an answer becomes dark; the rest stay light.
   const light = planOwn.filter((s) => (relWeight.get(s.move.key) ?? 0) / s.weight < 0.6);
   const lightKeys = new Set(light.map((s) => s.move.key));
@@ -323,6 +361,8 @@ export async function generatePlan(
     const done = new Set<OppBranch>();
     for (const b of branches) {
       if (b.ownBefore.has(key) || insidePair(b)) continue;
+      // Only a threat changes your plan (quiet moves like !O-O or !h3 don't).
+      if (!threatens(b.leaves[0]?.seq[b.path.length - 1], yourColor)) continue;
       const w = weightOf(b.leaves);
       if (w / total < opts.minShare) continue;
       if (weightOf(b.leaves.filter((l) => has(l, key, true))) / w >= 0.5) continue;
@@ -362,7 +402,7 @@ export async function generatePlan(
     if (!top || top.w / w < 0.7) continue;
     if (lightKeys.has(top.item.occ.key)) continue;
     if (pairSet.has(`${b.move.from}${b.move.to}>${top.item.occ.key}`)) continue;
-    if (!answers(top.prev, top.item, yourColor)) continue;
+    if (!threatens(top.prev, yourColor) || !answers(top.prev, top.item, yourColor)) continue;
     if (reactions.some((r) => r.trigger.san === b.move.san && r.answer.san === top.item.occ.san)) continue;
     reactions.push({ trigger: b.move, answer: top.item.occ, path: b.path, after: b.after, share: w / total });
   }
