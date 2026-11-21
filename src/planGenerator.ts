@@ -317,7 +317,7 @@ export async function generatePlan(
   // different opponent moves in different lines (Bxb4 after b4, Bb4+ after
   // cxd4), so pairs are kept per opponent move.
   type Pair = { t: string; m: string; san: string; w: number };
-  const pairs: Pair[] = [];
+  let pairs: Pair[] = [];
   const relWeight = new Map<string, number>(); // your move → weight where it is an answer
   for (const s of ownStats.values()) {
     if (s.weight / total < 0.1) continue;
@@ -337,6 +337,32 @@ export async function generatePlan(
       }
     }
   }
+  // Only pairs that can be drawn on THIS board: the opponent's piece stands
+  // on the move's start square (or gets there by another such opponent move,
+  // like !Bg5 then !Bh4), and so does your piece (or it gets there by a plan
+  // move). Otherwise the pair needs moves that are not on the board (!Nxf6+
+  // after c4, Nc3 and Ne4) and its arrows would start on empty squares.
+  const oppColor = yourColor === 'w' ? 'b' : 'w';
+  const tMove = (t: string) => oppStats.get(t)?.move;
+  const direct = (t: string) => {
+    const m = tMove(t);
+    return !!m && start.pieces[m.from]?.[0] === oppColor;
+  };
+  const triggerKeys = [...new Set(pairs.map((p) => p.t))];
+  const drawableT = new Set(triggerKeys.filter((t) => direct(t) || triggerKeys.some((u) => u !== t && direct(u) && tMove(u)?.to === tMove(t)?.from)));
+  const ownFrom = (k: string) => ownStats.get(k)?.move;
+  const reach = new Set(planOwn.map((x) => x.move.to));
+  for (const p of pairs) {
+    const m = ownFrom(p.m);
+    if (m && start.pieces[m.from]?.[0] === yourColor) reach.add(m.to);
+  }
+  pairs = pairs.filter((p) => {
+    const m = ownFrom(p.m);
+    return drawableT.has(p.t) && !!m && (start.pieces[m.from]?.[0] === yourColor || reach.has(m.from));
+  });
+  relWeight.clear();
+  for (const p of pairs) relWeight.set(p.m, (relWeight.get(p.m) ?? 0) + p.w);
+
   // A plan move that is mostly an answer becomes dark; the rest stay light.
   const light = planOwn.filter((s) => (relWeight.get(s.move.key) ?? 0) / s.weight < 0.6);
   const lightKeys = new Set(light.map((s) => s.move.key));
@@ -344,7 +370,20 @@ export async function generatePlan(
   // reached most often.
   const triggerWeight = new Map<string, number>();
   for (const p of pairs) if (!lightKeys.has(p.m)) triggerWeight.set(p.t, Math.max(triggerWeight.get(p.t) ?? 0, p.w));
-  const topTriggers = new Set([...triggerWeight].sort((a, b) => b[1] - a[1]).slice(0, COLORS.length).map(([t]) => t));
+  // A chained one (!Bh4) only together with the move that brings the piece
+  // there (!Bg5).
+  const topTriggers = new Set<string>();
+  const ranked = [...triggerWeight].sort((a, b) => b[1] - a[1]).map(([t]) => t);
+  for (let grew = true; grew && topTriggers.size < COLORS.length; ) {
+    grew = false;
+    for (const t of ranked) {
+      if (topTriggers.has(t)) continue;
+      if (!direct(t) && ![...topTriggers].some((u) => tMove(u)?.to === tMove(t)?.from)) continue;
+      topTriggers.add(t);
+      grew = true;
+      break;
+    }
+  }
   const shown = pairs.filter((p) => !lightKeys.has(p.m) && topTriggers.has(p.t));
   const answerKeys = [...new Set(shown.map((p) => p.m))];
 
