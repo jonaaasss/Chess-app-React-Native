@@ -1431,7 +1431,7 @@ function ReactionBoardEditorOverlay({
         startState,
         yourColor,
         (f) => fetchExplorer(f, choices.db),
-        { ...DEFAULT_PLAN_OPTIONS, depth: choices.depth },
+        { ...DEFAULT_PLAN_OPTIONS, depth: choices.depth, planShare: choices.planShare },
         setGenStatus,
         choices.engine && engine.ready ? async (f, turn) => (await engine.analyzeOnce(f, turn)).map((l) => ({ from: l.from, to: l.to })) : undefined,
         () => genCancel.current

@@ -1,4 +1,5 @@
-// "Generate plan" settings: how deep, which database, engine check.
+// "Generate plan" settings: how deep, from how often a move counts as part
+// of the plan, which database, engine check.
 // Resolves to the choices, or null when cancelled. The choices are
 // remembered for next time.
 import React, { useEffect, useState } from 'react';
@@ -10,14 +11,18 @@ import { DB_LABEL, getExplorerDb, type ExplorerDb } from '../lichessExplorer';
 
 export interface GeneratePlanChoices {
   depth: number;
+  planShare: number; // a move is in the plan when it comes in this share of the lines
   db: ExplorerDb;
   engine: boolean;
 }
+
+const SHARES = [0.6, 0.5, 0.4, 0.3];
 
 const KEY = 'generatePlan.choices';
 
 function Dialog({ close }: { close: (v: GeneratePlanChoices | null) => void }) {
   const [depth, setDepth] = useState(4);
+  const [planShare, setPlanShare] = useState(0.6);
   const [db, setDb] = useState<ExplorerDb>('lichess');
   const [engine, setEngine] = useState(true);
   useOverlayBack(() => close(null));
@@ -29,6 +34,7 @@ function Dialog({ close }: { close: (v: GeneratePlanChoices | null) => void }) {
         if (!raw) return;
         const v = JSON.parse(raw) as Partial<GeneratePlanChoices>;
         if (typeof v.depth === 'number') setDepth(v.depth);
+        if (typeof v.planShare === 'number' && SHARES.includes(v.planShare)) setPlanShare(v.planShare);
         if (v.db === 'lichess' || v.db === 'masters') setDb(v.db);
         if (typeof v.engine === 'boolean') setEngine(v.engine);
       })
@@ -36,7 +42,7 @@ function Dialog({ close }: { close: (v: GeneratePlanChoices | null) => void }) {
   }, []);
 
   function go() {
-    const v = { depth, db, engine };
+    const v = { depth, planShare, db, engine };
     AsyncStorage.setItem(KEY, JSON.stringify(v)).catch(() => undefined);
     close(v);
   }
@@ -60,6 +66,22 @@ function Dialog({ close }: { close: (v: GeneratePlanChoices | null) => void }) {
             <Text style={styles.stepText}>+</Text>
           </Pressable>
         </View>
+
+        <Text style={styles.label}>Plan move from (share of the lines)</Text>
+        <View style={styles.dbRow}>
+          {SHARES.map((x) => (
+            <Pressable
+              key={x}
+              onPress={() => setPlanShare(x)}
+              style={[styles.dbBtn, planShare === x && styles.dbBtnOn]}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: planShare === x }}
+            >
+              <Text style={[styles.dbText, planShare === x && styles.dbTextOn]}>{`${Math.round(x * 100)}%`}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <Text style={[styles.small, { marginTop: -8, marginBottom: 14 }]}>Lower gives more arrows where the opponent has many options.</Text>
 
         <Text style={styles.label}>Database</Text>
         <View style={styles.dbRow}>

@@ -400,8 +400,11 @@ export async function generatePlan(
     const done = new Set<OppBranch>();
     for (const b of branches) {
       if (b.ownBefore.has(key) || insidePair(b)) continue;
-      // Only a threat changes your plan (quiet moves like !O-O or !h3 don't).
+      // Only a threat changes your plan (quiet moves like !O-O or !h3 don't),
+      // and only one by a piece that is on the board (or comes there by a
+      // drawn move): "!Ne4" makes no sense when no knight can go to e4.
       if (!threatens(b.leaves[0]?.seq[b.path.length - 1], yourColor)) continue;
+      if (!(start.pieces[b.move.from]?.[0] === oppColor || [...topTriggers].some((u) => tMove(u)?.to === b.move.from))) continue;
       const w = weightOf(b.leaves);
       if (w / total < opts.minShare) continue;
       if (weightOf(b.leaves.filter((l) => has(l, key, true))) / w >= 0.5) continue;
