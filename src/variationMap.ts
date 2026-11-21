@@ -35,6 +35,7 @@ export interface VarMove {
   after: GameState;
   share: number; // of the games in the position before it
   mine: boolean;
+  opening?: string; // Lichess's name of the position after it, when it has one
 }
 
 // One of your pieces, by its square at the opening's start.
@@ -52,7 +53,11 @@ export interface Plan {
   lines: VarMove[][]; // all its lines (heaviest first)
   share: number; // share of all games
   spots: Map<string, PieceSpot>; // by piece id
-  name?: string; // Lichess's name, when it is not just the start position's
+  // The plan's position: after `line[0..end)` — the opponent move where this
+  // plan leaves the others, then the moves (almost) everyone plays after it,
+  // up to the next real choice.
+  end: number;
+  name?: string; // Lichess's name of that position, when it is not just the start position's
   // Opponent moves where other lines of this plan leave its main line ("5.Nc3").
   alsoAfter: { moves: VarMove[]; at: number }[];
 }
@@ -76,6 +81,7 @@ export interface PlanOptions {
   settle: number; // a move fixes a piece's square when this share of the players choose it
   typical: number; // a plan's square for a piece: in at least this share of its games
   minPlan: number; // a plan must be played in this share of all games
+  forced: number; // a move played this often is part of the way to a plan's position
 }
 
 export const DEFAULT_PLAN_OPTIONS: PlanOptions = {
@@ -87,7 +93,8 @@ export const DEFAULT_PLAN_OPTIONS: PlanOptions = {
   maxRequests: 500,
   settle: 0.4,
   typical: 0.6,
-  minPlan: 0.05
+  minPlan: 0.05,
+  forced: 0.7
 };
 
 interface Node {
@@ -163,7 +170,7 @@ export async function scanPlans(
       const r = makeMove(st, mv.from, mv.to, mv.promotion);
       const child: Node = {
         state: r.next,
-        moves: [...n.moves, { ...mv, san: r.san, after: r.next, share: p.share, mine }],
+        moves: [...n.moves, { ...mv, san: r.san, after: r.next, share: p.share, mine, ...(p.opening ? { opening: p.opening } : {}) }],
         weight: p.weight,
         own: n.own + (mine ? 1 : 0),
         name: p.opening ?? n.name,
@@ -236,15 +243,32 @@ export async function scanPlans(
       if (alsoAfter.some((a) => a.at === at && a.moves[at].san === l.moves[at].san)) continue;
       alsoAfter.push({ moves: l.moves, at });
     }
-    const name = leaves[0].name && leaves[0].name !== rootName ? leaves[0].name : undefined;
     return {
       line,
       lines: leaves.map((l) => l.moves),
       share: d.weight,
       spots: describeSpots(d, pieces, setupOf, opts.typical),
-      ...(name ? { name } : {}),
+      end: line.length,
       alsoAfter: alsoAfter.slice(0, 3)
     };
+  });
+  // Each plan's position: the move where its main line leaves the closest
+  // line of another plan, then every move played in at least `forced` of
+  // the games, up to the next real choice.
+  plans.forEach((p, i) => {
+    let leaves = 0;
+    plans.forEach((q, j) => {
+      if (j === i) return;
+      for (const l of q.lines) {
+        const d = differsAt(p.line, l);
+        leaves = Math.max(leaves, d < 0 ? p.line.length : d);
+      }
+    });
+    let end = Math.min(leaves + 1, p.line.length);
+    while (end < p.line.length && p.line[end].share >= opts.forced) end += 1;
+    p.end = end;
+    const named = p.line.slice(0, end).filter((m) => m.opening).pop()?.opening;
+    if (named && named !== rootName) p.name = named;
   });
   return { plans, pieces, choices, requests };
 }

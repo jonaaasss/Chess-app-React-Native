@@ -1447,8 +1447,13 @@ function ReactionBoardEditorOverlay({
         // Threat arrows stay; the plan arrows on this position are replaced.
         const kept = at.arrows.filter((a) => threatOfArrow(a));
         const face = withFaceAnnotationsAt(prev[side], historyIndex, [...kept, ...res.arrows], at.circles);
-        // An empty Description gets "Key moves / Key reactions" in Jonas's own form.
-        const text = face.text.trim() ? face.text : planDescription(res, `Lichess explorer (${DB_LABEL[choices.db]})`);
+        // The Description gets "Key moves / Key reactions" in Jonas's own form:
+        // the whole text when empty, added below a text without them (e.g.
+        // "After 5.Nxc6 bxc6 6.e5" from Variations; no second "Source" line).
+        const gen = planDescription(res, `Lichess explorer (${DB_LABEL[choices.db]})`);
+        const own = face.text.trim();
+        const extra = gen.split('\n').filter((l) => !(own.includes('Source:') && l.startsWith('Source:')));
+        const text = !own ? gen : /Key moves:|Key reactions:/.test(own) || extra.length === 0 ? face.text : `${own}\n${extra.join('\n')}`;
         return { ...prev, [side]: { ...face, text } };
       });
       showSnackbar({ message: `Plan drawn: ${res.arrows.length} arrows from ${res.lines} lines`, actionLabel: 'Undo', onAction: () => setBoard(before), duration: 8000 });
