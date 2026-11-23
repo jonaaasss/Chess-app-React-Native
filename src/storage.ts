@@ -1,8 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as FileSystem from 'expo-file-system/legacy';
-import * as SQLite from 'expo-sqlite';
 import { boardStateToReactionBoard, cloneBoardFace, cloneReactionBoard, newReactionBoard, newReactionBoardFromStart } from './chess';
 import { buildExampleContent } from './exampleContent';
+import { readFile, readFromAsyncStorageDatabase, storeFileUri, writeFile } from './storeFile';
 import type { Card, CardMode, GroupId, Opening, OpeningStartPosition, Repertoire } from './types';
 
 const EXAMPLE_HIDDEN_KEY = 'exampleRepertoireHidden';
@@ -168,43 +167,9 @@ function migrate(s: Store): void {
   s.cards = s.cards.filter((c) => c.mode !== 'others');
 }
 
-// The whole store lives in a file, not in AsyncStorage: on Android a single
-// AsyncStorage value can't be read back once it is bigger than about 2 MB
-// ("Row too big to fit into CursorWindow"), and the store can grow past that.
-const STORE_FILE = `${FileSystem.documentDirectory}${STORAGE_KEY}.json`;
-const BEFORE_RESTORE_FILE = `${FileSystem.documentDirectory}${STORAGE_KEY}.before-restore.json`;
-
-async function readFile(uri: string): Promise<string | null> {
-  const info = await FileSystem.getInfoAsync(uri);
-  if (!info.exists) return null;
-  return FileSystem.readAsStringAsync(uri);
-}
-
-// Writes next to the target first and then swaps, so a crash halfway never
-// leaves a half-written file in place of the good one.
-async function writeFile(uri: string, contents: string): Promise<void> {
-  const tmp = `${uri}.tmp`;
-  await FileSystem.writeAsStringAsync(tmp, contents);
-  await FileSystem.deleteAsync(uri, { idempotent: true });
-  await FileSystem.moveAsync({ from: tmp, to: uri });
-}
-
-// AsyncStorage's own database (RKStorage), opened directly: unlike
-// AsyncStorage's reader it has no 2 MB limit per value. Only used to get the
-// data out of an older install, where it was kept as one large value.
-async function readFromAsyncStorageDatabase(key: string): Promise<string | null> {
-  const dir = String(SQLite.defaultDatabaseDirectory).replace(/\/files\/SQLite\/?$/, '/databases');
-  const db = await SQLite.openDatabaseAsync('RKStorage', undefined, dir);
-  try {
-    const row = await db.getFirstAsync<{ value: string }>(
-      'SELECT value FROM catalystLocalStorage WHERE key = ?',
-      [key]
-    );
-    return row?.value ?? null;
-  } finally {
-    await db.closeAsync();
-  }
-}
+// The whole store lives in a file (see `storeFile.ts`).
+const STORE_FILE = storeFileUri(STORAGE_KEY);
+const BEFORE_RESTORE_FILE = storeFileUri(`${STORAGE_KEY}.before-restore`);
 
 async function readFromAsyncStorage(key: string): Promise<string | null> {
   try {

@@ -23,31 +23,49 @@ export function boardMovesFromStart(board: ReactionBoard, mode: CardMode): Plain
 const memo = new Map<string, number | null>();
 
 // Null when it can't be worked out (the board does not start from the
-// opening's start position, no Lichess token, no connection).
+// opening's start position or its moves don't lead to its position, no
+// Lichess token, no connection).
 export async function boardShare(board: ReactionBoard, mode: CardMode, opening: OpeningStartPosition | undefined, yourColor: 'w' | 'b'): Promise<number | null> {
   const moves = boardMovesFromStart(board, mode);
   const prefix = opening?.setupMoves ?? [];
   if (moves.length < prefix.length) return null;
   for (let i = 0; i < prefix.length; i++) if (moves[i].from !== prefix[i].from || moves[i].to !== prefix[i].to) return null;
+  const begin: GameState = opening
+    ? { pieces: opening.pieces, turn: opening.turn, castling: opening.castling, enPassant: opening.enPassant }
+    : { pieces: startingPosition(), turn: 'w', castling: { wK: true, wQ: true, bK: true, bQ: true }, enPassant: null };
+  // The positions before each move; the moves must really lead to the
+  // board's position (a board set up by hand, or an older one, has no or only
+  // part of its history).
+  const before: GameState[] = [];
+  let st = begin;
+  try {
+    for (const m of moves.slice(prefix.length)) {
+      before.push(st);
+      st = makeMove(st, m.from, m.to, m.promotion).next;
+    }
+  } catch {
+    return null;
+  }
+  const target = mode === 'reactions' ? board.pieces : board.back.pieces;
+  const squares = new Set([...Object.keys(st.pieces), ...Object.keys(target)]);
+  if ([...squares].some((sq) => st.pieces[sq] !== target[sq])) return null;
   const db = await getExplorerDb();
   const key = `${db}|${yourColor}|${moves.map((m) => `${m.from}${m.to}${m.promotion ?? ''}`).join(',')}`;
   if (memo.has(key)) return memo.get(key)!;
-  let st: GameState = opening
-    ? { pieces: opening.pieces, turn: opening.turn, castling: opening.castling, enPassant: opening.enPassant }
-    : { pieces: startingPosition(), turn: 'w', castling: { wK: true, wQ: true, bK: true, bQ: true }, enPassant: null };
   let share = 1;
   try {
-    for (const m of moves.slice(prefix.length)) {
-      if (st.turn !== yourColor) {
-        const res = await fetchExplorer(toFen(st.pieces, st.turn, st.castling, st.enPassant), db);
-        const hit = res.games > 0 ? res.moves.find((x) => {
-          const mv = moveForSan(st, x.san);
-          return !!mv && mv.from === m.from && mv.to === m.to;
-        }) : undefined;
-        share *= hit ? hit.games / res.games : 0;
-        if (share === 0) break;
-      }
-      st = makeMove(st, m.from, m.to, m.promotion).next;
+    const rest = moves.slice(prefix.length);
+    for (let i = 0; i < rest.length; i++) {
+      const pos = before[i];
+      const m = rest[i];
+      if (pos.turn === yourColor) continue;
+      const res = await fetchExplorer(toFen(pos.pieces, pos.turn, pos.castling, pos.enPassant), db);
+      const hit = res.games > 0 ? res.moves.find((x) => {
+        const mv = moveForSan(pos, x.san);
+        return !!mv && mv.from === m.from && mv.to === m.to;
+      }) : undefined;
+      share *= hit ? hit.games / res.games : 0;
+      if (share === 0) break;
     }
   } catch {
     return null;

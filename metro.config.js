@@ -1,3 +1,4 @@
+const path = require('path');
 const { getDefaultConfig } = require('expo/metro-config');
 
 const config = getDefaultConfig(__dirname);
@@ -23,5 +24,16 @@ config.resolver.blockList =
     : Array.isArray(existingBlockList)
       ? [...existingBlockList, enginePattern]
       : enginePattern;
+
+// Web test build only (`npx expo export --platform web`, used by Claude to
+// test screens in a browser): react-native-webview has no web version, so on
+// the web it is swapped for a shim that runs the same Stockfish file in a Web
+// Worker. Android and iOS resolve every module exactly as before.
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (platform === 'web' && moduleName === 'react-native-webview') {
+    return { type: 'sourceFile', filePath: path.join(__dirname, 'src', 'web', 'WebViewShim.tsx') };
+  }
+  return context.resolveRequest(context, moduleName, platform);
+};
 
 module.exports = config;
