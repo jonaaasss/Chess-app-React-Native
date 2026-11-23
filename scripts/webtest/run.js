@@ -9,8 +9,9 @@
 // Pressables without text (gear, boards) are tapped with page.mouse.click(x, y).
 // The app's data stays in web-build/profile between runs; --fresh starts
 // empty (example repertoire only); --data loads a store first (Jonas's data
-// from share.js pull) and replaces what was there. The Lichess token can be any text in
-// Settings → Lichess: the cloud session's proxy supplies the real one.
+// from share.js pull) and replaces what was there. A placeholder Lichess
+// token is set when there is none: the cloud session's proxy supplies the
+// real one.
 const { chromium } = require('playwright');
 
 // Where storeFile.web.ts keeps the store.
@@ -51,10 +52,16 @@ const fs = require('fs');
   try {
     await page.goto('http://localhost:8765/');
     await page.waitForTimeout(2500);
+    // A placeholder Lichess token, so the explorer works (the session's proxy
+    // supplies the real one); and the store from --data.
     const dataAt = process.argv.indexOf('--data');
-    if (dataAt > 0) {
-      const json = fs.readFileSync(process.argv[dataAt + 1], 'utf8');
-      await page.evaluate(([k, v]) => localStorage.setItem(k, v), [STORE_KEY, json]);
+    const hasToken = await page.evaluate(() => !!localStorage.getItem('lichess.token'));
+    if (dataAt > 0 || !hasToken) {
+      const json = dataAt > 0 ? fs.readFileSync(process.argv[dataAt + 1], 'utf8') : null;
+      await page.evaluate(([k, v]) => {
+        if (!localStorage.getItem('lichess.token')) localStorage.setItem('lichess.token', 'lip_placeholder');
+        if (v) localStorage.setItem(k, v);
+      }, [STORE_KEY, json]);
       await page.reload();
       await page.waitForTimeout(2500);
     }
