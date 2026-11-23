@@ -9,6 +9,7 @@ import { BoardCoords, ArrowsSvg, CirclesSvg, PieceGlyph, NumberedArrowsSvg, Numb
 import { usePieceAnimation, PieceAnimationGhosts, PIECE_ANIM_DURATION_MS } from '../components/PieceAnimation';
 import type { GuideTargets } from '../components/GuideCoach';
 import { CollapsibleDescription } from '../components/CollapsibleDescription';
+import { BoardShare } from '../components/BoardShare';
 import type { CoachEvent } from '../guideContent';
 import { useAutoPlayMode } from '../components/ReactionModeSwitch';
 import { alertDialog, choiceDialog, showSnackbar, textDialog } from '../overlay';
@@ -801,6 +802,7 @@ export function ReactionStudy({
         {boards.length > 1 ? `Board ${boardIdx + 1} / ${boards.length} — ` : ''}
         {statusShown}
       </Text>
+      {!guideTargets && <BoardShare board={board} mode={localCard.mode} yourColor={yourColor} openingId={localCard.openingId} />}
       {leaves.length > 1 && (
         // Tapping it opens the lines tree at the bottom and scrolls there.
         <Pressable

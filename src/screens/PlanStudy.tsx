@@ -13,6 +13,7 @@ import { CloseCircleButton, textDialog } from '../overlay';
 import { saveStudyBoard } from '../studyEdits';
 import { MoveText } from '../components/MoveText';
 import { CollapsibleDescription } from '../components/CollapsibleDescription';
+import { BoardShare } from '../components/BoardShare';
 import type { Arrow, ArrowColor, Card, Circle, PieceCode, ReactionBoard } from '../types';
 import { ARROW_COLOR_NAMES, ARROW_COLOR_ORDER, arrowColors, BASE_ARROW_COLORS, boardStyles, DARK_TINT, colors, radius, touchTarget } from '../theme';
 import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, arrowIsOpponent, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, opponentTint, parallelOffsets, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
@@ -801,6 +802,8 @@ export function PlanStudy({
           {statusText}
         </Text>
       )}
+
+      {board && !guideTargets && <BoardShare board={board} mode={card.mode} yourColor={yourColor} openingId={card.openingId} />}
 
       <View ref={guideTargets?.board} collapsable={false}>
         <View

@@ -23,13 +23,13 @@
 // makes Nc3 Nxe4 a branch instead of Bd2 Bxd2+. Arrows are not needed there.
 // A "summary" card (at most one) is a Plan-like card shown first; its arrows
 // may carry "link": "<name of another card in this import>".
-import { startingPosition } from './chess';
+import { MAX_BOARDS, startingPosition } from './chess';
 import { allLegalMoves, createGameState, isPromotionMove, makeMove, type GameState } from './chessEngine';
 import { cleanArrowNotes } from './arrowNotes';
 import { addOpening, deleteOpening, saveCard, setOpeningSummary, uid } from './storage';
 import type { Arrow, ArrowColor, ArrowNotes, ArrowResponse, BoardFace, BoardMove, Card, Circle, MoveNode, Opening, PromotionPiece, ReactionBoard } from './types';
 
-const MAX_BOARDS_PER_CARD = 6;
+const MAX_BOARDS_PER_CARD = MAX_BOARDS;
 const MAX_CARDS = 60;
 const MAX_ARROWS_PER_BOARD = 40;
 const SQUARE = /^[a-h][1-8]$/;

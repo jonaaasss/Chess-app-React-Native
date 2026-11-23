@@ -13,6 +13,9 @@ export function allSquares(): string[] {
   return squares;
 }
 
+// A card holds at most this many boards (2 per row in the card editor, so even).
+export const MAX_BOARDS = 8;
+
 export function startingPosition(): Partial<Record<string, PieceCode>> {
   const order = ['R', 'N', 'B', 'Q', 'K', 'B', 'N', 'R'];
   const result: Partial<Record<string, PieceCode>> = {};

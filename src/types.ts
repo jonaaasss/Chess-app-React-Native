@@ -170,7 +170,7 @@ export interface BoardFace {
 //    zero arrows on `back`. `recording` stays empty.
 export interface ReactionBoard {
   id: string;
-  order: number; // 0-5, for the 2-column layout
+  order: number; // 0-7, for the 2-column layout (MAX_BOARDS in chess.ts)
   pieces: Partial<Record<string, PieceCode>>;
   turn: 'w' | 'b';
   castling: CastlingRights;

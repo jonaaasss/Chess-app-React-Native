@@ -1,22 +1,26 @@
 import type { LinkTarget } from '../linkTargets';
 import React, { useEffect, useRef } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet } from 'react-native';
-import { newReactionBoardFromStart, cloneReactionBoard, defaultOverviewText, faceAnnotations, isPlanLike } from '../chess';
+import { newReactionBoardFromStart, cloneReactionBoard, defaultOverviewText, faceAnnotations, isPlanLike, MAX_BOARDS, startingPosition } from '../chess';
 import { uid } from '../storage';
 import { ChessBoardView } from '../components/ChessBoard';
 import { ModeTip } from '../components/ModeTip';
 import { useTutorial, useTutorialTarget } from '../tutorial';
-import { CloseCircleButton, dismissSnackbar, showSnackbar } from '../overlay';
+import { alertDialog, CloseCircleButton, dismissSnackbar, showSnackbar } from '../overlay';
 import type { CardMode, OpeningStartPosition, ReactionBoard } from '../types';
 import { colors, radius, spacing } from '../theme';
 import { openReactionBoardEditor } from './ReactionBoardEditorOverlay';
 import { Reorderable } from '../components/Reorderable';
+import { BoardShare } from '../components/BoardShare';
+import { getLichessToken } from '../lichessExplorer';
+import { openAddVariations } from './VariationMapOverlay';
 
-const MAX_BOARDS = 6;
 const PREVIEW_SIZE = 148;
 
-// The card's board section for all three modes: up to 6 boards in 2
-// columns, filled row-major (board 1,3,5 in column 1; 2,4,6 in column 2).
+// The card's board section for all three modes: up to MAX_BOARDS (8) boards
+// in 2 columns, filled row-major (board 1,3,5,7 in column 1; 2,4,6,8 in
+// column 2). Under each board: how often its position comes up (BoardShare).
+// Plan cards also get "Add variations (Lichess)".
 // Each tile opens the editor for that mode on tap; a mode-specific hint
 // above the grid explains whatever isn't obvious from the boards alone.
 export function BoardsGrid({
@@ -25,6 +29,7 @@ export function BoardsGrid({
   yourColor,
   boardStyle,
   startPosition,
+  openingId,
   linkTargets,
   overviewText,
   onOverviewChange,
@@ -40,6 +45,8 @@ export function BoardsGrid({
   // carries over the source board's own position instead (see
   // handleDuplicate below).
   startPosition?: OpeningStartPosition;
+  // The card's opening: for the "% of games" under each board.
+  openingId?: string;
   // Summary cards: the cards an arrow's "Link to card" can point to.
   linkTargets?: LinkTarget[];
   // Card.overviewText — lives here (above the boards, below the mode tip)
@@ -65,6 +72,23 @@ export function BoardsGrid({
 
   function renumber(list: ReactionBoard[]): ReactionBoard[] {
     return list.map((b, i) => ({ ...b, order: i }));
+  }
+
+  // Plan cards: more variations from the Lichess explorer, as new boards.
+  async function handleAddVariations() {
+    if (!(await getLichessToken())) {
+      await alertDialog('Variations use the Lichess explorer. Add your Lichess token first in Settings → Lichess.');
+      return;
+    }
+    const start: OpeningStartPosition = startPosition ?? {
+      pieces: startingPosition(),
+      turn: 'w',
+      castling: { wK: true, wQ: true, bK: true, bQ: true },
+      enPassant: null,
+      setupMoves: []
+    };
+    const added = await openAddVariations(sorted, start, yourColor);
+    if (added?.length) onChange(renumber([...sorted, ...added]));
   }
 
   async function handleAdd() {
@@ -180,6 +204,7 @@ export function BoardsGrid({
               <ChessBoardView board={previewBoard} size={PREVIEW_SIZE} flipped={yourColor === 'b'} />
             </Pressable>
             <Text style={styles.tileCaption}>Board {tileIdx + 1} · tap to edit</Text>
+            {openingId && <BoardShare board={board} mode={mode} yourColor={yourColor} openingId={openingId} />}
             <View style={styles.tileActions}>
               <Pressable
                 onPress={() => handleDuplicate(board)}
@@ -212,6 +237,11 @@ export function BoardsGrid({
             {MAX_BOARDS} / {MAX_BOARDS} boards
           </Text>
         </View>
+      )}
+      {mode === 'plan' && boards.length < MAX_BOARDS && (
+        <Pressable onPress={handleAddVariations} style={styles.addBoardBtn}>
+          <Text style={styles.addBoardText}>+ Add variations (Lichess)</Text>
+        </Pressable>
       )}
     </View>
   );

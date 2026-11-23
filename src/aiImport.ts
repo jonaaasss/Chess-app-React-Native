@@ -30,7 +30,7 @@ const INSTRUCTION_LINES = [
   "",
   "CARDS",
   "- Every card has \"mode\":\"plan\". Make one card per important decision or scenario, NOT one card per PGN variation. Example: each main reply of the opponent gets a card, and a challenging opponent move (a pin, a gambit, a trap) gets its own card that shows which move I play in which scenario.",
-  "- A card has 1 to 6 boards. Board 1 is the first position; the next boards show how the scenario continues depending on the opponent's reply.",
+  "- A card has 1 to 8 boards. Board 1 is the first position; the next boards show how the scenario continues depending on the opponent's reply.",
   "- Only include standard, important replies. Skip rare sidelines.",
   "- Name a card after the opponent's key move, e.g. \"Qa5\" or \"Nf6 and !Bg4\". Put \"!\" directly before a move that is dangerous for me.",
   "",
@@ -86,7 +86,7 @@ const INSTRUCTION_LINES = [
   "",
   "OUTPUT RULES",
   "- Valid JSON with plain straight quotes. No line breaks inside any string value except the escaped sequence \\n in the summary.",
-  "- At most 60 cards, 6 boards per card, 40 arrows per board.",
+  "- At most 60 cards, 8 boards per card, 40 arrows per board.",
   "- Before answering, replay every \"moves\" string and check that each move is legal and every arrow square is valid."
 ];
 const INSTRUCTIONS = INSTRUCTION_LINES.join('\n');

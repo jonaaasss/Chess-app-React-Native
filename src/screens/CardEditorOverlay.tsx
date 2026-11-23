@@ -374,6 +374,7 @@ function CardEditorOverlay({
           yourColor={yourColor}
           boardStyle={boardStyle}
           startPosition={openingStartPosition}
+          openingId={card.openingId}
           linkTargets={card.mode === 'summary' ? linkTargets : undefined}
           overviewText={card.overviewText}
           onOverviewChange={(overviewText) => setCard((prev) => (prev ? { ...prev, overviewText } : prev))}
