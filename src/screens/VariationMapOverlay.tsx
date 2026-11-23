@@ -23,15 +23,16 @@ import { makeMove, type GameState } from '../chessEngine';
 import { ChessBoardView } from '../components/ChessBoard';
 import { boardMovesFromStart } from '../boardShare';
 import { DB_LABEL, fetchExplorer, getExplorerDb, type ExplorerDb } from '../lichessExplorer';
-import { closestPlan, DEFAULT_PLAN_OPTIONS, scanPlans, spotDifferences, spotText, type Plan, type PlanPiece, type VarMove, type VariationChoice } from '../variationMap';
+import { closestPlan, DEFAULT_PLAN_OPTIONS, scanPlans, spotDifferences, type Plan, type PlanPiece, type VarMove, type VariationChoice } from '../variationMap';
 import { makePlanBoard } from '../importOpening';
 import { allowScreenOff, keepScreenOn } from '../keepAwake';
 import { addOpening, deleteOpening, getBoardStyle, saveCard, uid } from '../storage';
 import { shareText } from '../boardShare';
 import type { BoardMove, OpeningStartPosition, ReactionBoard } from '../types';
 
-// "Variations from": a plan must come up in at least this share of the games.
-const MIN_PLANS = [0.05, 0.03, 0.02, 0.01];
+// A plan must come up in at least this share of the games; the list is
+// sorted from most to least played.
+const MIN_PLAN = 0.02;
 
 type Mode = { kind: 'create'; repertoireId: string; name: string } | { kind: 'add'; existing: ReactionBoard[] };
 
@@ -85,7 +86,6 @@ function VariationMapOverlay({
     mode.kind === 'add' ? boardOverrides(mode.existing, start, yourColor) : new Map()
   );
   const [boardStyle, setBoardStyle] = useState(0);
-  const [minPlan, setMinPlan] = useState(MIN_PLANS[0]);
   const [db, setDb] = useState<ExplorerDb>('lichess');
   const cancelled = useRef(false);
   const startState: GameState = { pieces: start.pieces, turn: start.turn, castling: start.castling, enPassant: start.enPassant };
@@ -111,31 +111,56 @@ function VariationMapOverlay({
   const planState = (p: Plan): GameState => (p.end > 0 ? p.line[p.end - 1].after : startState);
   // How often that position comes up: the opponent's choices on the way.
   const posShare = (p: Plan) => p.line.slice(0, p.end).reduce((s, m) => (m.mine ? s : s * m.share), 1);
-  // Board numbers (1-based) of the card's boards, by position.
-  const onBoard = new Map<string, number>();
-  [...existing]
+  // The card's boards: their number, position and the moves from the
+  // opening's start to it (null when the board doesn't start there).
+  const boardLines = [...existing]
     .sort((a, b) => a.order - b.order)
-    .forEach((b, i) => {
-      // Plan boards keep their position on `back`.
-      const key = posKey(b.back);
-      if (!onBoard.has(key)) onBoard.set(key, i + 1);
+    .map((b, i) => {
+      const moves = boardMovesFromStart(b, 'plan');
+      const pre = start.setupMoves;
+      const fromStart = moves.length >= pre.length && pre.every((m, k) => m.from === moves[k].from && m.to === moves[k].to);
+      return { no: i + 1, key: posKey(b.back), line: fromStart ? moves.slice(pre.length) : null };
     });
-  const alreadyOn = (p: Plan) => onBoard.get(posKey(planState(p)));
+  // Whether one of a plan's lines goes through a board's position.
+  const through = (p: Plan, b: (typeof boardLines)[number]) =>
+    posKey(planState(p)) === b.key ||
+    (b.line !== null && p.lines.some((l) => b.line!.length <= l.length && b.line!.every((m, k) => l[k].from === m.from && l[k].to === m.to)));
+  // A board's own plan is the most played plan that goes through its
+  // position; another plan through it continues from that board.
+  function mapBoards(list: Plan[]): { own: Map<Plan, number>; parent: Map<Plan, number>; ownOf: Map<number, Plan> } {
+    const own = new Map<Plan, number>();
+    const ownOf = new Map<number, Plan>();
+    for (const b of boardLines) {
+      const best = list.filter((p) => through(p, b)).sort((x, y) => y.share - x.share)[0];
+      if (best && !own.has(best)) {
+        own.set(best, b.no);
+        ownOf.set(b.no, best);
+      }
+    }
+    const parent = new Map<Plan, number>();
+    for (const p of list) {
+      if (own.has(p)) continue;
+      const deepest = boardLines.filter((b) => ownOf.has(b.no) && through(p, b)).sort((x, y) => (y.line?.length ?? 0) - (x.line?.length ?? 0))[0];
+      if (deepest) parent.set(p, deepest.no);
+    }
+    return { own, parent, ownOf };
+  }
 
-  async function scan(over: Map<string, string>, min: number) {
+  async function scan(over: Map<string, string>) {
     setStatus('Starting…');
     setPlans(null);
     try {
       const d = await getExplorerDb();
       setDb(d);
-      const opts = { ...DEFAULT_PLAN_OPTIONS, minPlan: min, minWeight: Math.min(DEFAULT_PLAN_OPTIONS.minWeight, min), maxRequests: min < 0.03 ? 800 : DEFAULT_PLAN_OPTIONS.maxRequests };
+      const opts = { ...DEFAULT_PLAN_OPTIONS, minPlan: MIN_PLAN, minWeight: Math.min(DEFAULT_PLAN_OPTIONS.minWeight, MIN_PLAN), maxRequests: 800 };
       const r = await scanPlans(startState, yourColor, start.setupMoves, (f) => fetchExplorer(f, d), over, opts, setStatus, () => cancelled.current);
       if (cancelled.current) return;
       const sorted = [...r.plans].sort((a, b) => posShare(b) - posShare(a));
       setPlans(sorted);
       setPieces(r.pieces);
       setChoices(r.choices);
-      const free = sorted.map((p, i) => (alreadyOn(p) ? -1 : i)).filter((i) => i >= 0);
+      const own = mapBoards(sorted).own;
+      const free = sorted.map((p, i) => (own.has(p) ? -1 : i)).filter((i) => i >= 0);
       setSelected(new Set(free.slice(0, maxNew)));
     } catch (e) {
       await alertDialog(e instanceof Error ? e.message : String(e));
@@ -146,7 +171,7 @@ function VariationMapOverlay({
   }
 
   useEffect(() => {
-    void scan(overrides, minPlan);
+    void scan(overrides);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -154,13 +179,7 @@ function VariationMapOverlay({
     const next = new Map(overrides);
     next.set(c.fen, san);
     setOverrides(next);
-    void scan(next, minPlan);
-  }
-
-  function chooseMin(min: number) {
-    if (min === minPlan) return;
-    setMinPlan(min);
-    void scan(overrides, min);
+    void scan(next);
   }
 
   // "5.Nxc6 bxc6 6.e5" (or "5...Nf6 6.Nc3" when the line starts with Black),
@@ -179,16 +198,24 @@ function VariationMapOverlay({
   const moveName = (moves: VarMove[], i: number) => formatMoves(moves, i, i + 1);
   const title = (p: Plan, i: number) => (mode.kind === 'add' ? p.name ?? 'Variation' : `Plan ${i + 1}${p.name ? `: ${p.name}` : ''}`);
   // Add: the plans on the card's boards, with their board numbers.
-  const boardPlans = (plans ?? []).map((p) => ({ p, no: alreadyOn(p) })).filter((x): x is { p: Plan; no: number } => x.no !== undefined);
-  // What a plan has different from the most similar one before it: in Add
-  // from the most similar board (else from the most similar earlier plan).
-  function difference(p: Plan, earlier: { p: Plan; label: string }[]): { label: string; diff: string[] } | null {
+  const boards = mapBoards(plans ?? []);
+  const alreadyOn = (p: Plan) => boards.own.get(p);
+  const boardPlans = [...boards.own].map(([p, no]) => ({ p, no }));
+  // What a plan has different from another: in Add from the board it
+  // continues from (else the most similar board), in Create from the most
+  // similar earlier plan.
+  function difference(p: Plan, earlier: { p: Plan; label: string }[]): { label: string; diff: string[]; continues: boolean } | null {
+    const parentNo = mode.kind === 'add' ? boards.parent.get(p) : undefined;
+    if (parentNo !== undefined) {
+      const base = boards.ownOf.get(parentNo)!;
+      const label = `board ${parentNo}`;
+      return { label, diff: spotDifferences(pieces, p, base, label), continues: true };
+    }
     const pool = mode.kind === 'add' && boardPlans.length ? boardPlans.map((x) => ({ p: x.p, label: `board ${x.no}` })) : earlier;
     if (pool.length === 0) return null;
     const best = pool[closestPlan(pieces, p, pool.map((x) => x.p))];
-    return { label: best.label, diff: spotDifferences(pieces, p, best.p, best.label) };
+    return { label: best.label, diff: spotDifferences(pieces, p, best.p, best.label), continues: false };
   }
-  const piecesText = (p: Plan) => pieces.map((pc) => spotText(pc, p.spots.get(pc.id))).join(', ');
   const alsoText = (p: Plan) => (p.alsoAfter.length ? `Also after ${p.alsoAfter.map((a) => moveName(a.moves, a.at)).join(', ')}` : '');
   const afterText = (p: Plan) => (p.end > 0 ? `After ${formatMoves(p.line, 0, p.end)}` : 'The start position');
 
@@ -225,7 +252,8 @@ function VariationMapOverlay({
       const text = [
         title(p, i),
         `${afterText(p)}.`,
-        d && d.diff.length ? `Different from ${d.label}: ${d.diff.join(', ')}` : '',
+        d?.continues ? `Continues from ${d.label}.` : '',
+        d && d.diff.length ? `Different from ${d.label}:\n${d.diff.join('\n')}` : '',
         alsoText(p) ? `${alsoText(p)}.` : '',
         `About ${shareText(posShare(p))} of the games from the opening's start position. Source: Lichess explorer (${DB_LABEL[db]})`
       ]
@@ -277,24 +305,6 @@ function VariationMapOverlay({
         <Text style={styles.intro}>
           The plans of this opening from the Lichess explorer: a new plan starts where an opponent move sends one of your pieces (knights, bishops, queen, castling) to another square. Each ticked plan becomes a board on the position where it starts, with all moves from the start of the opening. Draw the arrows with Generate plan.
         </Text>
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Show variations that come up in at least</Text>
-          <View style={styles.chips}>
-            {MIN_PLANS.map((m) => (
-              <Pressable
-                key={m}
-                onPress={() => chooseMin(m)}
-                disabled={!!status}
-                style={[styles.chip, minPlan === m && styles.chipOn]}
-                accessibilityRole="radio"
-                accessibilityState={{ selected: minPlan === m }}
-              >
-                <Text style={[styles.chipText, minPlan === m && styles.chipTextOn]}>{`${Math.round(m * 100)}% of games`}</Text>
-              </Pressable>
-            ))}
-          </View>
-          <Text style={styles.hint}>Lower finds more and smaller variations (the first scan takes longer).</Text>
-        </View>
         {status && (
           <View style={styles.statusRow}>
             <ActivityIndicator size="small" color={colors.textDim} />
@@ -327,7 +337,7 @@ function VariationMapOverlay({
                 <Text style={styles.rowInfo}>{`${boardPlans.length} plan${boardPlans.length === 1 ? ' is' : 's are'} already on your boards.`}</Text>
               )}
               {mode.kind === 'add' && plans!.length > 0 && boardPlans.length === plans!.length && (
-                <Text style={styles.status}>No other plans at this share of games: try a lower one above.</Text>
+                <Text style={styles.status}>No other plans that come up in at least 2% of the games.</Text>
               )}
               {plans!.map((p, i) => {
                 if (mode.kind === 'add' && alreadyOn(p) !== undefined) return null;
@@ -344,8 +354,13 @@ function VariationMapOverlay({
                         <ChessBoardView board={{ pieces: st.pieces, style: boardStyle, arrows: [], circles: [] }} size={PREVIEW} flipped={yourColor === 'b'} />
                         <View style={styles.rowText}>
                           <Text style={styles.rowLine}>{afterText(p)}</Text>
-                          <Text style={styles.rowPieces}>{`Your pieces: ${piecesText(p)}`}</Text>
-                          {d && d.diff.length > 0 && <Text style={styles.rowInfo}>{`Different from ${d.label}: ${d.diff.join(', ')}`}</Text>}
+                          {d?.continues && <Text style={styles.rowPieces}>{`Continues from ${d.label}`}</Text>}
+                          {d && d.diff.length > 0 && <Text style={styles.rowInfo}>{`Different from ${d.label}:`}</Text>}
+                          {d?.diff.map((x) => (
+                            <Text key={x} style={styles.rowInfo}>
+                              {x}
+                            </Text>
+                          ))}
                           {!!alsoText(p) && <Text style={styles.rowInfo}>{alsoText(p)}</Text>}
                         </View>
                       </View>
