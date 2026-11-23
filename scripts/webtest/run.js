@@ -1,15 +1,20 @@
 // Drives the web test build (scripts/webtest/build.sh) in a phone-sized
-// Chromium: node scripts/webtest/run.js <steps.js> [--fresh]
+// Chromium: node scripts/webtest/run.js <steps.js> [--fresh] [--data <store.json>]
 // steps.js exports async (page, h) => { ... }:
 //   h.tap('Text')      tap the first element with exactly that text
 //   h.shot('name')     screenshot to web-build/shots/name.png
 //   h.text()           the visible text of the page
 //   h.wait(ms)
+//   h.saveStore(file)  write the app's data (the whole store) to a file
 // Pressables without text (gear, boards) are tapped with page.mouse.click(x, y).
 // The app's data stays in web-build/profile between runs; --fresh starts
-// empty (example repertoire only). The Lichess token can be any text in
+// empty (example repertoire only); --data loads a store first (Jonas's data
+// from share.js pull) and replaces what was there. The Lichess token can be any text in
 // Settings → Lichess: the cloud session's proxy supplies the real one.
 const { chromium } = require('playwright');
+
+// Where storeFile.web.ts keeps the store.
+const STORE_KEY = 'file:chess-flashcards-data.json';
 const path = require('path');
 const fs = require('fs');
 
@@ -38,10 +43,21 @@ const fs = require('fs');
       await page.waitForTimeout(opts.wait ?? 500);
     },
     wait: (ms) => page.waitForTimeout(ms),
+    saveStore: async (file) => {
+      fs.writeFileSync(file, await page.evaluate((k) => localStorage.getItem(k), STORE_KEY));
+      console.log('store saved', file);
+    },
   };
   try {
     await page.goto('http://localhost:8765/');
     await page.waitForTimeout(2500);
+    const dataAt = process.argv.indexOf('--data');
+    if (dataAt > 0) {
+      const json = fs.readFileSync(process.argv[dataAt + 1], 'utf8');
+      await page.evaluate(([k, v]) => localStorage.setItem(k, v), [STORE_KEY, json]);
+      await page.reload();
+      await page.waitForTimeout(2500);
+    }
     await steps(page, h);
   } catch (e) {
     console.log('STEP ERROR', String(e).slice(0, 800));

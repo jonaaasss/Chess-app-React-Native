@@ -20,6 +20,7 @@ import { colors } from './src/theme';
 import { OverlayHost, SnackbarLayer } from './src/overlay';
 import { TutorialProvider } from './src/tutorial';
 import { startBackupService } from './src/autoBackup';
+import { startClaudeShareService } from './src/claudeShare';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { RepertoiresScreen } from './src/screens/RepertoiresScreen';
 import { OpeningsScreen } from './src/screens/OpeningsScreen';
@@ -121,6 +122,12 @@ export default function App() {
   useEffect(() => {
     if (!dataReady) return;
     return startBackupService();
+  }, [dataReady]);
+
+  // "Share my data with Claude" (only does anything while turned on and signed in).
+  useEffect(() => {
+    if (!dataReady) return;
+    return startClaudeShareService();
   }, [dataReady]);
 
   const onLayoutRootView = useCallback(() => {

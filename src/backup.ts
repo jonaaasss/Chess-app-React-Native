@@ -89,7 +89,7 @@ export function onBackupMetaChange(listener: () => void): () => void {
 
 const BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
-function toBase64(bytes: Uint8Array): string {
+export function toBase64(bytes: Uint8Array): string {
   const parts: string[] = [];
   for (let i = 0; i < bytes.length; i += 3) {
     const b0 = bytes[i];
@@ -105,7 +105,7 @@ function toBase64(bytes: Uint8Array): string {
   return parts.join('');
 }
 
-function fromBase64(text: string): Uint8Array {
+export function fromBase64(text: string): Uint8Array {
   const lookup = new Uint8Array(128);
   for (let i = 0; i < BASE64.length; i++) lookup[BASE64.charCodeAt(i)] = i;
   const padding = text.endsWith('==') ? 2 : text.endsWith('=') ? 1 : 0;

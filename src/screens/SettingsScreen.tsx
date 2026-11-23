@@ -20,6 +20,7 @@ import { AccountSection } from './AccountSection';
 import { UpdatesSection } from './UpdatesSection';
 import { LichessSection } from './LichessSection';
 import { openDevExportDialog } from './DevExportOverlay';
+import { ClaudeShareSection } from './ClaudeShareSection';
 
 const DEV_EXPORT_DESCRIPTION =
   'Adds an "Export repertoire..." action below that dumps a repertoire as plain text, to copy out of the app.';
@@ -136,6 +137,7 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
           <Text style={styles.devExportBtnText}>Export repertoire...</Text>
         </Pressable>
       )}
+      <ClaudeShareSection />
     </Screen>
   );
 }
