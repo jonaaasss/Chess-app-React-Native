@@ -7,9 +7,11 @@
 // - New opening → "Variations (Lichess)" (`openVariationMap`): creates the
 //   opening with one Plan card "Variations". Nothing is saved until "Create";
 //   Cancel leaves no opening behind.
-// - Card editor → "Add variations (Lichess)" (`openAddVariations`): returns
-//   the new boards for that card; plans already on one of its boards are
-//   shown as such and can't be ticked again.
+// - Card editor → "Add variations (Lichess)" (`openAddVariations`): your
+//   moves are the ones on the card's boards (no "Your moves" chips), only
+//   plans that are not on a board yet are listed, each compared with the
+//   board it looks most like; returns the new boards for that card.
+// Every plan in the list shows its position on a small board.
 // A card holds at most MAX_BOARDS (8, chess.ts) boards.
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -17,12 +19,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { showOverlay, useOverlayBack, alertDialog } from '../overlay';
 import { colors, radius, touchTarget, type } from '../theme';
 import { MAX_BOARDS, toFen } from '../chess';
-import type { GameState } from '../chessEngine';
+import { makeMove, type GameState } from '../chessEngine';
+import { ChessBoardView } from '../components/ChessBoard';
+import { boardMovesFromStart } from '../boardShare';
 import { DB_LABEL, fetchExplorer, getExplorerDb, type ExplorerDb } from '../lichessExplorer';
 import { closestPlan, DEFAULT_PLAN_OPTIONS, scanPlans, spotDifferences, spotText, type Plan, type PlanPiece, type VarMove, type VariationChoice } from '../variationMap';
 import { makePlanBoard } from '../importOpening';
 import { allowScreenOff, keepScreenOn } from '../keepAwake';
-import { addOpening, deleteOpening, saveCard, uid } from '../storage';
+import { addOpening, deleteOpening, getBoardStyle, saveCard, uid } from '../storage';
 import { shareText } from '../boardShare';
 import type { BoardMove, OpeningStartPosition, ReactionBoard } from '../types';
 
@@ -30,6 +34,33 @@ import type { BoardMove, OpeningStartPosition, ReactionBoard } from '../types';
 const MIN_PLANS = [0.05, 0.03, 0.02, 0.01];
 
 type Mode = { kind: 'create'; repertoireId: string; name: string } | { kind: 'add'; existing: ReactionBoard[] };
+
+const PREVIEW = 120;
+
+// Your moves on the card's boards, by position (for the scan's `overrides`):
+// at every position on a board where it is your turn, the move you play.
+function boardOverrides(boards: ReactionBoard[], start: OpeningStartPosition, yourColor: 'w' | 'b'): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const b of boards) {
+    const moves = boardMovesFromStart(b, 'plan');
+    const prefix = start.setupMoves;
+    if (moves.length < prefix.length || prefix.some((m, i) => m.from !== moves[i].from || m.to !== moves[i].to)) continue;
+    let st: GameState = { pieces: start.pieces, turn: start.turn, castling: start.castling, enPassant: start.enPassant };
+    try {
+      for (const m of moves.slice(prefix.length)) {
+        const r = makeMove(st, m.from, m.to, m.promotion);
+        if (st.turn === yourColor) {
+          const fen = toFen(st.pieces, st.turn, st.castling, st.enPassant);
+          if (!out.has(fen)) out.set(fen, r.san);
+        }
+        st = r.next;
+      }
+    } catch {
+      // A board that can't be replayed says nothing about your moves.
+    }
+  }
+  return out;
+}
 
 const posKey = (st: { pieces: GameState['pieces']; turn: 'w' | 'b'; castling: GameState['castling']; enPassant: string | null }) =>
   toFen(st.pieces, st.turn, st.castling, st.enPassant);
@@ -50,7 +81,10 @@ function VariationMapOverlay({
   const [choices, setChoices] = useState<VariationChoice[]>([]);
   const [status, setStatus] = useState<string | null>('Starting…');
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [overrides, setOverrides] = useState<Map<string, string>>(new Map());
+  const [overrides, setOverrides] = useState<Map<string, string>>(() =>
+    mode.kind === 'add' ? boardOverrides(mode.existing, start, yourColor) : new Map()
+  );
+  const [boardStyle, setBoardStyle] = useState(0);
   const [minPlan, setMinPlan] = useState(MIN_PLANS[0]);
   const [db, setDb] = useState<ExplorerDb>('lichess');
   const cancelled = useRef(false);
@@ -69,6 +103,9 @@ function VariationMapOverlay({
     cancelled.current = true;
     close(null);
   });
+  useEffect(() => {
+    getBoardStyle().then(setBoardStyle).catch(() => undefined);
+  }, []);
 
   // The position a plan's board shows.
   const planState = (p: Plan): GameState => (p.end > 0 ? p.line[p.end - 1].after : startState);
@@ -140,7 +177,17 @@ function VariationMapOverlay({
       .join(' ');
   }
   const moveName = (moves: VarMove[], i: number) => formatMoves(moves, i, i + 1);
-  const title = (p: Plan, i: number) => `Plan ${i + 1}${p.name ? `: ${p.name}` : ''}`;
+  const title = (p: Plan, i: number) => (mode.kind === 'add' ? p.name ?? 'Variation' : `Plan ${i + 1}${p.name ? `: ${p.name}` : ''}`);
+  // Add: the plans on the card's boards, with their board numbers.
+  const boardPlans = (plans ?? []).map((p) => ({ p, no: alreadyOn(p) })).filter((x): x is { p: Plan; no: number } => x.no !== undefined);
+  // What a plan has different from the most similar one before it: in Add
+  // from the most similar board (else from the most similar earlier plan).
+  function difference(p: Plan, earlier: { p: Plan; label: string }[]): { label: string; diff: string[] } | null {
+    const pool = mode.kind === 'add' && boardPlans.length ? boardPlans.map((x) => ({ p: x.p, label: `board ${x.no}` })) : earlier;
+    if (pool.length === 0) return null;
+    const best = pool[closestPlan(pieces, p, pool.map((x) => x.p))];
+    return { label: best.label, diff: spotDifferences(pieces, p, best.p, best.label) };
+  }
   const piecesText = (p: Plan) => pieces.map((pc) => spotText(pc, p.spots.get(pc.id))).join(', ');
   const alsoText = (p: Plan) => (p.alsoAfter.length ? `Also after ${p.alsoAfter.map((a) => moveName(a.moves, a.at)).join(', ')}` : '');
   const afterText = (p: Plan) => (p.end > 0 ? `After ${formatMoves(p.line, 0, p.end)}` : 'The start position');
@@ -174,13 +221,11 @@ function VariationMapOverlay({
 
   function makeBoards(picked: { p: Plan; i: number }[], firstOrder: number): ReactionBoard[] {
     return picked.map(({ p, i }, k) => {
-      const earlier = picked.slice(0, k);
-      const base = k === 0 ? null : earlier[closestPlan(pieces, p, earlier.map((e) => e.p))];
-      const diff = base ? spotDifferences(pieces, p, base.p, `plan ${base.i + 1}`) : [];
+      const d = difference(p, picked.slice(0, k).map((e) => ({ p: e.p, label: `plan ${e.i + 1}` })));
       const text = [
         title(p, i),
         `${afterText(p)}.`,
-        base && diff.length ? `Different from plan ${base.i + 1}: ${diff.join(', ')}` : '',
+        d && d.diff.length ? `Different from ${d.label}: ${d.diff.join(', ')}` : '',
         alsoText(p) ? `${alsoText(p)}.` : '',
         `About ${shareText(posShare(p))} of the games from the opening's start position. Source: Lichess explorer (${DB_LABEL[db]})`
       ]
@@ -258,7 +303,7 @@ function VariationMapOverlay({
         )}
         {ready && (
           <>
-            {choices.length > 0 && (
+            {mode.kind === 'create' && choices.length > 0 && (
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Your moves</Text>
                 {choices.map((c) => (
@@ -278,22 +323,32 @@ function VariationMapOverlay({
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>{`Plans, most played first (${count} of at most ${maxNew} new board${maxNew === 1 ? '' : 's'})`}</Text>
               {plans!.length === 0 && <Text style={styles.status}>The explorer has too few games from this position.</Text>}
+              {mode.kind === 'add' && boardPlans.length > 0 && (
+                <Text style={styles.rowInfo}>{`${boardPlans.length} plan${boardPlans.length === 1 ? ' is' : 's are'} already on your boards.`}</Text>
+              )}
+              {mode.kind === 'add' && plans!.length > 0 && boardPlans.length === plans!.length && (
+                <Text style={styles.status}>No other plans at this share of games: try a lower one above.</Text>
+              )}
               {plans!.map((p, i) => {
+                if (mode.kind === 'add' && alreadyOn(p) !== undefined) return null;
                 const on = selected.has(i);
-                const boardNo = alreadyOn(p);
-                const blocked = boardNo !== undefined || (!on && count >= maxNew);
-                const b = i === 0 ? -1 : closestPlan(pieces, p, plans!.slice(0, i));
-                const diff = b < 0 ? [] : spotDifferences(pieces, p, plans![b], `plan ${b + 1}`);
+                const blocked = !on && count >= maxNew;
+                const d = difference(p, plans!.slice(0, i).map((q, j) => ({ p: q, label: `plan ${j + 1}` })));
+                const st = planState(p);
                 return (
                   <Pressable key={i} onPress={() => toggle(i)} disabled={blocked} style={[styles.row, blocked && styles.disabled]} accessibilityRole="checkbox" accessibilityState={{ checked: on, disabled: blocked }}>
                     <View style={[styles.box, on && styles.boxOn]}>{on && <Text style={styles.check}>✓</Text>}</View>
                     <View style={styles.rowBody}>
                       <Text style={styles.rowTitle}>{`${title(p, i)} · ${shareText(posShare(p))} of games`}</Text>
-                      {boardNo !== undefined && <Text style={styles.rowInfo}>{`Already on board ${boardNo}`}</Text>}
-                      <Text style={styles.rowLine}>{afterText(p)}</Text>
-                      <Text style={styles.rowPieces}>{`Your pieces: ${piecesText(p)}`}</Text>
-                      {diff.length > 0 && <Text style={styles.rowInfo}>{`Different from plan ${b + 1}: ${diff.join(', ')}`}</Text>}
-                      {!!alsoText(p) && <Text style={styles.rowInfo}>{alsoText(p)}</Text>}
+                      <View style={styles.rowSplit}>
+                        <ChessBoardView board={{ pieces: st.pieces, style: boardStyle, arrows: [], circles: [] }} size={PREVIEW} flipped={yourColor === 'b'} />
+                        <View style={styles.rowText}>
+                          <Text style={styles.rowLine}>{afterText(p)}</Text>
+                          <Text style={styles.rowPieces}>{`Your pieces: ${piecesText(p)}`}</Text>
+                          {d && d.diff.length > 0 && <Text style={styles.rowInfo}>{`Different from ${d.label}: ${d.diff.join(', ')}`}</Text>}
+                          {!!alsoText(p) && <Text style={styles.rowInfo}>{alsoText(p)}</Text>}
+                        </View>
+                      </View>
                     </View>
                   </Pressable>
                 );
@@ -345,7 +400,9 @@ const styles = StyleSheet.create({
   box: { width: 24, height: 24, marginTop: 2, borderRadius: 6, borderWidth: 2, borderColor: colors.textDim, alignItems: 'center', justifyContent: 'center' },
   boxOn: { backgroundColor: colors.primary, borderColor: colors.primary },
   check: { color: colors.onPrimary, fontSize: 14, fontWeight: '800' },
-  rowBody: { flex: 1, gap: 2 },
+  rowBody: { flex: 1, gap: 6 },
+  rowSplit: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
+  rowText: { flex: 1, gap: 2 },
   rowTitle: { color: colors.text, fontSize: 14, fontWeight: '600' },
   rowPieces: { color: colors.text, fontSize: 13, lineHeight: 19 },
   rowInfo: { color: colors.textDim, fontSize: 13, lineHeight: 18 },
