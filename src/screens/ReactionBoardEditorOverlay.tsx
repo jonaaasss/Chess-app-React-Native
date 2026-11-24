@@ -31,6 +31,7 @@ import { getBoardEditorTipHidden, setBoardEditorTipHidden, uid } from '../storag
 import { ModeTip } from '../components/ModeTip';
 import { TutorialLayer, useTutorial, useTutorialTarget } from '../tutorial';
 import { useStockfishEngine, type EngineLine } from '../engine/useStockfishEngine';
+import { engineEvaluator } from '../ownMove';
 import { ExplorerPanel } from '../components/ExplorerPanel';
 import { DB_LABEL, fetchExplorer, getLichessToken } from '../lichessExplorer';
 import { DEFAULT_PLAN_OPTIONS, generatePlan, planDescription } from '../planGenerator';
@@ -1434,7 +1435,8 @@ function ReactionBoardEditorOverlay({
         { ...DEFAULT_PLAN_OPTIONS, depth: choices.depth, planShare: choices.planShare },
         setGenStatus,
         choices.engine && engine.ready ? async (f, turn) => (await engine.analyzeOnce(f, turn)).map((l) => ({ from: l.from, to: l.to })) : undefined,
-        () => genCancel.current
+        () => genCancel.current,
+        engine.ready ? engineEvaluator(engine.analyzeOnce, () => setGenStatus('Stockfish compares your most played moves…')) : undefined
       );
       if (genCancel.current) return;
       if (res.problem) {

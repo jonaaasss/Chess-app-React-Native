@@ -15,6 +15,7 @@ import type { ExplorerResult } from './lichessExplorer';
 import type { LineMove } from './importOpening';
 import { groupLine, isForcing, moveLabel, type MapGroup, type MapMove, type MapNode, type MapResult, type MapSplit } from './openingMap';
 import { DEFAULT_PLAN_OPTIONS, generatePlan, planDescription, type Move, type PlanReaction } from './planGenerator';
+import type { EngineEval } from './ownMove';
 import type { Arrow, ArrowColor, Circle } from './types';
 
 const COLORS: ArrowColor[] = ['green', 'orange', 'red', 'blue'];
@@ -57,8 +58,9 @@ export async function buildOpening(args: {
   newId: () => string;
   onProgress?: (text: string) => void;
   cancelled?: () => boolean;
+  engineEval?: EngineEval; // Stockfish as referee between your popular moves (ownMove.ts)
 }): Promise<BuiltOpening> {
-  const { result, yourColor, setup, fetcher, source, newId, onProgress, cancelled } = args;
+  const { result, yourColor, setup, fetcher, source, newId, onProgress, cancelled, engineEval } = args;
   const startPly = setup.length;
   // The Summary is at the opening's start, so every branch is on it; the
   // groups are those of the first split in each branch (e.g. after 4.c3 Nf6
@@ -68,7 +70,7 @@ export async function buildOpening(args: {
   const label = (m: MapMove) => moveLabel(m, startPly);
 
   onProgress?.('Summary: reading the explorer…');
-  const rootPlan = await generatePlan(at.state, yourColor, fetcher, { ...DEFAULT_PLAN_OPTIONS, depth: 5 }, (t) => onProgress?.(`Summary: ${t}`), undefined, cancelled);
+  const rootPlan = await generatePlan(at.state, yourColor, fetcher, { ...DEFAULT_PLAN_OPTIONS, depth: 5 }, (t) => onProgress?.(`Summary: ${t}`), undefined, cancelled, engineEval);
 
   // A forcing try gets its own recorded line (a Specific line card).
   const lines = groups.map(({ split, g }) => groupLine(split, g));
@@ -143,7 +145,7 @@ export async function buildOpening(args: {
       groupOwn.push(new Set([...playedBefore(split.at), ...ownKeysIn(line, yourColor)]));
     } else {
       onProgress?.(`Plan after ${label(opp)}: reading the explorer…`);
-      const gPlan = await generatePlan(g.main.state, yourColor, fetcher, { ...DEFAULT_PLAN_OPTIONS, depth: 4 }, (t) => onProgress?.(`Plan after ${label(opp)}: ${t}`), undefined, cancelled);
+      const gPlan = await generatePlan(g.main.state, yourColor, fetcher, { ...DEFAULT_PLAN_OPTIONS, depth: 4 }, (t) => onProgress?.(`Plan after ${label(opp)}: ${t}`), undefined, cancelled, engineEval);
       const weight = g.main.weight;
       gPlan.reactions.forEach((r) => reactions.push({ ...r, share: r.share * weight, fullPath: [...g.main.path, ...r.path] }));
       const diff = gPlan.ownKeys.filter((k) => !rootPlan.ownKeys.includes(k) && k !== (reply ? keyOf(reply) : ''));

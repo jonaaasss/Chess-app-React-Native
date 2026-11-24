@@ -8,7 +8,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { GameState } from '../chessEngine';
 import { toFen } from '../chess';
 import { colors, radius, touchTarget } from '../theme';
-import { DB_LABEL, fetchExplorer, getExplorerDb, moveForSan, setExplorerDb, type ExplorerDb, type ExplorerResult } from '../lichessExplorer';
+import { DB_LABEL, fetchExplorer, getExplorerDb, moveForSan, onExplorerDbChange, setExplorerDb, type ExplorerDb, type ExplorerResult } from '../lichessExplorer';
 import type { PromotionPiece } from '../types';
 
 const OPEN_KEY = 'lichess.explorerOpen';
@@ -33,6 +33,7 @@ export function ExplorerPanel({ state, onPlay }: { state: GameState; onPlay: (fr
     AsyncStorage.getItem(OPEN_KEY)
       .then((v) => v === 'false' && setOpen(false))
       .catch(() => undefined);
+    return onExplorerDbChange(setDb);
   }, []);
 
   useEffect(() => {

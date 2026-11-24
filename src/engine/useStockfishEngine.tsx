@@ -5,6 +5,15 @@ import type { PromotionPiece } from '../types';
 
 const ANALYSIS_DEPTH = 14;
 const MULTI_PV = 3;
+const DEFAULT_GO = `depth ${ANALYSIS_DEPTH}`;
+
+// `analyzeOnce` options: only these moves (UCI, "e7e5"), another depth, and
+// how long to wait at most.
+export interface AnalyzeOptions {
+  searchMoves?: string[];
+  depth?: number;
+  timeoutMs?: number;
+}
 
 export interface EngineLine {
   multipv: number; // 1 = best, 2/3 = alternatives — always contiguous from 1
@@ -43,8 +52,9 @@ export function useStockfishEngine() {
   // only once that `bestmove` actually arrives (stale intermediate targets
   // are simply overwritten, never queued up).
   const searchingRef = useRef(false);
-  const pendingRef = useRef<{ fen: string; turn: 'w' | 'b' } | null>(null);
-  // `analyzeOnce`: a caller waiting for one position's finished search.
+  const pendingRef = useRef<{ fen: string; turn: 'w' | 'b'; go: string } | null>(null);
+  // `analyzeOnce`: a caller waiting for one search's result. A search is
+  // known by its FEN and its `go` arguments ("fen|go").
   const searchFenRef = useRef<string | null>(null);
   const onceRef = useRef<{ fen: string; resolve: (lines: EngineLine[]) => void } | null>(null);
 
@@ -60,15 +70,17 @@ export function useStockfishEngine() {
   // is currently in flight (either the first one, or right after a
   // `bestmove` confirms the previous one truly ended).
   const startSearch = useCallback(
-    (fen: string, turn: 'w' | 'b') => {
+    (fen: string, turn: 'w' | 'b', go: string = DEFAULT_GO) => {
       searchingRef.current = true;
       sideToMoveRef.current = turn;
       linesRef.current = new Map();
       setLines([]);
-      setAnalyzedFen(fen);
-      searchFenRef.current = fen;
+      // A search limited to some moves is not "the top 3" of the position:
+      // the board editor's panel only shows a default search.
+      setAnalyzedFen(go === DEFAULT_GO ? fen : `${fen}|${go}`);
+      searchFenRef.current = `${fen}|${go}`;
       send(`position fen ${fen}`);
-      send(`go depth ${ANALYSIS_DEPTH}`);
+      send(`go ${go}`);
     },
     [send]
   );
@@ -97,7 +109,7 @@ export function useStockfishEngine() {
         }
         const next = pendingRef.current;
         pendingRef.current = null;
-        if (next) startSearch(next.fen, next.turn);
+        if (next) startSearch(next.fen, next.turn, next.go);
         return;
       }
       if (!line.startsWith('info ') || !line.includes(' pv ')) return;
@@ -130,39 +142,43 @@ export function useStockfishEngine() {
   );
 
   const evaluate = useCallback(
-    (fen: string, turn: 'w' | 'b') => {
+    (fen: string, turn: 'w' | 'b', go: string = DEFAULT_GO) => {
       if (searchingRef.current) {
         // A search is already running — remember what we actually want
         // and ask the engine to stop, but don't send position/go until
         // its `bestmove` confirms it's done. Overwriting `pendingRef` on
         // every call also means several rapid position changes collapse
         // into just the final one once the engine catches up.
-        pendingRef.current = { fen, turn };
+        pendingRef.current = { fen, turn, go };
         send('stop');
         return;
       }
-      startSearch(fen, turn);
+      startSearch(fen, turn, go);
     },
     [send, startSearch]
   );
 
   // One position's top 3 when its search has finished (used by Generate
-  // plan); gives up after 20 s with whatever it has.
+  // plan, and with `searchMoves` to compare your candidate moves); gives up
+  // after 20 s (or `timeoutMs`) with whatever it has.
   const analyzeOnce = useCallback(
-    (fen: string, turn: 'w' | 'b') =>
+    (fen: string, turn: 'w' | 'b', options: AnalyzeOptions = {}) =>
       new Promise<EngineLine[]>((resolve) => {
+        const moves = options.searchMoves?.length ? ` searchmoves ${options.searchMoves.join(' ')}` : '';
+        const go = `depth ${options.depth ?? ANALYSIS_DEPTH}${moves}`;
+        const key = `${fen}|${go}`;
         const timer = setTimeout(() => {
-          if (onceRef.current?.fen === fen) onceRef.current = null;
-          resolve(Array.from(linesRef.current.values()));
-        }, 20000);
+          if (onceRef.current?.fen === key) onceRef.current = null;
+          resolve(searchFenRef.current === key ? Array.from(linesRef.current.values()) : []);
+        }, options.timeoutMs ?? 20000);
         onceRef.current = {
-          fen,
+          fen: key,
           resolve: (lines) => {
             clearTimeout(timer);
             resolve(lines);
           }
         };
-        evaluate(fen, turn);
+        evaluate(fen, turn, go);
       }),
     [evaluate]
   );

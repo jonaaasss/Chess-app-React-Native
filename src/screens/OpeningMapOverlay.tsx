@@ -16,6 +16,8 @@ import { DB_LABEL, fetchExplorer, getExplorerDb } from '../lichessExplorer';
 import { DEFAULT_MAP_OPTIONS, moveLabel, scanOpening, type MapNode, type MapResult } from '../openingMap';
 import { buildOpening, type BuiltOpening, type CardSpec } from '../openingBuilder';
 import type { Move } from '../planGenerator';
+import { useStockfishEngine } from '../engine/useStockfishEngine';
+import { engineEvaluator, type EngineEval } from '../ownMove';
 import { makePlanBoard, makeReactionsBoard } from '../importOpening';
 import { allowScreenOff, keepScreenOn } from '../keepAwake';
 import { addOpening, deleteOpening, saveCard, setOpeningSummary, uid } from '../storage';
@@ -42,6 +44,10 @@ function OpeningMapOverlay({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [overrides, setOverrides] = useState<Map<string, string>>(new Map());
   const cancelled = useRef(false);
+  // Stockfish, as referee between your popular moves (ownMove.ts).
+  const engine = useStockfishEngine();
+  const engineRef = useRef(engine);
+  engineRef.current = engine;
   const startState: GameState = { pieces: start.pieces, turn: start.turn, castling: start.castling, enPassant: start.enPassant };
   const startPly = start.setupMoves.length;
 
@@ -66,13 +72,30 @@ function OpeningMapOverlay({
     });
   }
 
+  // The referee once Stockfish has started (at most 20 s); without it the
+  // database alone decides.
+  async function waitForEngine(): Promise<EngineEval | undefined> {
+    for (let t = 0; t < 80 && !engineRef.current.ready; t++) {
+      if (cancelled.current) return undefined;
+      setStatus('Starting Stockfish…');
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    if (!engineRef.current.ready) return undefined;
+    return engineEvaluator(
+      (f, turn, o) => engineRef.current.analyzeOnce(f, turn, o),
+      () => setStatus('Stockfish compares your most played moves…')
+    );
+  }
+
   async function scan(over: Map<string, string>) {
     setStatus('Starting…');
     setBuilt(null);
     try {
       const db = await getExplorerDb();
       const fetcher = (f: string) => fetchExplorer(f, db);
-      const r = await scanOpening(startState, yourColor, fetcher, over, DEFAULT_MAP_OPTIONS, setStatus, () => cancelled.current);
+      const referee = await waitForEngine();
+      if (cancelled.current) return;
+      const r = await scanOpening(startState, yourColor, fetcher, over, DEFAULT_MAP_OPTIONS, setStatus, () => cancelled.current, referee);
       if (cancelled.current) return;
       setResult(r);
       const b = await buildOpening({
@@ -83,7 +106,8 @@ function OpeningMapOverlay({
         source: `Lichess explorer (${DB_LABEL[db]})`,
         newId: uid,
         onProgress: setStatus,
-        cancelled: () => cancelled.current
+        cancelled: () => cancelled.current,
+        engineEval: referee
       });
       if (cancelled.current) return;
       setBuilt(b);
@@ -260,6 +284,7 @@ function OpeningMapOverlay({
           <Text style={styles.createText}>{`Create ${count} card${count === 1 ? '' : 's'}`}</Text>
         </Pressable>
       </View>
+      {engine.element}
     </SafeAreaView>
   );
 }

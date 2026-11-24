@@ -53,12 +53,24 @@ export async function getExplorerDb(): Promise<ExplorerDb> {
   }
 }
 
+// One database setting for everything that reads the explorer (Explorer
+// panel, Generate plan, Variations, Opening map, "% of games").
+const dbListeners = new Set<(db: ExplorerDb) => void>();
+
+export function onExplorerDbChange(listener: (db: ExplorerDb) => void): () => void {
+  dbListeners.add(listener);
+  return () => {
+    dbListeners.delete(listener);
+  };
+}
+
 export async function setExplorerDb(db: ExplorerDb): Promise<void> {
   try {
     await AsyncStorage.setItem(DB_KEY, db);
   } catch {
     // Only a remembered preference.
   }
+  dbListeners.forEach((listener) => listener(db));
 }
 
 export class ExplorerError extends Error {

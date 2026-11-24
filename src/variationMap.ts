@@ -5,26 +5,33 @@
 // at least one of your pieces to another square or on another route; the
 // same plan reached by another move order is one plan.
 //
-// 1. Scan: from the opening's start, your move = the most played one (or the
-//    one you chose, `overrides`); the opponent's moves with at least
+// 1. Scan: from the opening's start, your move = the move of the shared rule
+//    in ownMove.ts (the most played, unless a nearly as popular one scores
+//    clearly better, with Stockfish as referee), or the one you chose
+//    (`overrides`); the opponent's moves with at least
 //    `minShare` of the games there and `minWeight` of all games are followed;
 //    when none qualifies the line goes on with the most played move. Every
 //    line runs to `ownMoves` of your moves.
 // 2. Setup of a line: where each of your pieces is after your first
 //    `planMoves` moves (later moves don't count). Only a move that at least
-//    `settle` of the players choose fixes a piece's square; after a move most
-//    players don't agree on, the piece is "open" (its square does not count).
+//    `settle` of the players choose, or that the rule chose for its score or
+//    Stockfish (or that is on your board), fixes a piece's square; after a
+//    move most players don't agree on, the piece is "open" (its square does
+//    not count).
 //    A recapture (taking on the square the opponent just moved to) doesn't
 //    count; other captures do (...Nxe4 taking a pawn is a plan). Not castled
 //    yet = timing, does not count; a piece that was taken does not count.
 // 3. Plans: bottom up, at every position the plans of its continuations are
 //    merged when no piece is fixed on two different squares (a piece fixed
-//    in one plan and open in the other counts half). Plans played in fewer
-//    than `minPlan` of all games join the plan most like them.
+//    in one plan and open in the other counts half). Plans whose position
+//    comes up in fewer than `minPlan` of all games (the real share: the
+//    opponent's choices from the start, as shown) join the plan most like
+//    them.
 import { toFen } from './chess';
 import { makeMove, type GameState } from './chessEngine';
 import { moveForSan, type ExplorerResult } from './lichessExplorer';
 import type { LineMove } from './importOpening';
+import { evalText, pickOwnMove, scoreFor, type EngineEval, type OwnMoveWhy } from './ownMove';
 import type { PromotionPiece } from './types';
 
 export interface VarMove {
@@ -36,6 +43,14 @@ export interface VarMove {
   share: number; // of the games in the position before it
   mine: boolean;
   opening?: string; // Lichess's name of the position after it, when it has one
+  // Your moves: why this one (ownMove.ts), its score for you (0–1), Stockfish
+  // (White's point of view) when asked, and the other move worth naming: the
+  // most played one when another was chosen, else a candidate played at
+  // least half as often.
+  why?: OwnMoveWhy;
+  score?: number;
+  cp?: number;
+  alt?: { san: string; share: number; score: number; cp?: number };
 }
 
 // One of your pieces, by its square at the opening's start.
@@ -121,7 +136,9 @@ export async function scanPlans(
   overrides: Map<string, string>,
   opts: PlanOptions = DEFAULT_PLAN_OPTIONS,
   onProgress?: (text: string) => void,
-  cancelled?: () => boolean
+  cancelled?: () => boolean,
+  // Stockfish as referee between your popular moves (ownMove.ts).
+  engineEval?: EngineEval
 ): Promise<{ plans: Plan[]; pieces: PlanPiece[]; choices: VariationChoice[]; requests: number }> {
   let requests = 0;
   const choices: VariationChoice[] = [];
@@ -144,13 +161,30 @@ export async function scanPlans(
     if (res.opening) n.name = res.opening;
     if (n === root) rootName = res.opening;
     if (res.games < opts.minGames || res.moves.length === 0) continue;
-    let picks: { san: string; share: number; weight: number; opening?: string }[];
+    let picks: { san: string; share: number; weight: number; opening?: string; info?: Pick<VarMove, 'why' | 'score' | 'cp' | 'alt'> }[];
     if (mine) {
-      const forced = overrides.get(fen);
-      const pick = res.moves.find((m) => m.san === forced) ?? res.moves[0];
+      const own = await pickOwnMove(res, st, yourColor, opts.minGames, { yours: overrides.get(fen), engine: engineEval });
+      if (cancelled?.()) break;
+      const pick = own?.move ?? res.moves[0];
       const alternatives = res.moves.filter((m) => m !== pick && m.games / res.games >= 0.2).map((m) => ({ san: m.san, share: m.games / res.games }));
       if (alternatives.length > 0 && n.weight >= 0.15) choices.push({ path: n.moves, fen, played: pick.san, alternatives });
-      picks = [{ san: pick.san, share: pick.games / res.games, weight: n.weight, opening: pick.opening }];
+      const alt = own?.alt;
+      const info: Pick<VarMove, 'why' | 'score' | 'cp' | 'alt'> = {
+        why: own?.why ?? 'most',
+        score: scoreFor(pick, yourColor),
+        ...(own?.evals?.has(pick.san) ? { cp: own.evals.get(pick.san) } : {}),
+        ...(alt
+          ? {
+              alt: {
+                san: alt.san,
+                share: alt.games / res.games,
+                score: scoreFor(alt, yourColor),
+                ...(own?.evals?.has(alt.san) ? { cp: own.evals.get(alt.san) } : {})
+              }
+            }
+          : {})
+      };
+      picks = [{ san: pick.san, share: pick.games / res.games, weight: n.weight, opening: pick.opening, info }];
     } else {
       const real = res.moves.filter((m) => m.games >= opts.minGames && m.games / res.games >= opts.minShare && (n.weight * m.games) / res.games >= opts.minWeight);
       const top = res.moves[0];
@@ -170,7 +204,7 @@ export async function scanPlans(
       const r = makeMove(st, mv.from, mv.to, mv.promotion);
       const child: Node = {
         state: r.next,
-        moves: [...n.moves, { ...mv, san: r.san, after: r.next, share: p.share, mine, ...(p.opening ? { opening: p.opening } : {}) }],
+        moves: [...n.moves, { ...mv, san: r.san, after: r.next, share: p.share, mine, ...(p.opening ? { opening: p.opening } : {}), ...(p.info ?? {}) }],
         weight: p.weight,
         own: n.own + (mine ? 1 : 0),
         name: p.opening ?? n.name,
@@ -230,50 +264,75 @@ export async function scanPlans(
   }
   drafts = big.sort((a, b) => b.weight - a.weight);
 
-  const plans: Plan[] = drafts.map((d) => {
-    const leaves = [...d.leaves].sort((a, b) => b.weight - a.weight);
-    const line = leaves[0].moves;
-    const alsoAfter: Plan['alsoAfter'] = [];
-    for (const l of leaves.slice(1)) {
-      if (l.weight < d.weight * 0.15) continue;
-      const at = differsAt(l.moves, line);
-      if (at < 0 || l.moves[at].mine) continue;
-      // Only where the plan is still being decided (within your first moves).
-      if (l.moves.slice(0, at).filter((m) => m.mine).length >= opts.planMoves) continue;
-      if (alsoAfter.some((a) => a.at === at && a.moves[at].san === l.moves[at].san)) continue;
-      alsoAfter.push({ moves: l.moves, at });
-    }
-    return {
-      line,
-      lines: leaves.map((l) => l.moves),
-      share: d.weight,
-      spots: describeSpots(d, pieces, setupOf, opts.typical),
-      end: line.length,
-      alsoAfter: alsoAfter.slice(0, 3)
-    };
-  });
-  // Each plan's position: the move where its main line leaves the closest
-  // line of another plan, then every move played in at least `forced` of
-  // the games, up to the next real choice.
-  plans.forEach((p, i) => {
-    let leaves = 0;
-    plans.forEach((q, j) => {
-      if (j === i) return;
-      for (const l of q.lines) {
-        const d = differsAt(p.line, l);
-        leaves = Math.max(leaves, d < 0 ? p.line.length : d);
+  const toPlans = (list: Draft[]): Plan[] => {
+    const out: Plan[] = list.map((d) => {
+      const leaves = [...d.leaves].sort((a, b) => b.weight - a.weight);
+      const line = leaves[0].moves;
+      const alsoAfter: Plan['alsoAfter'] = [];
+      for (const l of leaves.slice(1)) {
+        if (l.weight < d.weight * 0.15) continue;
+        const at = differsAt(l.moves, line);
+        if (at < 0 || l.moves[at].mine) continue;
+        // Only where the plan is still being decided (within your first moves).
+        if (l.moves.slice(0, at).filter((m) => m.mine).length >= opts.planMoves) continue;
+        if (alsoAfter.some((a) => a.at === at && a.moves[at].san === l.moves[at].san)) continue;
+        alsoAfter.push({ moves: l.moves, at });
       }
+      return {
+        line,
+        lines: leaves.map((l) => l.moves),
+        share: d.weight,
+        spots: describeSpots(d, pieces, setupOf, opts.typical),
+        end: line.length,
+        alsoAfter: alsoAfter.slice(0, 3)
+      };
     });
-    let end = Math.min(leaves + 1, p.line.length);
-    while (end < p.line.length && p.line[end].share >= opts.forced) end += 1;
-    p.end = end;
-    const named = p.line.slice(0, end).filter((m) => m.opening).pop()?.opening;
-    if (named && named !== rootName) p.name = named;
-  });
+    // Each plan's position: the move where its main line leaves the closest
+    // line of another plan, then every move played in at least `forced` of
+    // the games, up to the next real choice.
+    out.forEach((p, i) => {
+      let leaves = 0;
+      out.forEach((q, j) => {
+        if (j === i) return;
+        for (const l of q.lines) {
+          const d = differsAt(p.line, l);
+          leaves = Math.max(leaves, d < 0 ? p.line.length : d);
+        }
+      });
+      let end = Math.min(leaves + 1, p.line.length);
+      while (end < p.line.length && p.line[end].share >= opts.forced) end += 1;
+      p.end = end;
+      const named = p.line.slice(0, end).filter((m) => m.opening).pop()?.opening;
+      if (named && named !== rootName) p.name = named;
+    });
+    return out;
+  };
+
+  // A plan whose position comes up in fewer than `minPlan` of all games (the
+  // real share, as shown) joins the plan most like it; the positions are
+  // worked out again after each join.
+  let plans = toPlans(drafts);
+  while (plans.length > 1) {
+    const small = plans.map((p, i) => ({ i, share: positionShare(p) })).filter((x) => x.share < opts.minPlan).sort((a, b) => a.share - b.share)[0];
+    if (!small) break;
+    const d = drafts[small.i];
+    const others = drafts.filter((_, j) => j !== small.i);
+    const target = others.reduce((best, b) => (conflicts(b, d) < conflicts(best, d) ? b : best), others[0]);
+    target.leaves.push(...d.leaves);
+    target.weight += d.weight;
+    drafts = others.sort((a, b) => b.weight - a.weight);
+    plans = toPlans(drafts);
+  }
   return { plans, pieces, choices, requests };
 }
 
 const ORDER = ['NQ', 'NK', 'BW', 'BB', 'Q', 'K'];
+
+// How often a plan's position comes up: the opponent's choices on the way
+// from the opening's start (your moves count as always played).
+export function positionShare(p: Plan): number {
+  return p.line.slice(0, p.end).reduce((s, m) => (m.mine ? s : s * m.share), 1);
+}
 
 // Where each piece is at the end of a line. A move fixes the square only
 // when at least `settle` of the players chose it; otherwise the piece is
@@ -293,7 +352,10 @@ function lineSetup(moves: VarMove[], pieces: PlanPiece[], settle: number, planMo
         if (at.get(p.id) !== m.from) continue;
         at.set(p.id, m.to);
         if (late || recapture) continue; // keeps its plan square
-        spot.set(p.id, { sq: castle ? (m.san.startsWith('O-O-O') ? 'O-O-O' : 'O-O') : m.to, settled: m.share >= settle });
+        // A move the rule chose for its score or Stockfish, or yours from a
+        // board, is your plan even when fewer players choose it.
+        const chosen = m.why === 'score' || m.why === 'engine' || m.why === 'yours';
+        spot.set(p.id, { sq: castle ? (m.san.startsWith('O-O-O') ? 'O-O-O' : 'O-O') : m.to, settled: chosen || m.share >= settle });
       }
     } else {
       lastTo = m.to;
@@ -414,6 +476,70 @@ export function closestPlan(pieces: PlanPiece[], plan: Plan, earlier: Plan[]): n
     }
   });
   return best;
+}
+
+// The pieces whose square differs between two plans, one line each, with the
+// move that does it: "Next: 9...Qe7, 39%, scores 55% (most played: 9...Qh4,
+// 42%, scores 41%) · board 5: Q stays on d8" for a move still to come after
+// the plan's position, "Played: 7...Ng4 · board 2: NK stays on f6" for one
+// on the board. `startPly` = the plies from the standard start to the
+// opening's start (for the move numbers).
+export function planChanges(pieces: PlanPiece[], plan: Plan, base: Plan, baseLabel: string, startPly: number, planMoves: number): string[] {
+  const key = (s: PieceSpot | undefined) => (s?.kind === 'square' ? s.square : s?.kind === 'castled' ? s.side : null);
+  const pct = (x: number) => `${Math.round(x * 100)}%`;
+  const numbered = (i: number, san: string) => {
+    const ply = startPly + i;
+    return `${Math.floor(ply / 2) + 1}${ply % 2 === 0 ? '.' : '...'}${san}`;
+  };
+  // The move of the plan's main line that brings the piece to its square.
+  const moveTo = (piece: PlanPiece, target: string): number => {
+    let at = piece.id;
+    let own = 0;
+    let found = -1;
+    plan.line.forEach((m, i) => {
+      if (m.mine) {
+        own += 1;
+        if (at !== m.from) return;
+        at = m.to;
+        const sq = m.san.startsWith('O-O') ? (m.san.startsWith('O-O-O') ? 'O-O-O' : 'O-O') : m.to;
+        if (own <= planMoves && sq === target) found = i;
+      } else if (at === m.to) at = 'x';
+    });
+    return found;
+  };
+  const detail = (i: number): string => {
+    const m = plan.line[i];
+    const alt = m.alt;
+    const altName = alt ? numbered(i, alt.san) : '';
+    switch (m.why) {
+      case 'score':
+        return `${pct(m.share)}, scores ${pct(m.score ?? 0)}${alt ? ` (most played: ${altName}, ${pct(alt.share)}, scores ${pct(alt.score)})` : ''}`;
+      case 'engine':
+        return `${pct(m.share)}, Stockfish ${evalText(m.cp)}${alt ? ` (most played: ${altName}, ${pct(alt.share)}, Stockfish ${evalText(alt.cp)})` : ''}`;
+      case 'yours':
+        return `${pct(m.share)}, on your board`;
+      default:
+        return `${pct(m.share)}${alt ? ` (${altName} ${pct(alt.share)})` : ''}`;
+    }
+  };
+  const out: string[] = [];
+  for (const p of pieces) {
+    const a = plan.spots.get(p.id);
+    const b = base.spots.get(p.id);
+    const ka = key(a);
+    const kb = key(b);
+    const differs =
+      (ka && kb && ka !== kb) ||
+      (ka && b?.kind === 'open' && b.options.length && b.options[0] !== ka) ||
+      (kb && a?.kind === 'open' && a.options.length && a.options[0] !== kb);
+    if (!differs) continue;
+    const theirs = `${baseLabel}: ${spotText(p, b)}`;
+    const i = ka ? moveTo(p, ka) : -1;
+    if (i < 0) out.push(`${spotText(p, a)} · ${theirs}`);
+    else if (i < plan.end) out.push(`Played: ${numbered(i, plan.line[i].san)} · ${theirs}`);
+    else out.push(`Next: ${numbered(i, plan.line[i].san)}, ${detail(i)} · ${theirs}`);
+  }
+  return out;
 }
 
 // The pieces whose fixed square differs between two plans ("BB e7 (plan 1: g7)").

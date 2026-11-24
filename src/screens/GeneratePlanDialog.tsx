@@ -1,13 +1,14 @@
 // "Generate plan" settings: how deep, from how often a move counts as part
 // of the plan, which database, engine check.
 // Resolves to the choices, or null when cancelled. The choices are
-// remembered for next time.
+// remembered for next time; the database is the one shared setting of the
+// explorer (also the Explorer panel, Variations and "% of games").
 import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { showOverlay, useOverlayBack } from '../overlay';
 import { colors, radius, touchTarget } from '../theme';
-import { DB_LABEL, getExplorerDb, type ExplorerDb } from '../lichessExplorer';
+import { DB_LABEL, getExplorerDb, setExplorerDb, type ExplorerDb } from '../lichessExplorer';
 
 export interface GeneratePlanChoices {
   depth: number;
@@ -35,7 +36,6 @@ function Dialog({ close }: { close: (v: GeneratePlanChoices | null) => void }) {
         const v = JSON.parse(raw) as Partial<GeneratePlanChoices>;
         if (typeof v.depth === 'number') setDepth(v.depth);
         if (typeof v.planShare === 'number' && SHARES.includes(v.planShare)) setPlanShare(v.planShare);
-        if (v.db === 'lichess' || v.db === 'masters') setDb(v.db);
         if (typeof v.engine === 'boolean') setEngine(v.engine);
       })
       .catch(() => undefined);
@@ -43,7 +43,8 @@ function Dialog({ close }: { close: (v: GeneratePlanChoices | null) => void }) {
 
   function go() {
     const v = { depth, planShare, db, engine };
-    AsyncStorage.setItem(KEY, JSON.stringify(v)).catch(() => undefined);
+    AsyncStorage.setItem(KEY, JSON.stringify({ depth, planShare, engine })).catch(() => undefined);
+    setExplorerDb(db).catch(() => undefined);
     close(v);
   }
 

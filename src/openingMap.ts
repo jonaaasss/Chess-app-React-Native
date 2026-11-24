@@ -15,6 +15,7 @@
 import { toFen } from './chess';
 import { makeMove, type GameState } from './chessEngine';
 import { moveForSan, type ExplorerResult } from './lichessExplorer';
+import { pickOwnMove, type EngineEval } from './ownMove';
 import type { PromotionPiece } from './types';
 import type { LineMove } from './importOpening';
 
@@ -80,7 +81,9 @@ export async function scanOpening(
   overrides: Map<string, string>,
   opts: MapOptions = DEFAULT_MAP_OPTIONS,
   onProgress?: (text: string) => void,
-  cancelled?: () => boolean
+  cancelled?: () => boolean,
+  // Stockfish as referee between your popular moves (ownMove.ts).
+  engineEval?: EngineEval
 ): Promise<MapResult> {
   let requests = 0;
   const root: MapNode = { state: start, path: [], weight: 1, games: 0, mine: start.turn === yourColor, children: [], alternatives: [] };
@@ -99,10 +102,12 @@ export async function scanOpening(
     node.games = res.games;
     if (res.games < opts.minGames || res.moves.length === 0) continue;
     const fen = toFen(st.pieces, st.turn, st.castling, st.enPassant);
+    // Your move: the shared rule (ownMove.ts), or the one you picked.
+    const ownPick = node.mine ? await pickOwnMove(res, st, yourColor, opts.minGames, { yours: overrides.get(fen), engine: engineEval }) : null;
+    if (cancelled?.()) break;
     const followed = node.mine
       ? (() => {
-          const forced = overrides.get(fen);
-          const pick = res.moves.find((m) => m.san === forced) ?? res.moves[0];
+          const pick = ownPick?.move ?? res.moves[0];
           node.alternatives = res.moves.filter((m) => m !== pick && m.games / res.games >= 0.2).map((m) => ({ san: m.san, share: m.games / res.games }));
           return [pick];
         })()

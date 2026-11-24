@@ -2,8 +2,9 @@
 // draws a plan from the Lichess opening explorer, without AI.
 //
 // 1. From the position the explorer tree is walked (heaviest lines first): on
-//    your move the most played move (unless a nearly as popular one scores
-//    clearly better), on the opponent's move every move played in at least
+//    your move the move of the shared rule in ownMove.ts (the most played,
+//    unless a nearly as popular one scores clearly better, with Stockfish as
+//    referee), on the opponent's move every move played in at least
 //    `minShare` of the games, until `depth` of your moves.
 // 2. Every line carries a weight (how often it is reached). Your moves
 //    played in at least `planShare` of the weight are the plan.
@@ -28,6 +29,7 @@
 import { squareFromIndex, squareIndex, toFen } from './chess';
 import { legalMovesFrom, makeMove, type GameState } from './chessEngine';
 import { moveForSan, type ExplorerResult } from './lichessExplorer';
+import { pickOwnMove, type EngineEval } from './ownMove';
 import type { Arrow, ArrowColor, ArrowNotes, PromotionPiece } from './types';
 
 export interface PlanOptions {
@@ -105,11 +107,6 @@ interface OppBranch {
 
 const COLORS: ArrowColor[] = ['green', 'orange', 'red', 'blue'];
 const DARK: Record<string, ArrowColor> = { green: 'darkGreen', orange: 'darkOrange', red: 'darkRed', blue: 'darkBlue' };
-
-const scoreFor = (m: { white: number; draws: number; black: number }, color: 'w' | 'b') => {
-  const g = m.white + m.draws + m.black;
-  return g ? ((color === 'w' ? m.white : m.black) + m.draws / 2) / g : 0;
-};
 
 const attacks = (st: GameState, from: string, target: string, side: 'w' | 'b'): boolean => {
   try {
@@ -197,7 +194,9 @@ export async function generatePlan(
   opts: PlanOptions = DEFAULT_PLAN_OPTIONS,
   onProgress?: (text: string) => void,
   engineTop?: (fen: string, turn: 'w' | 'b') => Promise<EngineTop[]>,
-  cancelled?: () => boolean
+  cancelled?: () => boolean,
+  // Stockfish as referee between your popular moves (ownMove.ts).
+  engineEval?: EngineEval
 ): Promise<PlanResult> {
   let requests = 0;
   const leaves: Leaf[] = [];
@@ -239,12 +238,9 @@ export async function generatePlan(
       continue;
     }
     if (t.st.turn === yourColor) {
-      const candidates = res.moves.filter((m) => m.games >= Math.max(opts.minGames, res.games * 0.15));
-      let pick = candidates[0];
-      for (const c of candidates.slice(1)) {
-        if (c.games >= pick.games * 0.5 && scoreFor(c, yourColor) >= scoreFor(pick, yourColor) + 0.04) pick = c;
-      }
-      const p = pick ? play(t.st, pick.san) : null;
+      const own = await pickOwnMove(res, t.st, yourColor, opts.minGames, { engine: engineEval });
+      if (cancelled?.()) break;
+      const p = own ? play(t.st, own.move.san) : null;
       if (!p) {
         finish();
         continue;

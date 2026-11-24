@@ -12,6 +12,9 @@
 //   plans that are not on a board yet are listed, each compared with the
 //   board it looks most like; returns the new boards for that card.
 // Every plan in the list shows its position on a small board.
+// Your moves follow the shared rule (ownMove.ts) with Stockfish as referee,
+// so they are the moves Generate plan picks too; the database is the shared
+// explorer setting (chips at the top).
 // A card holds at most MAX_BOARDS (8, chess.ts) boards.
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -22,8 +25,10 @@ import { MAX_BOARDS, toFen } from '../chess';
 import { makeMove, type GameState } from '../chessEngine';
 import { ChessBoardView } from '../components/ChessBoard';
 import { boardMovesFromStart } from '../boardShare';
-import { DB_LABEL, fetchExplorer, getExplorerDb, type ExplorerDb } from '../lichessExplorer';
-import { closestPlan, DEFAULT_PLAN_OPTIONS, scanPlans, spotDifferences, type Plan, type PlanPiece, type VarMove, type VariationChoice } from '../variationMap';
+import { DB_LABEL, fetchExplorer, getExplorerDb, setExplorerDb, type ExplorerDb } from '../lichessExplorer';
+import { closestPlan, DEFAULT_PLAN_OPTIONS, planChanges, positionShare, scanPlans, type Plan, type PlanPiece, type VarMove, type VariationChoice } from '../variationMap';
+import { useStockfishEngine } from '../engine/useStockfishEngine';
+import { engineEvaluator, type EngineEval } from '../ownMove';
 import { makePlanBoard } from '../importOpening';
 import { allowScreenOff, keepScreenOn } from '../keepAwake';
 import { addOpening, deleteOpening, getBoardStyle, saveCard, uid } from '../storage';
@@ -88,6 +93,10 @@ function VariationMapOverlay({
   const [boardStyle, setBoardStyle] = useState(0);
   const [db, setDb] = useState<ExplorerDb>('lichess');
   const cancelled = useRef(false);
+  // Stockfish, as referee between your popular moves (ownMove.ts).
+  const engine = useStockfishEngine();
+  const engineRef = useRef(engine);
+  engineRef.current = engine;
   const startState: GameState = { pieces: start.pieces, turn: start.turn, castling: start.castling, enPassant: start.enPassant };
   const startPly = start.setupMoves.length;
   const existing = mode.kind === 'add' ? mode.existing : [];
@@ -110,7 +119,7 @@ function VariationMapOverlay({
   // The position a plan's board shows.
   const planState = (p: Plan): GameState => (p.end > 0 ? p.line[p.end - 1].after : startState);
   // How often that position comes up: the opponent's choices on the way.
-  const posShare = (p: Plan) => p.line.slice(0, p.end).reduce((s, m) => (m.mine ? s : s * m.share), 1);
+  const posShare = positionShare;
   // The card's boards: their number, position and the moves from the
   // opening's start to it (null when the board doesn't start there).
   const boardLines = [...existing]
@@ -146,14 +155,31 @@ function VariationMapOverlay({
     return { own, parent, ownOf };
   }
 
-  async function scan(over: Map<string, string>) {
+  // The referee once Stockfish has started (at most 20 s); without it the
+  // database alone decides.
+  async function waitForEngine(): Promise<EngineEval | undefined> {
+    for (let t = 0; t < 80 && !engineRef.current.ready; t++) {
+      if (cancelled.current) return undefined;
+      setStatus('Starting Stockfish…');
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    if (!engineRef.current.ready) return undefined;
+    return engineEvaluator(
+      (f, turn, o) => engineRef.current.analyzeOnce(f, turn, o),
+      () => setStatus('Stockfish compares your most played moves…')
+    );
+  }
+
+  async function scan(over: Map<string, string>, chosenDb?: ExplorerDb) {
     setStatus('Starting…');
     setPlans(null);
     try {
-      const d = await getExplorerDb();
+      const d = chosenDb ?? (await getExplorerDb());
       setDb(d);
+      const referee = await waitForEngine();
+      if (cancelled.current) return;
       const opts = { ...DEFAULT_PLAN_OPTIONS, minPlan: MIN_PLAN, minWeight: Math.min(DEFAULT_PLAN_OPTIONS.minWeight, MIN_PLAN), maxRequests: 800 };
-      const r = await scanPlans(startState, yourColor, start.setupMoves, (f) => fetchExplorer(f, d), over, opts, setStatus, () => cancelled.current);
+      const r = await scanPlans(startState, yourColor, start.setupMoves, (f) => fetchExplorer(f, d), over, opts, setStatus, () => cancelled.current, referee);
       if (cancelled.current) return;
       const sorted = [...r.plans].sort((a, b) => posShare(b) - posShare(a));
       setPlans(sorted);
@@ -174,6 +200,12 @@ function VariationMapOverlay({
     void scan(overrides);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function chooseDb(d: ExplorerDb) {
+    if (d === db || status) return;
+    void setExplorerDb(d);
+    void scan(overrides, d);
+  }
 
   function choose(c: VariationChoice, san: string) {
     const next = new Map(overrides);
@@ -204,17 +236,18 @@ function VariationMapOverlay({
   // What a plan has different from another: in Add from the board it
   // continues from (else the most similar board), in Create from the most
   // similar earlier plan.
+  const changes = (p: Plan, base: Plan, label: string) => planChanges(pieces, p, base, label, startPly, DEFAULT_PLAN_OPTIONS.planMoves);
   function difference(p: Plan, earlier: { p: Plan; label: string }[]): { label: string; diff: string[]; continues: boolean } | null {
     const parentNo = mode.kind === 'add' ? boards.parent.get(p) : undefined;
     if (parentNo !== undefined) {
       const base = boards.ownOf.get(parentNo)!;
       const label = `board ${parentNo}`;
-      return { label, diff: spotDifferences(pieces, p, base, label), continues: true };
+      return { label, diff: changes(p, base, label), continues: true };
     }
     const pool = mode.kind === 'add' && boardPlans.length ? boardPlans.map((x) => ({ p: x.p, label: `board ${x.no}` })) : earlier;
     if (pool.length === 0) return null;
     const best = pool[closestPlan(pieces, p, pool.map((x) => x.p))];
-    return { label: best.label, diff: spotDifferences(pieces, p, best.p, best.label), continues: false };
+    return { label: best.label, diff: changes(p, best.p, best.label), continues: false };
   }
   const alsoText = (p: Plan) => (p.alsoAfter.length ? `Also after ${p.alsoAfter.map((a) => moveName(a.moves, a.at)).join(', ')}` : '');
   const afterText = (p: Plan) => (p.end > 0 ? `After ${formatMoves(p.line, 0, p.end)}` : 'The start position');
@@ -253,7 +286,7 @@ function VariationMapOverlay({
         title(p, i),
         `${afterText(p)}.`,
         d?.continues ? `Continues from ${d.label}.` : '',
-        d && d.diff.length ? `Different from ${d.label}:\n${d.diff.join('\n')}` : '',
+        d && d.diff.length ? `Your plan here, different from ${d.label}:\n${d.diff.join('\n')}` : '',
         alsoText(p) ? `${alsoText(p)}.` : '',
         `About ${shareText(posShare(p))} of the games from the opening's start position. Source: Lichess explorer (${DB_LABEL[db]})`
       ]
@@ -305,6 +338,24 @@ function VariationMapOverlay({
         <Text style={styles.intro}>
           The plans of this opening from the Lichess explorer: a new plan starts where an opponent move sends one of your pieces (knights, bishops, queen, castling) to another square. Each ticked plan becomes a board on the position where it starts, with all moves from the start of the opening. Draw the arrows with Generate plan.
         </Text>
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Database</Text>
+          <View style={styles.chips}>
+            {(['lichess', 'masters'] as ExplorerDb[]).map((d) => (
+              <Pressable
+                key={d}
+                onPress={() => chooseDb(d)}
+                disabled={!!status}
+                style={[styles.chip, db === d && styles.chipOn, !!status && db !== d && styles.disabled]}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: db === d }}
+              >
+                <Text style={[styles.chipText, db === d && styles.chipTextOn]}>{DB_LABEL[d]}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text style={styles.hint}>The same database as the Explorer panel and Generate plan.</Text>
+        </View>
         {status && (
           <View style={styles.statusRow}>
             <ActivityIndicator size="small" color={colors.textDim} />
@@ -355,7 +406,7 @@ function VariationMapOverlay({
                         <View style={styles.rowText}>
                           <Text style={styles.rowLine}>{afterText(p)}</Text>
                           {d?.continues && <Text style={styles.rowPieces}>{`Continues from ${d.label}`}</Text>}
-                          {d && d.diff.length > 0 && <Text style={styles.rowInfo}>{`Different from ${d.label}:`}</Text>}
+                          {d && d.diff.length > 0 && <Text style={styles.rowInfo}>{`Your plan here, different from ${d.label}:`}</Text>}
                           {d?.diff.map((x) => (
                             <Text key={x} style={styles.rowInfo}>
                               {x}
@@ -372,6 +423,7 @@ function VariationMapOverlay({
           </>
         )}
       </ScrollView>
+      {engine.element}
       <View style={styles.bottom}>
         <Pressable onPress={finish} disabled={!ready || count === 0} style={[styles.createBtn, (!ready || count === 0) && styles.disabled]}>
           <Text style={styles.createText}>
