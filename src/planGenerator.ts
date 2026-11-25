@@ -66,6 +66,13 @@ export interface PlanReaction {
 export interface PlanDetails {
   lines: number;
   planShare: number;
+  // Move by move: for your 1st, 2nd, … move (up to the depth), which move you
+  // play, as a share of the lines that get that far (weighted by how often
+  // the opponent plays each move), and after which opponent moves.
+  steps: {
+    n: number;
+    moves: { key: string; san: string; share: number; after: { trigger: string; share: number }[]; color?: ArrowColor }[];
+  }[];
   // Your moves found in the lines (at least 5% of them), most common first.
   own: { key: string; san: string; share: number; drawn: 'light' | 'answer' | null; color?: ArrowColor }[];
   // The dark pairs: the opponent's move, your answers, how often, and why it is a threat.
@@ -570,9 +577,53 @@ export async function generatePlan(
   const answerColor = new Map<string, ArrowColor>();
   for (const sp of shownPairs) for (const a of sp.answers) answerColor.set(`${a.from}${a.to}`, sp.color);
   const answerSet = new Set(answerKeys);
+  const drawnColor = (key: string): ArrowColor | undefined => {
+    if (lightKeys.has(key)) {
+      const st = ownStats.get(key);
+      return st ? COLORS[group(st)] : undefined;
+    }
+    return answerColor.get(key);
+  };
+  const steps: PlanDetails['steps'] = [];
+  for (let n = 1; n <= opts.depth; n++) {
+    let reach = 0;
+    const moves = new Map<string, { san: string; w: number; after: Map<string, { trigger: string; w: number }> }>();
+    for (const l of leaves) {
+      const i = l.seq.findIndex((x) => x.own && x.occ.idx === n);
+      if (i < 0) continue;
+      reach += l.weight;
+      const item = l.seq[i];
+      const m = moves.get(item.occ.key) ?? { san: item.occ.san, w: 0, after: new Map() };
+      m.w += l.weight;
+      const prev = i > 0 && !l.seq[i - 1].own ? l.seq[i - 1] : undefined;
+      if (prev) {
+        const a = m.after.get(prev.occ.key) ?? { trigger: `!${prev.occ.san}`, w: 0 };
+        a.w += l.weight;
+        m.after.set(prev.occ.key, a);
+      }
+      moves.set(item.occ.key, m);
+    }
+    if (reach === 0) break;
+    steps.push({
+      n,
+      moves: [...moves.entries()]
+        .sort((a, b) => b[1].w - a[1].w)
+        .map(([key, m]) => {
+          const color = drawnColor(key);
+          return {
+            key,
+            san: m.san,
+            share: m.w / reach,
+            after: [...m.after.values()].sort((a, b) => b.w - a.w).map((a) => ({ trigger: a.trigger, share: a.w / reach })),
+            ...(color ? { color } : {})
+          };
+        })
+    });
+  }
   const details: PlanDetails = {
     lines: leaves.length,
     planShare: opts.planShare,
+    steps,
     own: [...ownStats.values()]
       .filter((x) => x.weight / total >= 0.05)
       .sort((a, b) => b.weight - a.weight)

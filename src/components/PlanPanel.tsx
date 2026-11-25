@@ -25,7 +25,21 @@ export interface PlanChoices {
 const SHARES = [0.6, 0.5, 0.4, 0.3];
 const CHOICES_KEY = 'generatePlan.choices';
 const OPEN_KEY = 'planPanel.open';
-const pct = (x: number) => `${Math.round(x * 100)}%`;
+const pct = (x: number) => (x > 0 && x < 0.005 ? '<1%' : `${Math.round(x * 100)}%`);
+const ORDINAL = ['1st', '2nd', '3rd', '4th', '5th', '6th'];
+// Per turn at most this many of your moves, each with at most this many
+// opponent moves named after it.
+const STEP_MOVES = 6;
+const STEP_AFTER = 4;
+
+// "after any move (!Nd2 25% · !Be2 20% · !O-O 15%)", "after !Bxf6", or nothing
+// (your first move, when it is your turn in the position).
+function afterText(after: { trigger: string; share: number }[]): string {
+  if (after.length === 0) return '';
+  if (after.length === 1) return `after ${after[0].trigger}`;
+  const named = after.slice(0, STEP_AFTER).map((a) => `${a.trigger} ${pct(a.share)}`);
+  return `after any move (${named.join(' · ')}${after.length > STEP_AFTER ? ' · …' : ''})`;
+}
 
 export function PlanPanel({
   status,
@@ -187,6 +201,31 @@ export function PlanPanel({
             <View style={styles.results}>
               <Text style={styles.dim}>{`From ${details.lines} lines · ${DB_LABEL[madeWith.db]} · depth ${madeWith.depth}`}</Text>
 
+              <Text style={styles.section}>Move by move</Text>
+              <Text style={styles.hint}>Which move you play on each turn, as a share of the lines that get that far.</Text>
+              {details.steps.map((step) => (
+                <View key={step.n} style={styles.step}>
+                  <Text style={styles.stepTitle}>{`Your ${ORDINAL[step.n - 1] ?? `${step.n}th`} move`}</Text>
+                  {step.moves.slice(0, STEP_MOVES).map((m) => {
+                    const c = m.color ? arrowColors[m.color] : undefined;
+                    const after = afterText(m.after);
+                    return (
+                      <View key={m.key} style={styles.stepMove}>
+                        <View style={styles.row}>
+                          <View style={[styles.dot, { backgroundColor: c ?? 'transparent', borderColor: c ?? colors.border }]} />
+                          <Text style={[styles.san, !c && styles.off]}>{m.san}</Text>
+                          <Text style={styles.afterText} numberOfLines={2}>
+                            {after}
+                          </Text>
+                          <Text style={styles.num}>{pct(m.share)}</Text>
+                        </View>
+                      </View>
+                    );
+                  })}
+                  {step.moves.length > STEP_MOVES && <Text style={styles.hint}>{`and ${step.moves.length - STEP_MOVES} more`}</Text>}
+                </View>
+              ))}
+
               <Text style={styles.section}>Your moves</Text>
               <Text style={styles.hint}>{`Drawn when it comes in at least ${pct(details.planShare)} of the lines (dark: your answer to a threat).`}</Text>
               {details.own.map((m) => {
@@ -267,5 +306,9 @@ const styles = StyleSheet.create({
   barFill: { height: '100%' },
   mark: { position: 'absolute', top: 0, bottom: 0, width: 2, backgroundColor: colors.textSecondary },
   num: { width: 40, color: colors.text, fontSize: 13, textAlign: 'right' },
-  line: { flex: 1, color: colors.textSecondary, fontSize: 13, lineHeight: 19 }
+  line: { flex: 1, color: colors.textSecondary, fontSize: 13, lineHeight: 19 },
+  step: { gap: 2, marginTop: 4 },
+  stepTitle: { color: colors.textSecondary, fontSize: 13, fontWeight: '700', marginTop: 2 },
+  stepMove: { gap: 0 },
+  afterText: { flex: 1, color: colors.textDim, fontSize: 12, lineHeight: 16 }
 });

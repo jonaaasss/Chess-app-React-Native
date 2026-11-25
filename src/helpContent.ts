@@ -12,14 +12,15 @@ export interface HelpTopic {
 export const HELP_GENERATE_PLAN: HelpTopic = {
   title: 'How Generate plan works',
   simple:
-    'Looks in the Lichess database at what strong players play from this position. Your moves that come back in most lines become light arrows, coloured by when they come (green, orange, red, blue). A move you only play to answer a threat becomes a dark pair: first the opponent\'s move, then your answer.',
+    'Looks in the Lichess database at what strong players play from this position. Your moves that come back in most lines become light arrows, coloured by when they come (green, orange, red, blue). A move you only play to answer a threat becomes a dark pair: first the opponent\'s move, then your answer. Under "Move by move" the Plan panel shows, turn by turn, which move you play and after which opponent moves.',
   technical: [
     "Walks the explorer from the board's position, heaviest lines first, up to Depth of your moves (at most 160 positions; a position with fewer than 30 games stops the line).",
     'Opponent: every move with at least 12% of the games.',
     'Each line weighs how often it is reached; your move is in the plan when it comes in at least "Plan move from" (60/50/40/30%) of that weight.',
     'Threat: takes, gives check, attacks a piece (trade offers too), puts a piece (not a pawn) on your half, or attacks a pawn more often than it is defended. Answer: take back or take the piece, move the attacked piece, answer the check, or chase the piece. Quiet moves (g3, h3, castling) are never threats. At most 4 pairs, only when both pieces stand on their start squares.',
     'A threat after which a light move is mostly not played becomes a note on that arrow.',
-    "Engine check: a note when a light move is not in Stockfish's top 3."
+    "Engine check: a note when a light move is not in Stockfish's top 3.",
+    'Move by move: for your 1st, 2nd, … move (up to Depth), which move you play as a share of the lines that get that far, weighted by how often the opponent plays each move; "after any move" when you play it after several opponent moves, with the most common ones.'
   ]
 };
 
