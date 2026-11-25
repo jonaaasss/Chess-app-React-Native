@@ -17,7 +17,7 @@ export const HELP_GENERATE_PLAN: HelpTopic = {
     "Walks the explorer from the board's position, heaviest lines first, up to Depth of your moves (at most 160 positions; a position with fewer than 30 games stops the line).",
     'Opponent: every move with at least 12% of the games.',
     'Plan consistency: where another popular move of yours (at least 15% of the games) is at most 0.1 pawn worse for Stockfish, the move that fits in the most lines is taken, so the plan stays the same from line to line (two passes over the tree; slower on the phone).',
-    'Each line weighs how often it is reached; your move is in the plan when it comes in at least "Plan move from" (60/50/40/30%) of that weight.',
+    'Each line weighs how often it is reached; your move is in the plan when it comes in at least "Plan move from" (60/50/40/30%) of that weight, counted over the lines where you choose freely: a line where you must take back, answer a check, save your queen or a piece attacked by a pawn, and that lacks the move, does not count against it.',
     'Threat: takes, gives check, attacks a piece (trade offers too), puts a piece (not a pawn) on your half, or attacks a pawn more often than it is defended. Answer: take back or take the piece, move the attacked piece, answer the check, or chase the piece. Quiet moves (g3, h3, castling) are never threats. At most 4 pairs, only when both pieces stand on their start squares.',
     'Exception: an opponent move (a quiet one too) after which a light move is mostly not played becomes a note on that arrow, unless it is too obvious: it takes something of yours, gives check, attacks your queen, or attacks a piece with a pawn.',
     "Engine check: a note when a light move is not in Stockfish's top 3.",

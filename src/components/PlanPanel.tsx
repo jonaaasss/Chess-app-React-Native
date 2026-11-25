@@ -227,7 +227,7 @@ export function PlanPanel({
               ))}
 
               <Text style={styles.section}>Your moves</Text>
-              <Text style={styles.hint}>{`Drawn when it comes in at least ${pct(details.planShare)} of the lines (dark: your answer to a threat).`}</Text>
+              <Text style={styles.hint}>{`Drawn when it comes in at least ${pct(details.planShare)} of the lines where you choose freely: lines where you must take back, answer a check, save your queen or a piece attacked by a pawn don't count against it (dark: your answer to a threat).`}</Text>
               {details.own.map((m) => {
                 const c = m.color ? arrowColors[m.color] : undefined;
                 return (

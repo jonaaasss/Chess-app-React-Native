@@ -12,7 +12,11 @@
 //    taken, so the plan stays the same from line to line (c6 everywhere,
 //    not c6 here and c5 there).
 // 2. Every line carries a weight (how often it is reached). Your moves
-//    played in at least `planShare` of the weight are the plan.
+//    played in at least `planShare` of the weight are the plan, counted over
+//    the lines where you are free to choose (`freeShare`): a line in which
+//    you have to answer an obvious threat (take back, answer a check, save
+//    your queen, a piece attacked by a pawn) and that lacks the move doesn't
+//    count against it.
 // 3. Colours (Jonas's convention, as in his Italian):
 //    - a move you play whatever the opponent does: a light colour, by when it
 //      comes (1st green, 2nd orange, 3rd red, later blue);
@@ -81,7 +85,8 @@ export interface PlanDetails {
     n: number;
     moves: { key: string; san: string; share: number; after: { trigger: string; share: number }[]; color?: ArrowColor }[];
   }[];
-  // Your moves found in the lines (at least 5% of them), most common first.
+  // Your moves found in the lines (at least 5% of them), most common first;
+  // `share` is counted over the lines where you are free to choose.
   own: { key: string; san: string; share: number; drawn: 'light' | 'answer' | null; color?: ArrowColor }[];
   // The dark pairs: the opponent's move, your answers, how often, and why it is a threat.
   pairs: { trigger: string; answers: string[]; share: number; reason: string; color: ArrowColor }[];
@@ -458,7 +463,16 @@ export async function generatePlan(
   const oppStats = tally(false, leaves);
   const group = (s: Stat) => Math.min(COLORS.length, Math.max(1, Math.round(s.idxSum / s.weight))) - 1;
 
-  const planOwn = [...ownStats.values()].filter((s) => s.weight / total >= opts.planShare).sort((a, b) => a.idxSum / a.weight - b.idxSum / b.weight);
+  // Lines where you have to answer an obvious threat (`obviousThreat`) are
+  // busy: one without a move doesn't count against that move.
+  const busy = new Set(
+    leaves.filter((l) => l.seq.some((x, i) => x.own && i > 0 && !l.seq[i - 1].own && obviousThreat(l.seq[i - 1], yourColor) && answers(l.seq[i - 1], x, yourColor)))
+  );
+  const freeShare = (st: Stat) => {
+    const without = weightOf(leaves.filter((l) => !busy.has(l) && !has(l, st.move.key, true)));
+    return st.weight + without > 0 ? st.weight / (st.weight + without) : 0;
+  };
+  const planOwn = [...ownStats.values()].filter((s) => freeShare(s) >= opts.planShare).sort((a, b) => a.idxSum / a.weight - b.idxSum / b.weight);
   if (planOwn.length === 0) return empty('No move of yours comes back in most lines: the position is too sharp for a plan. Try a smaller depth.', leaves.length);
 
   // Answers: pairs (opponent move → your move). A move of yours can answer
@@ -729,12 +743,13 @@ export async function generatePlan(
     steps,
     own: [...ownStats.values()]
       .filter((x) => x.weight / total >= 0.05)
-      .sort((a, b) => b.weight - a.weight)
-      .map((x) => {
+      .map((x) => ({ x, free: freeShare(x) }))
+      .sort((a, b) => b.free - a.free)
+      .map(({ x, free }) => {
         const key = x.move.key;
         const drawn = lightKeys.has(key) ? 'light' : answerSet.has(key) ? 'answer' : null;
         const color = drawn === 'light' ? COLORS[group(x)] : drawn === 'answer' ? answerColor.get(key) : undefined;
-        return { key, san: x.move.san, share: x.weight / total, drawn, ...(color ? { color } : {}) };
+        return { key, san: x.move.san, share: free, drawn, ...(color ? { color } : {}) };
       }),
     pairs: shownPairs.map((sp) => {
       const key = `${sp.trigger.from}${sp.trigger.to}`;
