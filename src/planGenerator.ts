@@ -29,7 +29,7 @@
 import { squareFromIndex, squareIndex, toFen } from './chess';
 import { legalMovesFrom, makeMove, type GameState } from './chessEngine';
 import { moveForSan, type ExplorerResult } from './lichessExplorer';
-import { pickOwnMove, type EngineEval } from './ownMove';
+import { evalText, pickOwnMove, scoreFor, type EngineEval } from './ownMove';
 import type { Arrow, ArrowColor, ArrowNotes, PromotionPiece } from './types';
 
 export interface PlanOptions {
@@ -62,7 +62,22 @@ export interface PlanReaction {
   share: number; // share of the lines that reach it
 }
 
+// What lies behind the arrows, for the Plan panel in the board editor.
+export interface PlanDetails {
+  lines: number;
+  planShare: number;
+  // Your moves found in the lines (at least 5% of them), most common first.
+  own: { key: string; san: string; share: number; drawn: 'light' | 'answer' | null; color?: ArrowColor }[];
+  // The dark pairs: the opponent's move, your answers, how often, and why it is a threat.
+  pairs: { trigger: string; answers: string[]; share: number; reason: string; color: ArrowColor }[];
+  // Where the rule did not take the most played move (ownMove.ts).
+  choices: { after: string; chosen: string; instead: string; detail: string }[];
+  // Notes on light moves: after this opponent move you mostly play something else.
+  exceptions: { move: string; trigger: string; text: string }[];
+}
+
 export interface PlanResult {
+  details?: PlanDetails;
   arrows: Arrow[];
   requests: number;
   lines: number;
@@ -150,30 +165,40 @@ function attackersOf(pieces: GameState['pieces'], square: string, color: 'w' | '
   return out;
 }
 
-// Whether the opponent move `prev` threatens something, so that an answer
-// to it is a reaction worth drawing.
-export function threatens(prev: SeqItem | undefined, yourColor: 'w' | 'b'): boolean {
-  if (!prev || prev.own) return false;
+const PIECE_NAME: Record<string, string> = { P: 'pawn', N: 'knight', B: 'bishop', R: 'rook', Q: 'queen', K: 'king' };
+
+// What the opponent move `prev` threatens ("takes on d5", "gives check",
+// "attacks the knight on f6", …), or null when it threatens nothing, so that
+// an answer to it is not a reaction worth drawing.
+export function threatReason(prev: SeqItem | undefined, yourColor: 'w' | 'b'): string | null {
+  if (!prev || prev.own) return null;
   const opp = yourColor === 'w' ? 'b' : 'w';
-  if (/[x+#]/.test(prev.occ.san)) return true; // takes something / check
+  const san = prev.occ.san;
+  if (/[+#]/.test(san)) return san.includes('x') ? `takes on ${prev.occ.to} with check` : 'gives check';
+  if (san.includes('x')) return `takes on ${prev.occ.to}`;
   const before = prev.before.pieces;
   const after = prev.after.pieces;
   const moved = after[prev.occ.to];
   // A piece (not a pawn or the king) on your half of the board.
   const rank = Number(prev.occ.to[1]);
-  if (moved && moved[1] !== 'P' && moved[1] !== 'K' && (yourColor === 'b' ? rank >= 5 : rank <= 4)) return true;
+  if (moved && moved[1] !== 'P' && moved[1] !== 'K' && (yourColor === 'b' ? rank >= 5 : rank <= 4)) return `puts a ${PIECE_NAME[moved[1]]} on your half`;
   for (const [sq, p] of Object.entries(after)) {
     if (!p || p[0] !== yourColor || p[1] === 'K') continue;
     const attackers = attackersOf(after, sq, opp);
     if (attackers.length === 0) continue;
     if (p[1] !== 'P') {
       // One of your pieces newly attacked (by the moved piece or uncovered).
-      if (attackers.includes(prev.occ.to) || attackersOf(before, sq, opp).length === 0) return true;
+      if (attackers.includes(prev.occ.to) || attackersOf(before, sq, opp).length === 0) return `attacks the ${PIECE_NAME[p[1]]} on ${sq}`;
     } else if (attackers.includes(prev.occ.to) && attackers.length > attackersOf(after, sq, yourColor).length) {
-      return true; // a pawn attacked more often than it is defended
+      return `attacks the pawn on ${sq}`; // attacked more often than it is defended
     }
   }
-  return false;
+  return null;
+}
+
+// Whether the opponent move `prev` threatens something.
+export function threatens(prev: SeqItem | undefined, yourColor: 'w' | 'b'): boolean {
+  return threatReason(prev, yourColor) !== null;
 }
 
 // Whether your move `cur` answers the opponent move `prev` played just before it.
@@ -217,6 +242,9 @@ export async function generatePlan(
     return { next: r.next, move: { ...mv, san: r.san } };
   }
 
+  // Where the rule did not take the most played move, by position.
+  const choices = new Map<string, PlanDetails['choices'][number]>();
+  const pct = (x: number) => `${Math.round(x * 100)}%`;
   type Task = { st: GameState; weight: number; seq: SeqItem[]; path: Move[]; ownN: number; oppN: number; out: Leaf[][] };
   const queue: Task[] = [{ st: start, weight: 1, seq: [], path: [], ownN: 0, oppN: 0, out: [] }];
   while (queue.length > 0) {
@@ -240,6 +268,21 @@ export async function generatePlan(
     if (t.st.turn === yourColor) {
       const own = await pickOwnMove(res, t.st, yourColor, opts.minGames, { engine: engineEval });
       if (cancelled?.()) break;
+      if (own && own.alt && (own.why === 'score' || own.why === 'engine')) {
+        const fen = toFen(t.st.pieces, t.st.turn, t.st.castling, t.st.enPassant);
+        const last = t.path[t.path.length - 1];
+        const ev = (san: string) => evalText(own.evals?.get(san));
+        if (!choices.has(fen))
+          choices.set(fen, {
+            after: last ? `!${last.san}` : 'the start',
+            chosen: own.move.san,
+            instead: own.alt.san,
+            detail:
+              own.why === 'score'
+                ? `scores ${pct(scoreFor(own.move, yourColor))} vs ${pct(scoreFor(own.alt, yourColor))}`
+                : `Stockfish ${ev(own.move.san)} vs ${ev(own.alt.san)}`
+          });
+      }
       const p = own ? play(t.st, own.move.san) : null;
       if (!p) {
         finish();
@@ -312,23 +355,27 @@ export async function generatePlan(
   // Answers: pairs (opponent move → your move). A move of yours can answer
   // different opponent moves in different lines (Bxb4 after b4, Bb4+ after
   // cxd4), so pairs are kept per opponent move.
-  type Pair = { t: string; m: string; san: string; w: number };
+  type Pair = { t: string; m: string; san: string; w: number; reason: string };
   let pairs: Pair[] = [];
   const relWeight = new Map<string, number>(); // your move → weight where it is an answer
   for (const s of ownStats.values()) {
     if (s.weight / total < 0.1) continue;
-    const byT = new Map<string, { rel: number; all: number; san: string }>();
+    const byT = new Map<string, { rel: number; all: number; san: string; reason: string }>();
     for (const l of leaves) {
       const i = l.seq.findIndex((x) => x.own && x.occ.key === s.move.key);
       if (i < 1 || l.seq[i - 1].own) continue;
-      const e = byT.get(l.seq[i - 1].occ.key) ?? { rel: 0, all: 0, san: l.seq[i].occ.san };
+      const e = byT.get(l.seq[i - 1].occ.key) ?? { rel: 0, all: 0, san: l.seq[i].occ.san, reason: '' };
       e.all += l.weight;
-      if (threatens(l.seq[i - 1], yourColor) && answers(l.seq[i - 1], l.seq[i], yourColor)) e.rel += l.weight;
+      const why = threatReason(l.seq[i - 1], yourColor);
+      if (why && answers(l.seq[i - 1], l.seq[i], yourColor)) {
+        e.rel += l.weight;
+        if (!e.reason) e.reason = why;
+      }
       byT.set(l.seq[i - 1].occ.key, e);
     }
     for (const [t, e] of byT) {
       if (e.rel / total >= 0.1 && e.rel / e.all >= 0.6) {
-        pairs.push({ t, m: s.move.key, san: e.san, w: e.rel });
+        pairs.push({ t, m: s.move.key, san: e.san, w: e.rel, reason: e.reason });
         relWeight.set(s.move.key, (relWeight.get(s.move.key) ?? 0) + e.rel);
       }
     }
@@ -519,7 +566,39 @@ export async function generatePlan(
       keyReactions.push(`${e.trigger} => ${e.text}`);
     }
 
+  // What lies behind the arrows (the Plan panel).
+  const answerColor = new Map<string, ArrowColor>();
+  for (const sp of shownPairs) for (const a of sp.answers) answerColor.set(`${a.from}${a.to}`, sp.color);
+  const answerSet = new Set(answerKeys);
+  const details: PlanDetails = {
+    lines: leaves.length,
+    planShare: opts.planShare,
+    own: [...ownStats.values()]
+      .filter((x) => x.weight / total >= 0.05)
+      .sort((a, b) => b.weight - a.weight)
+      .map((x) => {
+        const key = x.move.key;
+        const drawn = lightKeys.has(key) ? 'light' : answerSet.has(key) ? 'answer' : null;
+        const color = drawn === 'light' ? COLORS[group(x)] : drawn === 'answer' ? answerColor.get(key) : undefined;
+        return { key, san: x.move.san, share: x.weight / total, drawn, ...(color ? { color } : {}) };
+      }),
+    pairs: shownPairs.map((sp) => {
+      const key = `${sp.trigger.from}${sp.trigger.to}`;
+      const mine = shown.filter((p) => p.t === key);
+      return {
+        trigger: `!${sp.trigger.san}`,
+        answers: sp.answers.map((a) => a.san),
+        share: Math.max(0, ...mine.map((p) => p.w / total)),
+        reason: mine.find((p) => p.reason)?.reason ?? '',
+        color: sp.color
+      };
+    }),
+    choices: [...choices.values()],
+    exceptions: [...exceptions.entries()].flatMap(([key, list]) => list.map((e) => ({ move: ownStats.get(key)?.move.san ?? key, trigger: e.trigger, text: e.text })))
+  };
+
   return {
+    details,
     arrows,
     requests,
     lines: leaves.length,

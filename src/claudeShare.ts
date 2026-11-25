@@ -33,12 +33,14 @@ const START_DELAY_MS = 15_000;
 export interface ShareState {
   code: string | null;
   lastSharedAt: number | null;
+  // The last time the app looked for changes to share (shared or not).
+  lastCheckedAt: number | null;
   lastHash: string | null;
   lastChunkCount: number;
   lastError: string | null;
 }
 
-const EMPTY: ShareState = { code: null, lastSharedAt: null, lastHash: null, lastChunkCount: 0, lastError: null };
+const EMPTY: ShareState = { code: null, lastSharedAt: null, lastCheckedAt: null, lastHash: null, lastChunkCount: 0, lastError: null };
 
 let stateCache: ShareState | null = null;
 const listeners = new Set<() => void>();
@@ -82,7 +84,10 @@ async function upload(force: boolean): Promise<void> {
   if (!user || !state.code) return;
   const json = await exportStoreJson();
   const hash = hashJson(json);
-  if (!force && hash === state.lastHash) return;
+  if (!force && hash === state.lastHash) {
+    await updateShareState({ lastCheckedAt: Date.now() });
+    return;
+  }
   const code = state.code;
   const main = doc(db, 'shared', code);
   try {
@@ -103,7 +108,7 @@ async function upload(force: boolean): Promise<void> {
       ...(chunks.length === 0 ? { payload } : {})
     });
     for (let i = chunks.length; i < state.lastChunkCount; i++) await deleteDoc(doc(db, 'shared', code, 'chunks', chunkId(i))).catch(() => {});
-    await updateShareState({ lastSharedAt: Date.now(), lastHash: hash, lastChunkCount: chunks.length, lastError: null });
+    await updateShareState({ lastSharedAt: Date.now(), lastCheckedAt: Date.now(), lastHash: hash, lastChunkCount: chunks.length, lastError: null });
   } catch (error) {
     await updateShareState({ lastError: describeError(error) });
     throw error;
@@ -197,6 +202,17 @@ export interface ClaudeVersion {
   // this, loading Claude's version would undo changes made since.
   baseHash: string;
   chunkCount: number;
+}
+
+// Whether Claude left a version to load (null: couldn't tell, e.g. offline).
+export async function hasClaudeVersion(): Promise<boolean | null> {
+  const code = (await getShareState()).code;
+  if (!code) return false;
+  try {
+    return (await getDocFromServer(doc(db, 'shared', code, 'fromClaude', 'meta'))).exists();
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchClaudeVersion(): Promise<ClaudeVersion | null> {

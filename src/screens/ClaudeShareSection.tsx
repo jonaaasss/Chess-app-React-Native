@@ -2,7 +2,7 @@
 // the switch, the secret code to hand to Claude, and loading a version
 // Claude prepared.
 import React, { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, radius, touchTarget, type } from '../theme';
 import { ToggleRow } from '../components/ToggleRow';
 import { alertDialog, confirmDialog, showSnackbar } from '../overlay';
@@ -11,6 +11,7 @@ import {
   currentDataHash,
   fetchClaudeVersion,
   getShareState,
+  hasClaudeVersion,
   onShareStateChange,
   removeClaudeVersion,
   shareNow,
@@ -26,6 +27,8 @@ const DESCRIPTION =
 export function ClaudeShareSection() {
   const [state, setState] = useState<ShareState | null>(null);
   const [busy, setBusy] = useState(false);
+  // Whether Claude left a version to load (null: not known).
+  const [waiting, setWaiting] = useState<boolean | null>(null);
 
   useEffect(() => {
     const reload = () => {
@@ -36,6 +39,21 @@ export function ClaudeShareSection() {
   }, []);
 
   const on = !!state?.code;
+
+  function lookForClaude() {
+    hasClaudeVersion()
+      .then(setWaiting)
+      .catch(() => setWaiting(null));
+  }
+  // When Settings opens, when sharing is turned on, and when the app comes back.
+  useEffect(() => {
+    if (!on) return undefined;
+    lookForClaude();
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') lookForClaude();
+    });
+    return () => sub.remove();
+  }, [on]);
 
   async function toggle() {
     if (busy) return;
@@ -59,6 +77,7 @@ export function ClaudeShareSection() {
     try {
       await shareNow({ force: true });
       showSnackbar({ message: 'Shared.' });
+      lookForClaude();
     } catch (error) {
       await alertDialog(`Sharing didn't work: ${describeError(error)}.`);
     } finally {
@@ -71,6 +90,7 @@ export function ClaudeShareSection() {
     try {
       const version = await fetchClaudeVersion();
       if (!version) {
+        setWaiting(false);
         await alertDialog("Claude hasn't prepared any changes.");
         return;
       }
@@ -86,6 +106,7 @@ export function ClaudeShareSection() {
       if (!ok) return;
       await replaceStoreFromJson(version.json);
       await removeClaudeVersion(version).catch(() => {});
+      setWaiting(false);
       showSnackbar({
         message: "Loaded Claude's changes",
         actionLabel: 'Undo',
@@ -103,13 +124,17 @@ export function ClaudeShareSection() {
     }
   }
 
+  // "Shared 23 Nov 2026, 20:57 · nothing new since (checked 5 min ago)": shows
+  // that the app does look for changes even when there is nothing to share.
+  const checkedLater = !!state?.lastCheckedAt && !!state.lastSharedAt && state.lastCheckedAt - state.lastSharedAt > 60_000;
   const status = !state
     ? ''
     : state.lastError
       ? `Not shared: ${state.lastError}.`
       : state.lastSharedAt
-        ? `Shared ${formatAgo(state.lastSharedAt)}. Changes are shared about 30 seconds later.`
+        ? `Shared ${formatAgo(state.lastSharedAt)}${checkedLater ? ` · nothing new since (checked ${formatAgo(state.lastCheckedAt!)})` : ''}. Changes are shared about 30 seconds later.`
         : 'Sharing…';
+  const noChanges = waiting === false;
 
   return (
     <>
@@ -125,10 +150,16 @@ export function ClaudeShareSection() {
             <Pressable onPress={share} disabled={busy} style={[styles.btn, busy && styles.disabled]}>
               <Text style={styles.btnText}>Share now</Text>
             </Pressable>
-            <Pressable onPress={loadClaudeChanges} disabled={busy} style={[styles.btn, styles.btnPrimary, busy && styles.disabled]}>
+            <Pressable
+              onPress={loadClaudeChanges}
+              disabled={busy || noChanges}
+              style={[styles.btn, styles.btnPrimary, (busy || noChanges) && styles.disabled]}
+              accessibilityState={{ disabled: busy || noChanges }}
+            >
               <Text style={styles.btnPrimaryText}>Load Claude's changes</Text>
             </Pressable>
           </View>
+          {noChanges && <Text style={styles.caption}>No changes from Claude yet.</Text>}
         </View>
       )}
     </>

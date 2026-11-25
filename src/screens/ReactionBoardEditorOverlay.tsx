@@ -34,8 +34,8 @@ import { useStockfishEngine, type EngineLine } from '../engine/useStockfishEngin
 import { engineEvaluator } from '../ownMove';
 import { ExplorerPanel } from '../components/ExplorerPanel';
 import { DB_LABEL, fetchExplorer, getLichessToken } from '../lichessExplorer';
-import { DEFAULT_PLAN_OPTIONS, generatePlan, planDescription } from '../planGenerator';
-import { openGeneratePlanDialog } from './GeneratePlanDialog';
+import { DEFAULT_PLAN_OPTIONS, generatePlan, planDescription, type PlanDetails } from '../planGenerator';
+import { PlanPanel, type PlanChoices } from '../components/PlanPanel';
 import { allowScreenOff, keepScreenOn } from '../keepAwake';
 
 const ENGINE_ANALYSIS_DEBOUNCE_MS = 350;
@@ -1414,14 +1414,17 @@ function ReactionBoardEditorOverlay({
   // ---------- Generate plan (Plan and Summary) ----------
   const [genStatus, setGenStatus] = useState<string | null>(null);
   const genCancel = useRef(false);
-  async function handleGeneratePlan() {
+  // The last plan made in this editor (for the Plan panel), by position.
+  const [planInfo, setPlanInfo] = useState<{ fen: string; details: PlanDetails; choices: PlanChoices } | null>(null);
+  // Stockfish's top 3 per position for the engine check, so drawing the plan
+  // again with another "Plan move from" doesn't ask again.
+  const engineTopMemo = useRef(new Map<string, { from: string; to: string }[]>());
+  async function handleGeneratePlan(choices: PlanChoices) {
     if (isReactions || genStatus) return;
     if (!(await getLichessToken())) {
       await alertDialog('Generate plan uses the Lichess explorer. Add your Lichess token first in Settings → Lichess.');
       return;
     }
-    const choices = await openGeneratePlanDialog();
-    if (!choices) return;
     genCancel.current = false;
     setGenStatus('Starting…');
     keepScreenOn();
@@ -1434,7 +1437,15 @@ function ReactionBoardEditorOverlay({
         (f) => fetchExplorer(f, choices.db),
         { ...DEFAULT_PLAN_OPTIONS, depth: choices.depth, planShare: choices.planShare },
         setGenStatus,
-        choices.engine && engine.ready ? async (f, turn) => (await engine.analyzeOnce(f, turn)).map((l) => ({ from: l.from, to: l.to })) : undefined,
+        choices.engine && engine.ready
+          ? async (f, turn) => {
+              const hit = engineTopMemo.current.get(f);
+              if (hit) return hit;
+              const top = (await engine.analyzeOnce(f, turn)).map((l) => ({ from: l.from, to: l.to }));
+              if (top.length) engineTopMemo.current.set(f, top);
+              return top;
+            }
+          : undefined,
         () => genCancel.current,
         engine.ready ? engineEvaluator(engine.analyzeOnce, () => setGenStatus('Stockfish compares your most played moves…')) : undefined
       );
@@ -1443,6 +1454,7 @@ function ReactionBoardEditorOverlay({
         await alertDialog(res.problem);
         return;
       }
+      if (res.details) setPlanInfo({ fen: startFen, details: res.details, choices });
       const before = board;
       setBoard((prev) => {
         const at = faceAnnotationsAt(prev[side], historyIndex);
@@ -1895,6 +1907,17 @@ function ReactionBoardEditorOverlay({
         {/* Lichess opening explorer for the position on the board; tap a move to play it. */}
         {!hideEngine && <ExplorerPanel state={engineState} onPlay={finishMove} />}
 
+        {!isReactions && !guided && (
+          // Generate plan: its settings and what lies behind the arrows (planGenerator.ts).
+          <PlanPanel
+            status={genStatus}
+            onGenerate={(c) => void handleGeneratePlan(c)}
+            onCancel={() => (genCancel.current = true)}
+            details={planInfo && planInfo.fen === fen ? planInfo.details : null}
+            madeWith={planInfo && planInfo.fen === fen ? planInfo.choices : null}
+          />
+        )}
+
         {pendingPromotion && (
           <View style={styles.promoRow}>
             <Text style={styles.promoLabel}>Promote to:</Text>
@@ -1971,25 +1994,6 @@ function ReactionBoardEditorOverlay({
             </Pressable>
           </View>
         </View>
-
-        {!isReactions && !guided && (
-          // Draws the plan from the Lichess explorer (see planGenerator.ts).
-          <View style={styles.genRow}>
-            {genStatus ? (
-              <>
-                <ActivityIndicator size="small" color={colors.textDim} />
-                <Text style={styles.genStatus}>{genStatus}</Text>
-                <Pressable onPress={() => (genCancel.current = true)} style={styles.genCancel}>
-                  <Text style={styles.clearBtnText}>Cancel</Text>
-                </Pressable>
-              </>
-            ) : (
-              <Pressable onPress={handleGeneratePlan} style={styles.genBtn} accessibilityLabel="Generate the plan from the Lichess explorer">
-                <Text style={styles.genBtnText}>Generate plan</Text>
-              </Pressable>
-            )}
-          </View>
-        )}
 
         {mode === 'summary' &&
           // Two framed groups (Law of Common Region), the same layout in their
@@ -2487,11 +2491,6 @@ const styles = StyleSheet.create({
   toolSegTextActive: { color: colors.onPrimary },
   clearBtn: { minHeight: 48, justifyContent: 'center', paddingLeft: 12 },
   clearBtnText: { color: colors.textDim, fontSize: 13, fontWeight: '600' },
-  genRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: touchTarget, marginTop: 8, marginBottom: 4 },
-  genBtn: { flex: 1, minHeight: touchTarget, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel2, alignItems: 'center', justifyContent: 'center' },
-  genBtnText: { color: colors.text, fontSize: 15, fontWeight: '700' },
-  genStatus: { flex: 1, color: colors.textDim, fontSize: 13 },
-  genCancel: { minHeight: touchTarget, paddingHorizontal: 12, justifyContent: 'center' },
   boardRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 20 },
   board: { alignSelf: 'center', borderRadius: 6, overflow: 'hidden', borderWidth: 1, borderColor: colors.border },
   selectedHighlight: { backgroundColor: 'rgba(21,128,61,0.35)' },
