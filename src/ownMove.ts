@@ -14,8 +14,12 @@ import { moveForSan, type ExplorerMove, type ExplorerResult } from './lichessExp
 import type { GameState } from './chessEngine';
 
 export const OWN_MOVE_RULE = { minShare: 0.15, nearly: 0.5, betterScore: 0.04, engineMargin: 50 };
+// Generate plan's plan consistency: a popular move you already play in other
+// lines is taken when Stockfish finds it at most this much (centipawns)
+// worse than the rule's move.
+export const PLAN_MARGIN = 10;
 
-export type OwnMoveWhy = 'most' | 'score' | 'engine' | 'yours';
+export type OwnMoveWhy = 'most' | 'score' | 'engine' | 'yours' | 'plan';
 
 // Centipawns from White's point of view per move (UCI "e7e5"); a missing
 // move was not evaluated. Null when the engine could not answer.
@@ -44,6 +48,22 @@ export function uciOf(state: GameState, san: string): string | null {
 // Stockfish's answers for this session, so a rescan doesn't ask again.
 const evalCache = new Map<string, Map<string, number>>();
 
+// Stockfish's evaluation (White's point of view) of these moves in this
+// position, by SAN; null when it could not answer. Cached for the session.
+export async function engineEvalsFor(state: GameState, sans: string[], engine: EngineEval): Promise<Map<string, number> | null> {
+  const ucis = sans.map((san) => uciOf(state, san));
+  if (!ucis.every((u): u is string => !!u)) return null;
+  const fen = toFen(state.pieces, state.turn, state.castling, state.enPassant);
+  const key = `${fen}|${[...ucis].sort().join(',')}`;
+  let got: Map<string, number> | null | undefined = evalCache.get(key);
+  if (!got) {
+    got = await engine(fen, state, ucis as string[]).catch(() => null);
+    if (got && ucis.every((u) => got!.has(u as string))) evalCache.set(key, got);
+  }
+  if (!got) return null;
+  return new Map(sans.map((san, i) => [san, got!.get(ucis[i] as string)]).filter((e): e is [string, number] => e[1] !== undefined));
+}
+
 export async function pickOwnMove(
   res: ExplorerResult,
   state: GameState,
@@ -68,17 +88,10 @@ export async function pickOwnMove(
   if (!pool.includes(pick)) pool.push(pick);
   let evals: Map<string, number> | undefined;
   if (options.engine && pool.length >= 2) {
-    const ucis = pool.map((m) => uciOf(state, m.san));
-    if (ucis.every((u): u is string => !!u)) {
-      const fen = toFen(state.pieces, state.turn, state.castling, state.enPassant);
-      const key = `${fen}|${[...ucis].sort().join(',')}`;
-      let got: Map<string, number> | null | undefined = evalCache.get(key);
-      if (!got) {
-        got = await options.engine(fen, state, ucis as string[]).catch(() => null);
-        if (got && ucis.every((u) => got!.has(u as string))) evalCache.set(key, got);
-      }
+    {
+      const got = await engineEvalsFor(state, pool.map((m) => m.san), options.engine);
       if (got) {
-        evals = new Map(pool.map((m, i) => [m.san, got!.get(ucis[i] as string)]).filter((e): e is [string, number] => e[1] !== undefined));
+        evals = got;
         const forYou = (san: string) => {
           const v = evals!.get(san);
           return v === undefined ? undefined : yourColor === 'w' ? v : -v;

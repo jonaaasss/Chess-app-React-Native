@@ -6,6 +6,11 @@
 //    unless a nearly as popular one scores clearly better, with Stockfish as
 //    referee), on the opponent's move every move played in at least
 //    `minShare` of the games, until `depth` of your moves.
+//    Plan consistency (two passes, see `scan`): where another popular move
+//    of yours (≥ 15% of the games) is at most PLAN_MARGIN (0.1 pawn) worse
+//    for Stockfish, the move that is acceptable in the most lines overall is
+//    taken, so the plan stays the same from line to line (c6 everywhere,
+//    not c6 here and c5 there).
 // 2. Every line carries a weight (how often it is reached). Your moves
 //    played in at least `planShare` of the weight are the plan.
 // 3. Colours (Jonas's convention, as in his Italian):
@@ -32,7 +37,7 @@
 import { squareFromIndex, squareIndex, toFen } from './chess';
 import { legalMovesFrom, makeMove, type GameState } from './chessEngine';
 import { moveForSan, type ExplorerResult } from './lichessExplorer';
-import { evalText, pickOwnMove, scoreFor, type EngineEval } from './ownMove';
+import { engineEvalsFor, evalText, OWN_MOVE_RULE, pickOwnMove, PLAN_MARGIN, scoreFor, uciOf, type EngineEval } from './ownMove';
 import type { Arrow, ArrowColor, ArrowNotes, PromotionPiece } from './types';
 
 export interface PlanOptions {
@@ -255,14 +260,19 @@ export async function generatePlan(
   engineEval?: EngineEval
 ): Promise<PlanResult> {
   let requests = 0;
-  const leaves: Leaf[] = [];
-  const branches: OppBranch[] = [];
+  let leaves: Leaf[] = [];
+  let branches: OppBranch[] = [];
   const empty = (problem: string, lines = 0): PlanResult => ({ arrows: [], requests, lines, keyMoves: [], keyReactions: [], ownKeys: [], ownSan: {}, pairs: [], reactions: [], problem });
 
+  // Each pass may read `maxRequests` positions (the second one mostly from
+  // the cache).
+  let passRequests = 0;
+  let passLabel = 'Reading the explorer…';
   async function explore(st: GameState): Promise<ExplorerResult | null> {
-    if (requests >= opts.maxRequests || cancelled?.()) return null;
+    if (passRequests >= opts.maxRequests || cancelled?.()) return null;
+    passRequests += 1;
     requests += 1;
-    onProgress?.(`Reading the explorer… ${requests} positions`);
+    onProgress?.(`${passLabel} ${passRequests} positions`);
     return fetcher(toFen(st.pieces, st.turn, st.castling, st.enPassant));
   }
 
@@ -274,85 +284,153 @@ export async function generatePlan(
   }
 
   // Where the rule did not take the most played move, by position.
-  const choices = new Map<string, PlanDetails['choices'][number]>();
+  let choices = new Map<string, PlanDetails['choices'][number]>();
+  const keyOf = (st: GameState, san: string) => {
+    const mv = moveForSan(st, san);
+    return mv ? `${mv.from}${mv.to}` : san;
+  };
   const pct = (x: number) => `${Math.round(x * 100)}%`;
+  // Plan consistency, in two passes. Pass 1 walks the tree and notes, per
+  // position of yours, the moves that are as good as the rule's move (your
+  // popular moves, at most PLAN_MARGIN worse for Stockfish), with the weight
+  // of the line (`acceptWeight`). Pass 2 walks it again and takes everywhere
+  // the acceptable move that is acceptable in the most lines overall, so one
+  // plan move (c6) is used wherever it fits instead of c6 here and c5 there.
+  // Pass 1 already prefers moves chosen in heavier lines (`planWeight`).
+  const acceptWeight = new Map<string, number>();
   type Task = { st: GameState; weight: number; seq: SeqItem[]; path: Move[]; ownN: number; oppN: number; out: Leaf[][] };
-  const queue: Task[] = [{ st: start, weight: 1, seq: [], path: [], ownN: 0, oppN: 0, out: [] }];
-  while (queue.length > 0) {
-    if (cancelled?.()) break;
-    queue.sort((x, y) => y.weight - x.weight);
-    const t = queue.shift()!;
-    const finish = () => {
-      const leaf = { weight: t.weight, seq: t.seq };
-      leaves.push(leaf);
-      t.out.forEach((list) => list.push(leaf));
-    };
-    if (t.ownN >= opts.depth && t.st.turn === yourColor) {
-      finish();
-      continue;
-    }
-    const res = await explore(t.st);
-    if (!res || res.games < opts.minGames || res.moves.length === 0) {
-      finish();
-      continue;
-    }
-    if (t.st.turn === yourColor) {
-      const own = await pickOwnMove(res, t.st, yourColor, opts.minGames, { engine: engineEval });
-      if (cancelled?.()) break;
-      if (own && own.alt && (own.why === 'score' || own.why === 'engine')) {
-        const fen = toFen(t.st.pieces, t.st.turn, t.st.castling, t.st.enPassant);
-        const last = t.path[t.path.length - 1];
-        const ev = (san: string) => evalText(own.evals?.get(san));
-        if (!choices.has(fen))
-          choices.set(fen, {
-            after: last ? `!${last.san}` : 'the start',
-            chosen: own.move.san,
-            instead: own.alt.san,
-            detail:
-              own.why === 'score'
-                ? `scores ${pct(scoreFor(own.move, yourColor))} vs ${pct(scoreFor(own.alt, yourColor))}`
-                : `Stockfish ${ev(own.move.san)} vs ${ev(own.alt.san)}`
-          });
-      }
-      const p = own ? play(t.st, own.move.san) : null;
-      if (!p) {
+
+  // False when cancelled.
+  async function scan(pass: 1 | 2): Promise<boolean> {
+    leaves = [];
+    branches = [];
+    choices = new Map();
+    passRequests = 0;
+    passLabel = pass === 1 ? 'Reading the explorer…' : 'Making the plan consistent…';
+    const planWeight = new Map<string, number>();
+    const queue: Task[] = [{ st: start, weight: 1, seq: [], path: [], ownN: 0, oppN: 0, out: [] }];
+    while (queue.length > 0) {
+      if (cancelled?.()) return false;
+      queue.sort((x, y) => y.weight - x.weight);
+      const t = queue.shift()!;
+      const finish = () => {
+        const leaf = { weight: t.weight, seq: t.seq };
+        leaves.push(leaf);
+        t.out.forEach((list) => list.push(leaf));
+      };
+      if (t.ownN >= opts.depth && t.st.turn === yourColor) {
         finish();
         continue;
       }
-      const occ: Occ = { ...p.move, key: `${p.move.from}${p.move.to}`, idx: t.ownN + 1 };
-      queue.push({ ...t, st: p.next, seq: [...t.seq, { occ, own: true, before: t.st, after: p.next }], path: [...t.path, p.move], ownN: t.ownN + 1 });
-      continue;
+      const res = await explore(t.st);
+      if (!res || res.games < opts.minGames || res.moves.length === 0) {
+        finish();
+        continue;
+      }
+      if (t.st.turn === yourColor) {
+        const candidates = res.moves.filter((m) => m.games >= Math.max(opts.minGames, res.games * OWN_MOVE_RULE.minShare));
+        // Stockfish on all your popular moves at once (cached for the
+        // session); the rule's referee and the plan consistency share it.
+        const all = engineEval && candidates.length >= 2 ? await engineEvalsFor(t.st, candidates.map((m) => m.san), engineEval) : null;
+        if (cancelled?.()) return false;
+        const fromAll: EngineEval | undefined = all
+          ? async (_fen, st, ucis) => {
+              const out = new Map<string, number>();
+              for (const m of candidates) {
+                const u = uciOf(st, m.san);
+                const v = all.get(m.san);
+                if (u && v !== undefined && ucis.includes(u)) out.set(u, v);
+              }
+              return out.size ? out : null;
+            }
+          : engineEval;
+        const own = await pickOwnMove(res, t.st, yourColor, opts.minGames, { engine: fromAll });
+        if (cancelled?.()) return false;
+        const fen = toFen(t.st.pieces, t.st.turn, t.st.castling, t.st.enPassant);
+        const last = t.path[t.path.length - 1];
+        const after = last ? `!${last.san}` : 'the start';
+        let chosen = own?.move;
+        if (own) {
+          const forYou = (san: string) => {
+            const v = all?.get(san);
+            return v === undefined ? undefined : yourColor === 'w' ? v : -v;
+          };
+          const base = forYou(own.move.san);
+          const fits = base === undefined ? [] : candidates.filter((m) => m !== own.move && (forYou(m.san) ?? -Infinity) >= base - PLAN_MARGIN);
+          if (pass === 1)
+            for (const m of [own.move, ...fits]) acceptWeight.set(keyOf(t.st, m.san), (acceptWeight.get(keyOf(t.st, m.san)) ?? 0) + t.weight);
+          const weightOfMove = (m: { san: string }) => (pass === 1 ? planWeight : acceptWeight).get(keyOf(t.st, m.san)) ?? 0;
+          const best = fits.filter((m) => weightOfMove(m) > weightOfMove(own.move)).sort((a, b) => weightOfMove(b) - weightOfMove(a))[0];
+          if (best) {
+            chosen = best;
+            if (!choices.has(fen))
+              choices.set(fen, {
+                after,
+                chosen: best.san,
+                instead: own.move.san,
+                detail: `same plan as your other lines; Stockfish ${evalText(all?.get(best.san))} vs ${evalText(all?.get(own.move.san))}`
+              });
+          }
+        }
+        if (own && chosen === own.move && own.alt && (own.why === 'score' || own.why === 'engine')) {
+          const ev = (san: string) => evalText(own.evals?.get(san));
+          if (!choices.has(fen))
+            choices.set(fen, {
+              after,
+              chosen: own.move.san,
+              instead: own.alt.san,
+              detail:
+                own.why === 'score'
+                  ? `scores ${pct(scoreFor(own.move, yourColor))} vs ${pct(scoreFor(own.alt, yourColor))}`
+                  : `Stockfish ${ev(own.move.san)} vs ${ev(own.alt.san)}`
+            });
+        }
+        const p = chosen ? play(t.st, chosen.san) : null;
+        if (!p) {
+          finish();
+          continue;
+        }
+        const occ: Occ = { ...p.move, key: `${p.move.from}${p.move.to}`, idx: t.ownN + 1 };
+        planWeight.set(occ.key, (planWeight.get(occ.key) ?? 0) + t.weight);
+        queue.push({ ...t, st: p.next, seq: [...t.seq, { occ, own: true, before: t.st, after: p.next }], path: [...t.path, p.move], ownN: t.ownN + 1 });
+        continue;
+      }
+      const followed = res.moves.filter((m) => m.games / res.games >= opts.minShare && m.games >= opts.minGames);
+      if (followed.length === 0) {
+        finish();
+        continue;
+      }
+      for (const m of followed) {
+        const p = play(t.st, m.san);
+        if (!p) continue;
+        const path = [...t.path, p.move];
+        const branch: OppBranch = {
+          ownBefore: new Set(t.seq.filter((x) => x.own).map((x) => x.occ.key)),
+          localShare: m.games / res.games,
+          move: p.move,
+          path,
+          after: p.next,
+          leaves: []
+        };
+        branches.push(branch);
+        const occ: Occ = { ...p.move, key: `${p.move.from}${p.move.to}`, idx: t.oppN + 1 };
+        queue.push({
+          st: p.next,
+          weight: t.weight * (m.games / res.games),
+          seq: [...t.seq, { occ, own: false, before: t.st, after: p.next }],
+          path,
+          ownN: t.ownN,
+          oppN: t.oppN + 1,
+          out: [...t.out, branch.leaves]
+        });
+      }
     }
-    const followed = res.moves.filter((m) => m.games / res.games >= opts.minShare && m.games >= opts.minGames);
-    if (followed.length === 0) {
-      finish();
-      continue;
-    }
-    for (const m of followed) {
-      const p = play(t.st, m.san);
-      if (!p) continue;
-      const path = [...t.path, p.move];
-      const branch: OppBranch = {
-        ownBefore: new Set(t.seq.filter((s) => s.own).map((s) => s.occ.key)),
-        localShare: m.games / res.games,
-        move: p.move,
-        path,
-        after: p.next,
-        leaves: []
-      };
-      branches.push(branch);
-      const occ: Occ = { ...p.move, key: `${p.move.from}${p.move.to}`, idx: t.oppN + 1 };
-      queue.push({
-        st: p.next,
-        weight: t.weight * (m.games / res.games),
-        seq: [...t.seq, { occ, own: false, before: t.st, after: p.next }],
-        path,
-        ownN: t.ownN,
-        oppN: t.oppN + 1,
-        out: [...t.out, branch.leaves]
-      });
-    }
+    return true;
   }
+
+  if (!(await scan(1))) return empty('Cancelled.');
+  // Without Stockfish nothing is "as good", so a second pass changes nothing.
+  if (engineEval && !(await scan(2))) return empty('Cancelled.');
 
   if (cancelled?.()) return empty('Cancelled.');
   const total = leaves.reduce((s, l) => s + l.weight, 0);
