@@ -29,6 +29,8 @@ import { DB_LABEL, fetchExplorer, getExplorerDb, setExplorerDb, type ExplorerDb 
 import { closestPlan, DEFAULT_PLAN_OPTIONS, planChanges, positionShare, scanPlans, type Plan, type PlanPiece, type VarMove, type VariationChoice } from '../variationMap';
 import { useStockfishEngine } from '../engine/useStockfishEngine';
 import { engineEvaluator, type EngineEval } from '../ownMove';
+import { HelpButton } from '../components/HelpButton';
+import { HELP_VARIATIONS, HELP_YOUR_MOVE } from '../helpContent';
 import { makePlanBoard } from '../importOpening';
 import { allowScreenOff, keepScreenOn } from '../keepAwake';
 import { addOpening, deleteOpening, getBoardStyle, saveCard, uid } from '../storage';
@@ -333,10 +335,11 @@ function VariationMapOverlay({
         <Text style={styles.title} numberOfLines={1}>
           {heading}
         </Text>
+        <HelpButton topics={[HELP_VARIATIONS, HELP_YOUR_MOVE]} />
       </View>
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.intro}>
-          The plans of this opening from the Lichess explorer: a new plan starts where an opponent move sends one of your pieces (knights, bishops, queen, castling) to another square. Each ticked plan becomes a board on the position where it starts, with all moves from the start of the opening. Draw the arrows with Generate plan.
+          Each ticked plan becomes a board on the position where it starts, with all moves from the start of the opening. Draw the arrows with Generate plan.
         </Text>
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Database</Text>

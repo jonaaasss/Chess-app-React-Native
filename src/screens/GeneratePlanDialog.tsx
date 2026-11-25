@@ -9,6 +9,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { showOverlay, useOverlayBack } from '../overlay';
 import { colors, radius, touchTarget } from '../theme';
 import { DB_LABEL, getExplorerDb, setExplorerDb, type ExplorerDb } from '../lichessExplorer';
+import { HelpButton } from '../components/HelpButton';
+import { HELP_GENERATE_PLAN, HELP_YOUR_MOVE } from '../helpContent';
 
 export interface GeneratePlanChoices {
   depth: number;
@@ -51,11 +53,11 @@ function Dialog({ close }: { close: (v: GeneratePlanChoices | null) => void }) {
   return (
     <View style={styles.backdrop}>
       <View style={styles.box}>
-        <Text style={styles.title}>Generate plan</Text>
-        <Text style={styles.body}>
-          Draws your plan from the Lichess explorer for the position on the board: your moves that come back in most lines, coloured by when they come, and the
-          opponent's moves that change them as notes. The arrows on this position are replaced (Undo afterwards).
-        </Text>
+        <View style={styles.titleRow}>
+          <Text style={styles.title}>Generate plan</Text>
+          <HelpButton topics={[HELP_GENERATE_PLAN, HELP_YOUR_MOVE]} />
+        </View>
+        <Text style={styles.body}>Draws your plan from the Lichess explorer for the position on the board. The arrows on this position are replaced (Undo afterwards).</Text>
 
         <Text style={styles.label}>Depth (your moves)</Text>
         <View style={styles.stepper}>
@@ -121,7 +123,8 @@ export function openGeneratePlanDialog(): Promise<GeneratePlanChoices | null> {
 const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 20 },
   box: { backgroundColor: colors.surface, borderRadius: radius.lg, padding: 20, borderWidth: 1, borderColor: colors.border },
-  title: { color: colors.text, fontSize: 17, fontWeight: '700', marginBottom: 8 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: -8, marginBottom: 2 },
+  title: { flex: 1, color: colors.text, fontSize: 17, fontWeight: '700' },
   body: { color: colors.textSecondary, fontSize: 13, lineHeight: 19, marginBottom: 14 },
   label: { color: colors.textDim, fontSize: 13, fontWeight: '600', marginBottom: 6 },
   stepper: { flexDirection: 'row', alignItems: 'center', gap: 16, marginBottom: 14 },

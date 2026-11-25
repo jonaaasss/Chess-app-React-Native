@@ -18,6 +18,8 @@ import { buildOpening, type BuiltOpening, type CardSpec } from '../openingBuilde
 import type { Move } from '../planGenerator';
 import { useStockfishEngine } from '../engine/useStockfishEngine';
 import { engineEvaluator, type EngineEval } from '../ownMove';
+import { HelpButton } from '../components/HelpButton';
+import { HELP_OPENING_MAP, HELP_YOUR_MOVE } from '../helpContent';
 import { makePlanBoard, makeReactionsBoard } from '../importOpening';
 import { allowScreenOff, keepScreenOn } from '../keepAwake';
 import { addOpening, deleteOpening, saveCard, setOpeningSummary, uid } from '../storage';
@@ -205,10 +207,11 @@ function OpeningMapOverlay({
           <Text style={styles.cancel}>Cancel</Text>
         </Pressable>
         <Text style={styles.title} numberOfLines={1}>{`Opening map: ${name}`}</Text>
+        <HelpButton topics={[HELP_OPENING_MAP, HELP_YOUR_MOVE]} />
       </View>
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.intro}>
-          Made from the Lichess explorer, in the style of your Italian: a Summary with your plan, a Specific line for each forcing try, Reactions: first move, and a Reaction card when an opponent move changes three or more of your moves.
+          Cards made from the Lichess explorer, in the style of your Italian. Tick the ones you want; nothing is saved before Create.
         </Text>
         {status && (
           <View style={styles.statusRow}>

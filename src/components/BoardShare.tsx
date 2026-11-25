@@ -5,24 +5,14 @@
 // does not start from the opening's start position, …).
 import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text } from 'react-native';
-import Svg, { Circle, Path } from 'react-native-svg';
 import { alertDialog } from '../overlay';
 import { colors, touchTarget } from '../theme';
 import { boardShare, shareText } from '../boardShare';
 import { sansForBoardMoves } from '../chessEngine';
 import { DB_LABEL, getExplorerDb } from '../lichessExplorer';
 import { getOpening } from '../storage';
+import { InfoIcon } from './InfoIcon';
 import type { CardMode, Opening, ReactionBoard } from '../types';
-
-function InfoIcon({ size = 16, color = colors.textDim }: { size?: number; color?: string }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24">
-      <Circle cx={12} cy={12} r={10} stroke={color} strokeWidth={2} fill="none" />
-      <Path d="M12 10.5v6.5" stroke={color} strokeWidth={2.4} strokeLinecap="round" />
-      <Circle cx={12} cy={7.2} r={1.5} fill={color} />
-    </Svg>
-  );
-}
 
 // "after 4...Nf6", or "the start position" for an opening without one.
 function startLabel(opening: Opening | undefined): string {
