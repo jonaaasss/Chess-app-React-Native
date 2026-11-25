@@ -20,8 +20,11 @@
 //      is defended (!Qb3 on f7). An answer: taking back or taking the piece,
 //      moving the attacked piece, answering the check, or chasing the piece;
 //    - quiet opponent moves (!g3, !f4, !h3) are never reactions.
-// 4. Exceptions: a threat after which a light plan move is mostly not played
-//    becomes a note on that arrow (once, on the first move it changes).
+// 4. Exceptions: an opponent move (a quiet one too) after which a light plan
+//    move is mostly not played becomes a note on that arrow (once, on the
+//    first move it changes), unless it is too obvious (`obviousThreat`: it
+//    takes something of yours, gives check, attacks your queen, or attacks a
+//    piece with a pawn: you answer that anyway).
 // 5. Reactions: a threat (at least 10% of the games) that you answer straight
 //    away with one move that is not in the plan — "If !Be3 => Bxe3".
 //    The Opening map turns these into "Reactions: first move" boards.
@@ -201,6 +204,27 @@ export function threatReason(prev: SeqItem | undefined, yourColor: 'w' | 'b'): s
     }
   }
   return null;
+}
+
+// Too obvious to note as an exception: the opponent move takes something of
+// yours, gives check, attacks your queen, or attacks one of your pieces with
+// a pawn. You answer that anyway; the note would say nothing new.
+export function obviousThreat(prev: SeqItem | undefined, yourColor: 'w' | 'b'): boolean {
+  if (!prev || prev.own) return false;
+  if (/[x+#]/.test(prev.occ.san)) return true;
+  const opp = yourColor === 'w' ? 'b' : 'w';
+  const after = prev.after.pieces;
+  const pawnMoved = after[prev.occ.to]?.[1] === 'P';
+  for (const [sq, p] of Object.entries(after)) {
+    if (!p || p[0] !== yourColor) continue;
+    const attackers = attackersOf(after, sq, opp);
+    if (attackers.length === 0) continue;
+    // Your queen, newly attacked (by the moved piece or uncovered).
+    if (p[1] === 'Q' && (attackers.includes(prev.occ.to) || attackersOf(prev.before.pieces, sq, opp).length === 0)) return true;
+    // A piece attacked by the pawn that just moved.
+    if (pawnMoved && 'NBR'.includes(p[1]) && attackers.includes(prev.occ.to)) return true;
+  }
+  return false;
 }
 
 // Whether the opponent move `prev` threatens something.
@@ -450,10 +474,11 @@ export async function generatePlan(
     const done = new Set<OppBranch>();
     for (const b of branches) {
       if (b.ownBefore.has(key) || insidePair(b)) continue;
-      // Only a threat changes your plan (quiet moves like !O-O or !h3 don't),
-      // and only one by a piece that is on the board (or comes there by a
-      // drawn move): "!Ne4" makes no sense when no knight can go to e4.
-      if (!threatens(b.leaves[0]?.seq[b.path.length - 1], yourColor)) continue;
+      // Any opponent move, a quiet one too, except the obvious ones (you
+      // answer those anyway); and only one by a piece that is on the board
+      // (or comes there by a drawn move): "!Ne4" makes no sense when no
+      // knight can go to e4.
+      if (obviousThreat(b.leaves[0]?.seq[b.path.length - 1], yourColor)) continue;
       if (!(start.pieces[b.move.from]?.[0] === oppColor || [...topTriggers].some((u) => tMove(u)?.to === b.move.from))) continue;
       const w = weightOf(b.leaves);
       if (w / total < opts.minShare) continue;

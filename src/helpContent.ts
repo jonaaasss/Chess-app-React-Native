@@ -18,7 +18,7 @@ export const HELP_GENERATE_PLAN: HelpTopic = {
     'Opponent: every move with at least 12% of the games.',
     'Each line weighs how often it is reached; your move is in the plan when it comes in at least "Plan move from" (60/50/40/30%) of that weight.',
     'Threat: takes, gives check, attacks a piece (trade offers too), puts a piece (not a pawn) on your half, or attacks a pawn more often than it is defended. Answer: take back or take the piece, move the attacked piece, answer the check, or chase the piece. Quiet moves (g3, h3, castling) are never threats. At most 4 pairs, only when both pieces stand on their start squares.',
-    'A threat after which a light move is mostly not played becomes a note on that arrow.',
+    'Exception: an opponent move (a quiet one too) after which a light move is mostly not played becomes a note on that arrow, unless it is too obvious: it takes something of yours, gives check, attacks your queen, or attacks a piece with a pawn.',
     "Engine check: a note when a light move is not in Stockfish's top 3.",
     'Move by move: for your 1st, 2nd, … move (up to Depth), which move you play as a share of the lines that get that far, weighted by how often the opponent plays each move; "after any move" when you play it after several opponent moves, with the most common ones.'
   ]
