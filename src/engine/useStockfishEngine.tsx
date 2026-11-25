@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { WebView } from 'react-native-webview';
 import type { WebViewMessageEvent } from 'react-native-webview/lib/WebViewTypes';
 import type { PromotionPiece } from '../types';
@@ -6,6 +6,14 @@ import type { PromotionPiece } from '../types';
 const ANALYSIS_DEPTH = 14;
 const MULTI_PV = 3;
 const DEFAULT_GO = `depth ${ANALYSIS_DEPTH}`;
+// Keeping the engine alive (see `restart`): while it is not ready, "uci" is
+// asked again every UCI_RETRY_MS and the page is started over after
+// START_TIMEOUT_MS; during a search, SILENCE_MS without a word from the
+// engine means it died. At most MAX_RESTARTS in a row.
+const UCI_RETRY_MS = 10000;
+const START_TIMEOUT_MS = 45000;
+const SILENCE_MS = 20000;
+const MAX_RESTARTS = 3;
 
 // `analyzeOnce` options: only these moves (UCI, "e7e5"), another depth, and
 // how long to wait at most.
@@ -57,14 +65,44 @@ export function useStockfishEngine() {
   // known by its FEN and its `go` arguments ("fen|go").
   const searchFenRef = useRef<string | null>(null);
   const onceRef = useRef<{ fen: string; resolve: (lines: EngineLine[]) => void } | null>(null);
+  // Starting and keeping the engine alive. Nothing is sent before `readyok`:
+  // a request made earlier waits in `pendingRef`. The page is started over
+  // (a new `generation`) when the engine never gets ready, reports an error,
+  // or goes silent during a search; what was asked last is then analysed
+  // once it is back.
+  const readyRef = useRef(false);
+  const [generation, setGeneration] = useState(0);
+  const loadStartRef = useRef(Date.now());
+  const lastHeardRef = useRef(Date.now());
+  const lastUciRef = useRef(0);
+  const restartsRef = useRef(0);
+  const lastSearchRef = useRef<{ fen: string; turn: 'w' | 'b'; go: string } | null>(null);
 
   const send = useCallback((cmd: string) => {
+    if (cmd === 'uci') lastUciRef.current = Date.now();
     webviewRef.current?.postMessage(cmd);
   }, []);
 
+  // The page loaded: ask for the engine. It may still be loading its file
+  // then (the "uci" is lost), so it is asked again when the page reports
+  // "worker-created", and every UCI_RETRY_MS until it answers.
   const handleLoadEnd = useCallback(() => {
     send('uci');
   }, [send]);
+
+  const restart = useCallback(() => {
+    readyRef.current = false;
+    setReady(false);
+    if (searchingRef.current && !pendingRef.current && lastSearchRef.current) pendingRef.current = lastSearchRef.current;
+    searchingRef.current = false;
+    const once = onceRef.current;
+    onceRef.current = null;
+    once?.resolve([]);
+    restartsRef.current += 1;
+    loadStartRef.current = Date.now();
+    lastHeardRef.current = Date.now();
+    setGeneration((g) => g + 1);
+  }, []);
 
   // Actually issues position+go — only ever called when we know no search
   // is currently in flight (either the first one, or right after a
@@ -72,6 +110,8 @@ export function useStockfishEngine() {
   const startSearch = useCallback(
     (fen: string, turn: 'w' | 'b', go: string = DEFAULT_GO) => {
       searchingRef.current = true;
+      lastSearchRef.current = { fen, turn, go };
+      lastHeardRef.current = Date.now();
       sideToMoveRef.current = turn;
       linesRef.current = new Map();
       setLines([]);
@@ -88,13 +128,30 @@ export function useStockfishEngine() {
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
       const line = event.nativeEvent.data;
+      lastHeardRef.current = Date.now();
+      // Reports of the engine page (assets/engine/index.html).
+      if (line === 'worker-created') {
+        send('uci');
+        return;
+      }
+      if (line.startsWith('worker-error') || line.startsWith('page-error') || line.startsWith('load-failed')) {
+        if (restartsRef.current < MAX_RESTARTS) restart();
+        return;
+      }
       if (line === 'uciok') {
         send(`setoption name MultiPV value ${MULTI_PV}`);
         send('isready');
         return;
       }
       if (line === 'readyok') {
+        if (readyRef.current) return;
+        readyRef.current = true;
+        restartsRef.current = 0;
         setReady(true);
+        // What was asked before the engine was ready.
+        const next = pendingRef.current;
+        pendingRef.current = null;
+        if (next && !searchingRef.current) startSearch(next.fen, next.turn, next.go);
         return;
       }
       // Confirms the engine actually stopped — only now is it safe to
@@ -138,11 +195,16 @@ export function useStockfishEngine() {
       });
       setLines(Array.from(linesRef.current.values()).sort((a, b) => a.multipv - b.multipv));
     },
-    [send, startSearch]
+    [send, startSearch, restart]
   );
 
   const evaluate = useCallback(
     (fen: string, turn: 'w' | 'b', go: string = DEFAULT_GO) => {
+      if (!readyRef.current) {
+        // Not ready yet: analysed as soon as it is (see `readyok`).
+        pendingRef.current = { fen, turn, go };
+        return;
+      }
       if (searchingRef.current) {
         // A search is already running — remember what we actually want
         // and ask the engine to stop, but don't send position/go until
@@ -188,9 +250,25 @@ export function useStockfishEngine() {
     send('stop');
   }, [send]);
 
+  // The watchdog (see `restart`).
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (restartsRef.current >= MAX_RESTARTS) return;
+      const now = Date.now();
+      if (!readyRef.current) {
+        if (now - loadStartRef.current > START_TIMEOUT_MS) restart();
+        else if (now - lastUciRef.current > UCI_RETRY_MS) send('uci');
+      } else if (searchingRef.current && now - lastHeardRef.current > SILENCE_MS) {
+        restart();
+      }
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [restart, send]);
+
   const element = useMemo(
     () => (
       <WebView
+        key={generation}
         ref={webviewRef}
         source={{ uri: 'file:///android_asset/engine/index.html' }}
         onMessage={handleMessage}
@@ -208,7 +286,7 @@ export function useStockfishEngine() {
         mixedContentMode="always"
       />
     ),
-    [handleMessage, handleLoadEnd]
+    [handleMessage, handleLoadEnd, generation]
   );
 
   return { ready, lines, analyzedFen, evaluate, analyzeOnce, stop, element };
