@@ -403,6 +403,13 @@ export function BoardCoords({ size, flipped = false, styleSet }: { size: number;
   );
 }
 
+// Generate plan's reactions (Arrow.belongsTo) are hidden in a small preview,
+// as long as their plan arrow is on the board (see RevealBadges.tsx).
+function withoutHiddenReactions(arrows: Arrow[]): Arrow[] {
+  const owners = new Set(arrows.filter((a) => !a.belongsTo).map((a) => `${a.from}${a.to}`));
+  return arrows.filter((a) => !a.belongsTo || !owners.has(a.belongsTo));
+}
+
 export function ChessBoardView({ board, size, flipped = false }: { board: BoardState; size: number; flipped?: boolean }) {
   const cell = size / 8;
   const squares = flipped ? [...allSquares()].reverse() : allSquares();
@@ -432,7 +439,7 @@ export function ChessBoardView({ board, size, flipped = false }: { board: BoardS
         })}
       </View>
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
-        <ArrowsSvg arrows={board.arrows} size={size} flipped={flipped} pieces={board.pieces} />
+        <ArrowsSvg arrows={withoutHiddenReactions(board.arrows)} size={size} flipped={flipped} pieces={board.pieces} />
         {board.circles && board.circles.length > 0 && (
           <CirclesSvg circles={board.circles} size={size} flipped={flipped} pieces={board.pieces} />
         )}

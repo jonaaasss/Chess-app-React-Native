@@ -52,6 +52,10 @@ export interface Arrow {
   to: string;
   color: ArrowColor;
   notes?: ArrowNotes;
+  // Generate plan's reactions (planMaker.ts): "from+to" of the light plan
+  // arrow this dark arrow belongs to. Hidden until that arrow's badge is
+  // tapped (board editor and Study); never drawn by you in Study.
+  belongsTo?: string;
 }
 
 export interface Circle {

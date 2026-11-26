@@ -119,6 +119,11 @@ export function useStockfishEngine() {
       // the board editor's panel only shows a default search.
       setAnalyzedFen(go === DEFAULT_GO ? fen : `${fen}|${go}`);
       searchFenRef.current = `${fen}|${go}`;
+      // A one-off search (Generate plan, the referee, shields) starts with an
+      // empty hash, so the same position always gets the same answer (with
+      // the hash of earlier searches, evaluations differ by a few
+      // centipawns from run to run, enough to change a 0.1-pawn choice).
+      if (go !== DEFAULT_GO) send('ucinewgame');
       send(`position fen ${fen}`);
       send(`go ${go}`);
     },

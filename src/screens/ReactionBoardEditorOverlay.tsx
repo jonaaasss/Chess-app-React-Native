@@ -21,6 +21,7 @@ import { faceBaseState, legalMovesFrom, makeMove, isPromotionMove, sansForBoardM
 import type { Arrow, ArrowColor, BoardFace, BoardMove, CardMode, Circle, MoveNode, PieceCode, PromotionPiece, ReactionBoard, ShieldMark } from '../types';
 import { chooseRecapture, findTensions, shieldFor, shieldKey } from '../shields';
 import { ShieldBadges, type ShownShield } from '../components/ShieldBadges';
+import { isHiddenLinked, linkedArrows, REVEAL_BADGE, revealBadgeCenter, RevealBadges, type RevealTarget } from '../components/RevealBadges';
 import { ARROW_COLOR_NAMES, arrowColors, BASE_ARROW_COLORS, boardStyles, colors, DARK_TINT, engineColors, radius, spacing, touchTarget, type, variationColor } from '../theme';
 import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, arrowIsOpponent, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, parallelOffsets, opponentTint, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts } from '../components/PieceAnimation';
@@ -33,10 +34,10 @@ import { getBoardEditorTipHidden, setBoardEditorTipHidden, uid } from '../storag
 import { ModeTip } from '../components/ModeTip';
 import { TutorialLayer, useTutorial, useTutorialTarget } from '../tutorial';
 import { useStockfishEngine, type EngineLine } from '../engine/useStockfishEngine';
-import { engineEvaluator } from '../ownMove';
+import { engineEvaluator, lineCp } from '../ownMove';
 import { ExplorerPanel } from '../components/ExplorerPanel';
 import { DB_LABEL, fetchExplorer, getLichessToken } from '../lichessExplorer';
-import { DEFAULT_PLAN_OPTIONS, generatePlan, planDescription, type PlanDetails } from '../planGenerator';
+import { MAKE_PLAN_OPTIONS, madePlanDescription, makePlan, type MadePlanDetails } from '../planMaker';
 import { PlanPanel, type PlanChoices } from '../components/PlanPanel';
 import { allowScreenOff, keepScreenOn } from '../keepAwake';
 
@@ -663,10 +664,23 @@ function ReactionBoardEditorOverlay({
   // arrows/circles now (see chess.ts's faceAnnotationsAt) — stepping back
   // shows exactly what was drawn there, same idea as Reactions' per-node
   // add/remove for its tree.
-  const { arrows: visibleArrows, circles: visibleCircles } = useMemo(() => {
+  const { arrows: allArrows, circles: visibleCircles } = useMemo(() => {
     if (!isReactions) return faceAnnotationsAt(activeFace, historyIndex);
     return activeAnnotations(board, path);
   }, [isReactions, activeFace, historyIndex, board, path]);
+  // Generate plan's reactions (Arrow.belongsTo, planMaker.ts) stay hidden
+  // until their plan arrow's badge is tapped (RevealBadges.tsx).
+  const [revealed, setRevealed] = useState<Set<string>>(() => new Set());
+  const linked = useMemo(() => linkedArrows(allArrows), [allArrows]);
+  const visibleArrows = useMemo(() => allArrows.filter((a) => !isHiddenLinked(a, linked, revealed)), [allArrows, linked, revealed]);
+  function toggleReveal(key: string) {
+    setRevealed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   const numberedArrows = useMemo(
     () =>
@@ -792,6 +806,31 @@ function ReactionBoardEditorOverlay({
         const removed = ownMarks.find((m) => m.square === t.square && m.from === null);
         return removed ? [{ square: t.square, piece: t.recaptures[0].piece, manual: true, off: true }] : [];
       });
+  // A badge on each plan arrow that has reactions (Generate plan).
+  const revealTargets: RevealTarget[] = guided
+    ? []
+    : visibleArrows
+        .filter((a) => !a.belongsTo && linked.has(`${a.from}${a.to}`))
+        .map((a) => {
+          const key = `${a.from}${a.to}`;
+          const mine = linked.get(key) ?? [];
+          const count = Math.max(1, mine.filter((x) => arrowIsOpponent(x, engineState.pieces, yourColor, allArrows) || !engineState.pieces[x.from]).length);
+          return { key, to: a.to, count, color: arrowColors[mine[0]?.color ?? a.color], open: revealed.has(key) };
+        });
+  // Where the tappable badges are (shields, reaction badges), for the board's
+  // touch handling (see hitsArrowNoteBadge). Kept fresh every render.
+  const badgeHitRef = useRef<{ x: number; y: number; r: number }[]>([]);
+  {
+    const cell = BOARD_SIZE / 8;
+    const shield = Math.max(18, Math.round(cell * 0.52));
+    badgeHitRef.current = [
+      ...revealTargets.map((t) => ({ ...revealBadgeCenter(t.to, BOARD_SIZE, flipped), r: REVEAL_BADGE / 2 })),
+      ...shownShields.map((sh) => {
+        const raw = squareIndex(sh.square);
+        return { x: (flipIndex(raw.file, flipped) + 1) * cell - shield / 2, y: (flipIndex(raw.rank, flipped) + 1) * cell - shield / 2, r: shield / 2 };
+      })
+    ];
+  }
   // Two or more recaptures without a choice yet: Stockfish decides (only
   // those moves), then the position's own analysis is asked for again.
   useEffect(() => {
@@ -1347,9 +1386,11 @@ function ReactionBoardEditorOverlay({
   // touch (same `!setupPeeking` fallback below, which is always true outside
   // Reactions) and would claim it first, so the badge's onPress never fires.
   function hitsArrowNoteBadge(pageX: number, pageY: number): boolean {
-    if (!isPlan || !atHead) return false;
     const localX = pageX - gridOrigin.current.x;
     const localY = pageY - gridOrigin.current.y;
+    // Shields and reaction badges too (their own Pressables).
+    if (badgeHitRef.current.some((b) => Math.hypot(localX - b.x, localY - b.y) <= b.r + 8)) return true;
+    if (!isPlan || !atHead) return false;
     // Same centers ArrowNoteBadges actually renders at (post-separation) —
     // not the raw per-arrow ones — so the exclusion zone lines up with
     // wherever a badge visually ended up after overlap avoidance.
@@ -1485,10 +1526,7 @@ function ReactionBoardEditorOverlay({
   const [genStatus, setGenStatus] = useState<string | null>(null);
   const genCancel = useRef(false);
   // The last plan made in this editor (for the Plan panel), by position.
-  const [planInfo, setPlanInfo] = useState<{ fen: string; details: PlanDetails; choices: PlanChoices } | null>(null);
-  // Stockfish's top 3 per position for the engine check, so drawing the plan
-  // again with another "Plan move from" doesn't ask again.
-  const engineTopMemo = useRef(new Map<string, { from: string; to: string }[]>());
+  const [planInfo, setPlanInfo] = useState<{ fen: string; details: MadePlanDetails; choices: PlanChoices } | null>(null);
   async function handleGeneratePlan(choices: PlanChoices) {
     if (isReactions || genStatus) return;
     if (!(await getLichessToken())) {
@@ -1501,23 +1539,24 @@ function ReactionBoardEditorOverlay({
     const startState = engineState;
     const startFen = fen;
     try {
-      const res = await generatePlan(
+      const res = await makePlan(
         startState,
         yourColor,
         (f) => fetchExplorer(f, choices.db),
-        { ...DEFAULT_PLAN_OPTIONS, depth: choices.depth, planShare: choices.planShare },
+        { ...MAKE_PLAN_OPTIONS, depth: choices.depth },
         setGenStatus,
-        choices.engine && engine.ready
-          ? async (f, turn) => {
-              const hit = engineTopMemo.current.get(f);
-              if (hit) return hit;
-              const top = (await engine.analyzeOnce(f, turn)).map((l) => ({ from: l.from, to: l.to }));
-              if (top.length) engineTopMemo.current.set(f, top);
-              return top;
+        // Stockfish judges your moves: its top 3, or only some moves (depth 12, at most 15 s).
+        engine.ready
+          ? async (f, st, searchMoves) => {
+              const lines = await engine.analyzeOnce(f, st.turn, { searchMoves, depth: 12, timeoutMs: 15000 });
+              const out = lines.flatMap((l) => {
+                const cp = lineCp(l);
+                return cp === undefined ? [] : [{ from: l.from, to: l.to, promotion: l.promotion, cp }];
+              });
+              return out.length ? out : null;
             }
           : undefined,
-        () => genCancel.current,
-        engine.ready ? engineEvaluator(engine.analyzeOnce, () => setGenStatus('Stockfish compares your most played moves…')) : undefined
+        () => genCancel.current
       );
       if (genCancel.current) return;
       if (res.problem) {
@@ -1532,15 +1571,26 @@ function ReactionBoardEditorOverlay({
         const kept = at.arrows.filter((a) => threatOfArrow(a));
         const face = withFaceAnnotationsAt(prev[side], historyIndex, [...kept, ...res.arrows], at.circles);
         // The Description gets "Key moves / Key reactions" in Jonas's own form:
-        // the whole text when empty, added below a text without them (e.g.
-        // "After 5.Nxc6 bxc6 6.e5" from Variations; no second "Source" line).
-        const gen = planDescription(res, `Lichess explorer (${DB_LABEL[choices.db]})`);
+        // the whole text when empty; otherwise the old "Key moves:" and "Key
+        // reactions:" lines are replaced (in their place), or the new ones
+        // added below (e.g. "After 5.Nxc6 bxc6 6.e5" from Variations; no
+        // second "Source" line).
+        const gen = madePlanDescription(res, `Lichess explorer (${DB_LABEL[choices.db]}${res.details?.engine ? ' and Stockfish' : ''})`);
         const own = face.text.trim();
-        const extra = gen.split('\n').filter((l) => !(own.includes('Source:') && l.startsWith('Source:')));
-        const text = !own ? gen : /Key moves:|Key reactions:/.test(own) || extra.length === 0 ? face.text : `${own}\n${extra.join('\n')}`;
+        const isKey = (l: string) => /^(Key moves|Key reactions):/.test(l.trim());
+        const ownLines = own ? own.split('\n') : [];
+        const keyAt = ownLines.findIndex(isKey);
+        const keptLines = ownLines.filter((l) => !isKey(l));
+        const extra = gen.split('\n').filter((l) => !(keptLines.some((k) => k.includes('Source:')) && l.startsWith('Source:')));
+        const text = !own
+          ? gen
+          : keyAt >= 0
+            ? [...keptLines.slice(0, keyAt), ...extra, ...keptLines.slice(keyAt)].join('\n')
+            : [...keptLines, ...extra].join('\n');
         return { ...prev, [side]: { ...face, text } };
       });
-      showSnackbar({ message: `Plan drawn: ${res.arrows.length} arrows from ${res.lines} lines`, actionLabel: 'Undo', onAction: () => setBoard(before), duration: 8000 });
+      setRevealed(new Set());
+      showSnackbar({ message: `Plan drawn: ${res.arrows.filter((a) => !a.belongsTo).length} plan arrows from ${res.lines} lines`, actionLabel: 'Undo', onAction: () => setBoard(before), duration: 8000 });
     } catch (e) {
       await alertDialog(e instanceof Error ? e.message : String(e));
     } finally {
@@ -1980,6 +2030,11 @@ function ReactionBoardEditorOverlay({
           {shownShields.length > 0 && (
             <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
               <ShieldBadges shields={shownShields} size={BOARD_SIZE} flipped={flipped} onPress={handleShield} />
+            </View>
+          )}
+          {revealTargets.length > 0 && (
+            <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+              <RevealBadges targets={revealTargets} size={BOARD_SIZE} flipped={flipped} onToggle={toggleReveal} />
             </View>
           )}
         </View>

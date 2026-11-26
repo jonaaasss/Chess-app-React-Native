@@ -12,16 +12,15 @@ export interface HelpTopic {
 export const HELP_GENERATE_PLAN: HelpTopic = {
   title: 'How Generate plan works',
   simple:
-    'Looks in the Lichess database at what strong players play from this position. Your moves that come back in most lines become light arrows, coloured by when they come (green, orange, red, blue). A move you only play to answer a threat becomes a dark pair: first the opponent\'s move, then your answer. Under "Move by move" the Plan panel shows, turn by turn, which move you play and after which opponent moves.',
+    'Looks in the Lichess database at what strong players play from this position, and asks Stockfish which of your moves are good: every move at most 0.1 pawn worse than its best counts as acceptable. Per turn the acceptable move that comes back most often is the plan: one light arrow, coloured by when it comes (green, orange, red, blue). An opponent move after which you play something else gets a dark pair in the same colour: their move and your reaction. The dark pairs are hidden: tap the small badge on a plan arrow to see them, in the board editor and in Study (in Study you never draw them yourself).',
   technical: [
-    "Walks the explorer from the board's position, heaviest lines first, up to Depth of your moves (at most 160 positions; a position with fewer than 30 games stops the line).",
-    'Opponent: every move with at least 12% of the games.',
-    'Plan consistency: where another popular move of yours (at least 15% of the games) is at most 0.1 pawn worse for Stockfish, the move that fits in the most lines is taken, so the plan stays the same from line to line (two passes over the tree; slower on the phone).',
-    'Each line weighs how often it is reached; your move is in the plan when it comes in at least "Plan move from" (60/50/40/30%) of that weight, counted over the lines where you choose freely: a line where you must take back, answer a check, save your queen or a piece attacked by a pawn, and that lacks the move, does not count against it.',
-    'Threat: takes, gives check, attacks a piece (trade offers too), puts a piece (not a pawn) on your half, or attacks a pawn more often than it is defended. Answer: take back or take the piece, move the attacked piece, answer the check, or chase the piece. Quiet moves (g3, h3, castling) are never threats. At most 4 pairs, only when both pieces stand on their start squares.',
-    'Exception: an opponent move (a quiet one too) after which a light move is mostly not played becomes a note on that arrow, unless it is too obvious: it takes something of yours, gives check, attacks your queen, or attacks a piece with a pawn.',
-    "Engine check: a note when a light move is not in Stockfish's top 3.",
-    'Move by move: for your 1st, 2nd, … move (up to Depth), which move you play as a share of the lines that get that far, weighted by how often the opponent plays each move; "after any move" when you play it after several opponent moves, with the most common ones.'
+    "Walks the explorer from the board's position, heaviest lines first, up to Depth of your moves (at most 220 positions per pass; a position with fewer than 30 games stops the line). Every line weighs how often it is reached.",
+    'Opponent: every move that comes in at least 5% of the lines (captures too); when none does, the most played one.',
+    "Your move: the acceptable moves are Stockfish's top 3 (depth 12) and your moves with at least 5% of the games, at most 0.1 pawn worse than Stockfish's best. Without Stockfish: the database rule (Your move).",
+    'Two passes: the first notes in how many lines each move is acceptable; the second plays everywhere the acceptable move that is acceptable in the most lines, so one plan move is used wherever it fits.',
+    'The plan per turn: of the moves played at that turn (at least a quarter as often as the most played one) and not yet in the plan, the one acceptable in the most lines.',
+    'Reaction: an opponent move just before that turn, in at least 5% of the lines at that turn, after which you play a plan move in less than half of the lines. Your most played move there is the reaction; both are drawn in the dark tint of the plan move and belong to it (hidden until its badge is tapped). Only drawn when both pieces stand on their start squares on this board (or get there by a drawn move).',
+    'Move by move: for your 1st, 2nd, … move (up to Depth), which move you play as a share of the lines that get that far, and after which opponent moves.'
   ]
 };
 
@@ -56,7 +55,7 @@ export const HELP_OPENING_MAP: HelpTopic = {
 export const HELP_YOUR_MOVE: HelpTopic = {
   title: 'Your move',
   simple:
-    'Your move is the one most players choose, unless another popular move scores clearly better or Stockfish finds it clearly stronger. Generate plan, Variations and the Opening map use this same rule, so they always agree.',
+    'Your move is the one most players choose, unless another popular move scores clearly better or Stockfish finds it clearly stronger. Variations and the Opening map use this rule; Generate plan uses it only when Stockfish is not ready.',
   technical: [
     'Candidates: your moves with at least 15% of the games.',
     'The most played one, unless a move played at least half as often scores at least 4 percentage points better for you.',

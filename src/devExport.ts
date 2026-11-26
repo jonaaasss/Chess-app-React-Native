@@ -14,6 +14,7 @@ function arrowsText(arrows: Arrow[], cardNames?: Map<string, string>): string {
     .map((a) => {
       const n = a.notes;
       const extra: string[] = [];
+      if (a.belongsTo) extra.push(`reaction to ${a.belongsTo.slice(0, 2)}->${a.belongsTo.slice(2, 4)}`);
       if (n?.threat) extra.push(`threat ${n.threat}`);
       if (n?.myThreat) extra.push(`my threat ${n.myThreat}`);
       if (n?.linkCardId) extra.push(`link: ${cardNames?.get(n.linkCardId) ?? '(missing card)'}${n.linkBoardId ? ' (one board)' : ''}`);

@@ -17,6 +17,7 @@ import { BoardShare } from '../components/BoardShare';
 import type { Arrow, ArrowColor, Card, Circle, PieceCode, ReactionBoard } from '../types';
 import { ARROW_COLOR_NAMES, ARROW_COLOR_ORDER, arrowColors, BASE_ARROW_COLORS, boardStyles, DARK_TINT, colors, radius, touchTarget } from '../theme';
 import { ShieldBadges } from '../components/ShieldBadges';
+import { linkedArrows, RevealBadges, type RevealTarget } from '../components/RevealBadges';
 import { shieldsOn } from '../shields';
 import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, arrowIsOpponent, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, opponentTint, parallelOffsets, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
 import { PIECE_ANIM_DURATION_MS } from '../components/PieceAnimation';
@@ -237,11 +238,26 @@ export function PlanStudy({
   // A Plan board has one position — `back` holds it, its arrows and circles
   // (the final position's, see chess.ts's faceAnnotations).
   // Opponent arrows count in their dark tint (that's how they are shown).
-  const finalAnnotations = useMemo(() => {
-    if (!board) return { arrows: [], circles: [] };
+  // Generate plan's reactions (Arrow.belongsTo) are not part of the exercise:
+  // they are kept apart (`linked`, by their plan arrow's "from+to") and only
+  // shown when that arrow's badge is tapped.
+  const { finalAnnotations, linked } = useMemo(() => {
+    if (!board) return { finalAnnotations: { arrows: [] as Arrow[], circles: [] as Circle[] }, linked: new Map<string, Arrow[]>() };
     const a = faceAnnotations(board.back);
-    return { arrows: a.arrows.map((x) => ({ ...x, color: effectiveArrowColor(x, board.back.pieces, yourColor, a.arrows) })), circles: a.circles };
+    const colored = a.arrows.map((x) => ({ ...x, color: effectiveArrowColor(x, board.back.pieces, yourColor, a.arrows) }));
+    const links = linkedArrows(colored);
+    const isLinked = (x: Arrow) => !!x.belongsTo && links.has(x.belongsTo);
+    return { finalAnnotations: { arrows: colored.filter((x) => !isLinked(x)), circles: a.circles }, linked: links };
   }, [board, yourColor]);
+  const [openReactions, setOpenReactions] = useState<Set<string>>(() => new Set());
+  function toggleReactions(key: string) {
+    setOpenReactions((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
   // Notes are left out, so editing a note here does not restart the board.
   const arrowsKey = useMemo(
     () => JSON.stringify({ a: finalAnnotations.arrows.map((a) => [a.from, a.to, a.color]), c: finalAnnotations.circles }),
@@ -385,6 +401,7 @@ export function PlanStudy({
     setSummaryNote(null);
     setThreatMode(null);
     setThreatFound(0);
+    setOpenReactions(new Set());
     // Only when the board or its arrows change, not when its Description is
     // edited from here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -685,6 +702,28 @@ export function PlanStudy({
       ? { label: threatLabel(a), opponent: arrowIsOpponent(a, board?.back.pieces, yourColor, finalAnnotations.arrows) }
       : { number: arrowNumbers.get(keyOf(a)) })
   }));
+  // The reactions of the plan arrows on the board whose badge was tapped.
+  const lightOnBoard = activeThreat ? [] : visibleArrows.filter((a) => linked.has(`${a.from}${a.to}`));
+  const revealTargets: RevealTarget[] = lightOnBoard.map((a) => {
+    const key = `${a.from}${a.to}`;
+    const mine = linked.get(key) ?? [];
+    const pieces = board?.back.pieces;
+    const count = Math.max(1, mine.filter((x) => arrowIsOpponent(x, pieces, yourColor, mine) || !pieces?.[x.from]).length);
+    return { key, to: a.to, count, color: arrowColors[mine[0]?.color ?? a.color], open: openReactions.has(key) };
+  });
+  const allLinked = [...linked.values()].flat();
+  for (const t of revealTargets) {
+    if (!t.open) continue;
+    (linked.get(t.key) ?? []).forEach((a, i) =>
+      numberedArrows.push({
+        id: `reaction-${t.key}-${i}`,
+        from: a.from,
+        to: a.to,
+        color: arrowColors[a.color],
+        opponent: arrowIsOpponent(a, board?.back.pieces, yourColor, allLinked) || !board?.back.pieces[a.from]
+      })
+    );
+  }
   if (wrongArrow) {
     numberedArrows.push({ id: 'wrong', from: wrongArrow.from, to: wrongArrow.to, color: colors.danger });
   } else if (tempArrow) {
@@ -857,6 +896,12 @@ export function PlanStudy({
             onShowNote={setSummaryNote}
             positions={linkNotePositions}
           />
+        )}
+        {revealTargets.length > 0 && (
+          // Above the board, so a tap reaches the badge and not the drawing.
+          <View style={[StyleSheet.absoluteFill, { width: BOARD_SIZE, height: BOARD_SIZE }]} pointerEvents="box-none">
+            <RevealBadges targets={revealTargets} size={BOARD_SIZE} flipped={flipped} onToggle={toggleReactions} />
+          </View>
         )}
       </View>
 
