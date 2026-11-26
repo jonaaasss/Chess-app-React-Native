@@ -253,7 +253,8 @@ export function cloneReactionBoard(board: ReactionBoard, id: string): ReactionBo
     setupMoves: (board.setupMoves ?? []).map((m) => ({ ...m })),
     recording: board.recording.map(cloneMoveNode),
     front: cloneBoardFace(board.front),
-    back: cloneBoardFace(board.back)
+    back: cloneBoardFace(board.back),
+    ...(board.shields ? { shields: Object.fromEntries(Object.entries(board.shields).map(([k, marks]) => [k, marks.map((m) => ({ ...m }))])) } : {})
   };
 }
 

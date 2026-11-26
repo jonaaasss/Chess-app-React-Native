@@ -6,6 +6,8 @@ import { legalMovesFrom, makeMove, type GameState } from '../chessEngine';
 import type { Arrow, Card, Circle, MoveNode, PieceCode, ReactionBoard } from '../types';
 import { arrowColors, boardStyles, colors, radius, touchTarget } from '../theme';
 import { BoardCoords, ArrowsSvg, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, type NumberedArrow } from '../components/ChessBoard';
+import { ShieldBadges } from '../components/ShieldBadges';
+import { shieldsOn } from '../shields';
 import { usePieceAnimation, PieceAnimationGhosts, PIECE_ANIM_DURATION_MS } from '../components/PieceAnimation';
 import type { GuideTargets } from '../components/GuideCoach';
 import { CollapsibleDescription } from '../components/CollapsibleDescription';
@@ -858,6 +860,8 @@ export function ReactionStudy({
               </>
             )}
             <PieceAnimationGhosts ghosts={ghosts} cell={CELL} />
+            {/* Who takes back on your attacked pieces (src/shields.ts). */}
+            {!guideTargets && !wrongMovePreview && <ShieldBadges shields={shieldsOn(liveState, yourColor, board.shields)} size={BOARD_SIZE} flipped={flipped} />}
           </View>
           {rewinding && (
             <View style={[StyleSheet.absoluteFill, styles.rewindOverlay]} pointerEvents="none">

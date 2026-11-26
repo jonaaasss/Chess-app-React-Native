@@ -193,6 +193,20 @@ export interface ReactionBoard {
   recording: MoveNode[];
   front: BoardFace;
   back: BoardFace;
+  // Shields (src/shields.ts): which of your pieces takes back on an attacked
+  // piece or pawn, by position (`shieldKey`: pieces + side to move). Only
+  // Stockfish's choices and yours are stored; with a single recapture the
+  // shield needs nothing stored. Optional: older boards have none.
+  shields?: Record<string, ShieldMark[]>;
+}
+
+// One shield on a position: the attacked square and the square of your piece
+// that takes back (null: no shield there). `manual`: chosen by you, never
+// replaced by Stockfish.
+export interface ShieldMark {
+  square: string;
+  from: string | null;
+  manual?: boolean;
 }
 
 // 'plan': like 'others' (same board editor, same front/back split) except

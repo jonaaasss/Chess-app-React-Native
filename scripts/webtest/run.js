@@ -1,5 +1,6 @@
 // Drives the web test build (scripts/webtest/build.sh) in a phone-sized
-// Chromium: node scripts/webtest/run.js <steps.js> [--fresh] [--data <store.json>]
+// Chromium: node scripts/webtest/run.js <steps.js> [--fresh] [--data <store.json>] [--sharp]
+// (--sharp: screenshots at 3× pixel density, to look at small details)
 // steps.js exports async (page, h) => { ... }:
 //   h.tap('Text')      tap the first element with exactly that text
 //   h.shot('name')     screenshot to web-build/shots/name.png
@@ -25,7 +26,7 @@ const fs = require('fs');
   const profile = path.join(root, 'profile');
   if (process.argv.includes('--fresh')) fs.rmSync(profile, { recursive: true, force: true });
   const proxy = process.env.HTTPS_PROXY ? { server: process.env.HTTPS_PROXY, bypass: 'localhost,127.0.0.1' } : undefined;
-  const ctx = await chromium.launchPersistentContext(profile, { viewport: { width: 412, height: 869 }, deviceScaleFactor: 1, proxy });
+  const ctx = await chromium.launchPersistentContext(profile, { viewport: { width: 412, height: 869 }, deviceScaleFactor: process.argv.includes('--sharp') ? 3 : 1, proxy });
   const page = ctx.pages()[0] || (await ctx.newPage());
   page.on('console', (m) => {
     if (m.type() === 'error') console.log('console error', m.text().slice(0, 300));

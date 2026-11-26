@@ -18,11 +18,13 @@ import {
   withFaceAnnotationsAt
 } from '../chess';
 import { faceBaseState, legalMovesFrom, makeMove, isPromotionMove, sansForBoardMoves, type GameState } from '../chessEngine';
-import type { Arrow, ArrowColor, BoardFace, BoardMove, CardMode, Circle, MoveNode, PieceCode, PromotionPiece, ReactionBoard } from '../types';
+import type { Arrow, ArrowColor, BoardFace, BoardMove, CardMode, Circle, MoveNode, PieceCode, PromotionPiece, ReactionBoard, ShieldMark } from '../types';
+import { chooseRecapture, findTensions, shieldFor, shieldKey } from '../shields';
+import { ShieldBadges, type ShownShield } from '../components/ShieldBadges';
 import { ARROW_COLOR_NAMES, arrowColors, BASE_ARROW_COLORS, boardStyles, colors, DARK_TINT, engineColors, radius, spacing, touchTarget, type, variationColor } from '../theme';
 import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, arrowIsOpponent, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, parallelOffsets, opponentTint, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts } from '../components/PieceAnimation';
-import { alertDialog, confirmDialog, dismissSnackbar, showOverlay, showSnackbar, SnackbarLayer, useOverlayBack } from '../overlay';
+import { alertDialog, confirmDialog, dismissSnackbar, showOverlay, showSnackbar, simpleMenu, SnackbarLayer, useOverlayBack } from '../overlay';
 import { hasArrowNotes } from '../arrowNotes';
 import { toEditorNumberedArrows } from '../arrowNumbering';
 import { sameThreat, THREAT_COLOR, threatFields, threatOfArrow, threatOfCircle, type ThreatKind, type ThreatRef } from '../threats';
@@ -769,6 +771,74 @@ function ReactionBoardEditorOverlay({
   // currently on screen — otherwise a slow-to-cancel previous search could
   // flash stale arrows/eval for a moment after a move.
   const engineLines = engine.analyzedFen === fen ? engine.lines : [];
+
+  // ---------- Shields (src/shields.ts) ----------
+  // Stockfish's choices made here are kept apart and written into the board
+  // only on Save, so they never count as an unsaved change; your own choices
+  // (tap a shield) are board changes.
+  const [autoShields, setAutoShields] = useState<Record<string, ShieldMark[]>>({});
+  const fenRef = useRef(fen);
+  fenRef.current = fen;
+  const tensions = useMemo(() => findTensions(engineState, yourColor), [fen, yourColor]); // eslint-disable-line react-hooks/exhaustive-deps
+  const posKey = shieldKey(engineState);
+  const ownMarks = board.shields?.[posKey] ?? [];
+  const storedMarks = [...ownMarks, ...(autoShields[posKey] ?? []).filter((a) => !ownMarks.some((m) => m.square === a.square))];
+  const shownShields: ShownShield[] = guided
+    ? []
+    : tensions.flatMap((t) => {
+        const sh = shieldFor(t, storedMarks);
+        if (sh) return [{ square: t.square, piece: sh.piece, manual: sh.manual }];
+        // A shield you removed stays as a faint outline here, to bring it back.
+        const removed = ownMarks.find((m) => m.square === t.square && m.from === null);
+        return removed ? [{ square: t.square, piece: t.recaptures[0].piece, manual: true, off: true }] : [];
+      });
+  // Two or more recaptures without a choice yet: Stockfish decides (only
+  // those moves), then the position's own analysis is asked for again.
+  useEffect(() => {
+    if (!engine.ready || guided) return undefined;
+    const need = tensions.filter((t) => t.recaptures.length >= 2 && !storedMarks.some((m) => m.square === t.square));
+    if (need.length === 0) return undefined;
+    let stopped = false;
+    const key = posKey;
+    const atFen = fen;
+    const timer = setTimeout(async () => {
+      const evaluator = engineEvaluator(engine.analyzeOnce);
+      const marks: ShieldMark[] = [];
+      for (const t of need) {
+        if (stopped) return;
+        const from = await chooseRecapture(t, yourColor, evaluator);
+        if (from) marks.push({ square: t.square, from });
+      }
+      if (marks.length) setAutoShields((prev) => ({ ...prev, [key]: [...(prev[key] ?? []).filter((m) => !marks.some((x) => x.square === m.square)), ...marks] }));
+      if (!stopped && fenRef.current === atFen) engine.evaluate(atFen, atFen.split(' ')[1] as 'w' | 'b');
+    }, 800);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engine.ready, posKey, guided, board.shields]);
+
+  // Tap a shield: who takes back, Stockfish's choice, or no shield.
+  async function handleShield(square: string) {
+    const t = tensions.find((x) => x.square === square);
+    if (!t) return;
+    const AUTO = 'Let Stockfish choose';
+    const NONE = 'No shield here';
+    const options = [...t.recaptures.map((r) => `Take back with ${r.san}`), ...(t.recaptures.length >= 2 ? [AUTO] : []), NONE];
+    const pick = await simpleMenu(options, `If ${square} is taken`);
+    if (!pick) return;
+    const key = shieldKey(engineState);
+    setBoard((prev) => {
+      const others = (prev.shields?.[key] ?? []).filter((m) => m.square !== square);
+      const r = t.recaptures.find((x) => `Take back with ${x.san}` === pick);
+      const next = pick === AUTO ? others : [...others, { square, from: r ? r.from : null, manual: true }];
+      const shields = { ...(prev.shields ?? {}) };
+      if (next.length) shields[key] = next;
+      else delete shields[key];
+      return { ...prev, shields };
+    });
+  }
   // While the next position is still being analysed the panel keeps showing
   // the last result, dimmed and not tappable, instead of three spinners (the
   // arrows are never kept: they'd point at the wrong position). It shows the
@@ -1764,7 +1834,14 @@ function ReactionBoardEditorOverlay({
       return;
     }
     tutorial.event('boardSaved');
-    close(board);
+    // Stockfish's shield choices made in this editor go with the board.
+    const shields: Record<string, ShieldMark[]> = { ...(board.shields ?? {}) };
+    for (const [key, marks] of Object.entries(autoShields)) {
+      const own = shields[key] ?? [];
+      const add = marks.filter((m) => !own.some((o) => o.square === m.square));
+      if (add.length) shields[key] = [...own, ...add];
+    }
+    close(Object.keys(shields).length ? { ...board, shields } : board);
   }
 
   return (
@@ -1900,6 +1977,11 @@ function ReactionBoardEditorOverlay({
           <View style={StyleSheet.absoluteFill} pointerEvents="none">
             <NumberedArrowBadges arrows={shownCommitted} size={BOARD_SIZE} flipped={flipped} pieces={engineState.pieces} yourColor={yourColor} centers={badgeLayout.numberCenters} />
           </View>
+          {shownShields.length > 0 && (
+            <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+              <ShieldBadges shields={shownShields} size={BOARD_SIZE} flipped={flipped} onPress={handleShield} />
+            </View>
+          )}
         </View>
         {!hideEngine && <EngineEvalBar lines={panelLines} stale={engineStale} flipped={flipped} height={BOARD_SIZE} />}
         </View>

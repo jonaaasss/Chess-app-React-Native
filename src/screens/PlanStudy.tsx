@@ -16,6 +16,8 @@ import { CollapsibleDescription } from '../components/CollapsibleDescription';
 import { BoardShare } from '../components/BoardShare';
 import type { Arrow, ArrowColor, Card, Circle, PieceCode, ReactionBoard } from '../types';
 import { ARROW_COLOR_NAMES, ARROW_COLOR_ORDER, arrowColors, BASE_ARROW_COLORS, boardStyles, DARK_TINT, colors, radius, touchTarget } from '../theme';
+import { ShieldBadges } from '../components/ShieldBadges';
+import { shieldsOn } from '../shields';
 import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, arrowIsOpponent, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, opponentTint, parallelOffsets, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
 import { PIECE_ANIM_DURATION_MS } from '../components/PieceAnimation';
 import type { GuideTargets } from '../components/GuideCoach';
@@ -834,6 +836,16 @@ export function PlanStudy({
             <NumberedArrowBadges arrows={numberedArrows} size={BOARD_SIZE} flipped={flipped} pieces={board.back.pieces} yourColor={yourColor} centers={numberCenters} />
             {visibleCircles.length > 0 && <CirclesSvg circles={visibleCircles} size={BOARD_SIZE} flipped={flipped} pieces={board.back.pieces} yourColor={yourColor} />}
           </View>
+          {!guideTargets && (
+            // Who takes back on your attacked pieces (src/shields.ts).
+            <View style={StyleSheet.absoluteFill} pointerEvents="none">
+              <ShieldBadges
+                shields={shieldsOn({ pieces: board.back.pieces, turn: board.back.turn, castling: board.back.castling, enPassant: board.back.enPassant }, yourColor, board.shields)}
+                size={BOARD_SIZE}
+                flipped={flipped}
+              />
+            </View>
+          )}
         </View>
         {isSummary && (
           <ArrowLinkNoteBadges
