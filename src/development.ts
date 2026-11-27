@@ -21,15 +21,16 @@ import type { PieceCode } from './types';
 
 export type DevColor = 'green' | 'orange' | 'red' | 'blue' | 'purple' | 'yellow' | 'teal' | 'grey';
 
+// Light tones (the light arrow colours), easy to see on both square colours.
 export const DEV_COLORS: Record<DevColor, string> = {
-  green: '#40C057',
-  orange: '#F08C00',
-  red: '#E03131',
-  blue: '#1C7ED6',
-  purple: '#9C36B5',
-  yellow: '#FAD02C',
-  teal: '#12B886',
-  grey: '#9AA4B2'
+  green: '#7CDB8A',
+  orange: '#F5B266',
+  red: '#F27C7C',
+  blue: '#7EB8F2',
+  purple: '#C9A2F5',
+  yellow: '#FDE68A',
+  teal: '#6EE0D2',
+  grey: '#CBD5E1'
 };
 
 export const DEV_COLOR_NAMES: Record<DevColor, string> = {
