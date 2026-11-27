@@ -732,6 +732,8 @@ function ReactionBoardEditorOverlay({
     !onlyDrawing ||
     (activeThreat ? sameThreat(threatOfArrow(a as Arrow), activeThreat) : effectiveArrowColor(a as Arrow, engineState.pieces, yourColor) === annotateColor);
   const shownArrows = visibleArrows.filter(isShownArrow);
+  // Arrows that get a note "+" badge: not Generate plan's reactions.
+  const noteArrows = shownArrows.filter((a) => !a.belongsTo);
   const isShownCircle = (c: Circle) =>
     !onlyDrawing ||
     (activeThreat
@@ -759,7 +761,7 @@ function ReactionBoardEditorOverlay({
       numberIdx.push(i);
       pts.push(numberBadgeCenter(a, i, BOARD_SIZE, flipped, offsets[i]));
     });
-    const notes = isPlan && atHead ? shownArrows.map((a) => noteBadgeCenter(a.from, a.to, BOARD_SIZE, flipped)) : [];
+    const notes = isPlan && atHead ? noteArrows.map((a) => noteBadgeCenter(a.from, a.to, BOARD_SIZE, flipped)) : [];
     const placed = separateBadgeCenters([...pts, ...notes], NOTE_BADGE_MIN_DIST, BOARD_SIZE);
     const numberCenters: (Point | undefined)[] = [];
     numberIdx.forEach((idx, k) => (numberCenters[idx] = placed[k]));
@@ -2021,7 +2023,7 @@ function ReactionBoardEditorOverlay({
             <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
               <ArrowNoteBadges
                 centers={badgeLayout.noteCenters}
-                arrows={shownArrows.map((a) => ({
+                arrows={noteArrows.map((a) => ({
                   id: `${a.from}-${a.to}-${a.color}`,
                   from: a.from,
                   to: a.to,

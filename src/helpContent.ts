@@ -19,7 +19,7 @@ export const HELP_GENERATE_PLAN: HelpTopic = {
     "Your move: the acceptable moves are Stockfish's top 3 (depth 12) and your moves with at least 5% of the games, at most 0.1 pawn worse than Stockfish's best. Without Stockfish: the database rule (Your move).",
     'Two passes: the first notes in how many lines each move is acceptable; the second plays everywhere the acceptable move that is acceptable in the most lines, so one plan move is used wherever it fits.',
     'The plan per turn: of the moves played at that turn (at least a quarter as often as the most played one) and not yet in the plan, the one acceptable in the most lines.',
-    'Reaction: an opponent move just before that turn, in at least 5% of the lines at that turn, after which you play a plan move in less than half of the lines. Your most played move there is the reaction; both are drawn in the dark tint of the plan move and belong to it (hidden until its badge is tapped). Only drawn when both pieces stand on their start squares on this board (or get there by a drawn move).',
+    'Reaction: an opponent move just before that turn, in at least 5% of the lines at that turn, after which you play a plan move in less than half of the lines. Your most played move there is the reaction; both are drawn in the dark tint of the plan move and belong to it (hidden until its badge is tapped): one opponent move and one answer each, numbered in pairs (their 1 goes with your 1). Only drawn when both pieces stand on their start squares on this board, and per plan move each opponent move and each answer only once.',
     'Move by move: for your 1st, 2nd, … move (up to Depth), which move you play as a share of the lines that get that far, and after which opponent moves.'
   ]
 };

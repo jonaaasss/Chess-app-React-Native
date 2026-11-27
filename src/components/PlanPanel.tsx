@@ -167,7 +167,7 @@ export function PlanPanel({
                       <View key={`${r.trigger}${r.answer}`} style={[styles.row, styles.indent]}>
                         <View style={[styles.dot, { backgroundColor: r.drawn ? arrowColors[r.color] : 'transparent', borderColor: arrowColors[r.color] }]} />
                         <Text style={[styles.line, !r.drawn && styles.off]}>
-                          {`${r.trigger} → ${r.answer} · ${pct(r.share)}${r.reason ? ` · ${r.reason}` : ''}${r.drawn ? '' : ' · not drawn: a piece is not on the board yet'}`}
+                          {`${r.trigger} → ${r.answer} · ${pct(r.share)}${r.reason ? ` · ${r.reason}` : ''}${r.drawn ? '' : ` · ${r.skip ?? 'not drawn'}`}`}
                         </Text>
                       </View>
                     ))}

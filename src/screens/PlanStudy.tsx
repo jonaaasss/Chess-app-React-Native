@@ -719,17 +719,22 @@ export function PlanStudy({
     return { key, to: a.to, count, color: arrowColors[mine[0]?.color ?? a.color], open: openReactions.has(key) };
   });
   const allLinked = [...linked.values()].flat();
+  // Opponent move k goes with your answer k (planMaker.ts keeps them in pairs).
   for (const t of revealTargets) {
     if (!t.open) continue;
-    (linked.get(t.key) ?? []).forEach((a, i) =>
+    let oppN = 0;
+    let ownN = 0;
+    (linked.get(t.key) ?? []).forEach((a, i) => {
+      const opponent = arrowIsOpponent(a, board?.back.pieces, yourColor, allLinked) || !board?.back.pieces[a.from];
       numberedArrows.push({
         id: `reaction-${t.key}-${i}`,
         from: a.from,
         to: a.to,
         color: arrowColors[a.color],
-        opponent: arrowIsOpponent(a, board?.back.pieces, yourColor, allLinked) || !board?.back.pieces[a.from]
-      })
-    );
+        opponent,
+        number: opponent ? ++oppN : ++ownN
+      });
+    });
   }
   if (wrongArrow) {
     numberedArrows.push({ id: 'wrong', from: wrongArrow.from, to: wrongArrow.to, color: colors.danger });

@@ -84,7 +84,10 @@ export interface MadePlanReaction {
   share: number; // of the lines at that turn
   reason: string; // "takes on f6", "" for a quiet move
   color: ArrowColor;
-  drawn: boolean; // false: a piece is not on the board yet, so it can't be drawn here
+  drawn: boolean;
+  // Why it is not drawn: its piece is not on that square on this board, or
+  // another reaction of the same plan move already uses that move.
+  skip?: string;
 }
 
 export interface MadePlanTurn {
@@ -355,7 +358,17 @@ export async function makePlan(
   const isPlan = (key: string) => planKeys.includes(key);
 
   // ---------- Reactions ----------
-  type Pair = { n: number; trigger: Occ; answer: Occ; share: number; reason: string; owner: string; color: ArrowColor };
+  type Pair = {
+    n: number;
+    trigger: Occ;
+    answer: Occ;
+    trigPiece?: string; // the pieces that move, as they stand before the move
+    ansPiece?: string;
+    share: number;
+    reason: string;
+    owner: string;
+    color: ArrowColor;
+  };
   const pairs: Pair[] = [];
   for (const [n, at] of turnsAt) {
     const plan = planAt.get(n);
@@ -387,6 +400,8 @@ export async function makePlan(
         n,
         trigger: top.prev.occ,
         answer: top.item.occ,
+        trigPiece: top.prev.before.pieces[top.prev.occ.from],
+        ansPiece: top.item.before.pieces[top.item.occ.from],
         share: w / reach,
         reason: threatReason(top.prev, yourColor) ?? '',
         owner: plan.key,
@@ -396,25 +411,24 @@ export async function makePlan(
   }
   pairs.sort((a, b) => a.n - b.n || b.share - a.share);
 
-  // Only what can be drawn on THIS board: the opponent's piece stands on the
-  // move's start square (or gets there by another drawn opponent move), and so
-  // does yours (or it gets there by a drawn move of yours). Otherwise the
-  // arrow would start on an empty square.
-  const oppColor = yourColor === 'w' ? 'b' : 'w';
+  // Only what can be drawn on THIS board, one opponent move and one move of
+  // yours per reaction: both pieces stand on their start squares in the board
+  // position (no chains like !Nc3 then !Ne4), and per plan move each opponent
+  // move and each answer is used once (heaviest first), so the numbers pair
+  // them up: dark arrow 1 of the opponent goes with your dark arrow 1.
   const drawn = new Set<Pair>();
-  for (let grew = true; grew; ) {
-    grew = false;
-    for (const p of pairs) {
-      if (drawn.has(p)) continue;
-      const kept = [...drawn];
-      const oppOk = start.pieces[p.trigger.from]?.[0] === oppColor || kept.some((q) => q.trigger.to === p.trigger.from);
-      const ownOk =
-        start.pieces[p.answer.from]?.[0] === yourColor || [...planAt.values()].some((m) => m.to === p.answer.from) || kept.some((q) => q.answer.to === p.answer.from);
-      if (oppOk && ownOk) {
-        drawn.add(p);
-        grew = true;
-      }
+  const skipped = new Map<Pair, string>();
+  for (const p of pairs) {
+    if (!p.trigPiece || start.pieces[p.trigger.from] !== p.trigPiece || !p.ansPiece || start.pieces[p.answer.from] !== p.ansPiece) {
+      skipped.set(p, 'not drawn: a piece is not on its square on this board');
+      continue;
     }
+    const same = [...drawn].find((q) => q.owner === p.owner && (q.trigger.key === p.trigger.key || q.answer.key === p.answer.key));
+    if (same) {
+      skipped.set(p, `not drawn: same move as !${same.trigger.san} → ${same.answer.san}`);
+      continue;
+    }
+    drawn.add(p);
   }
 
   // ---------- Arrows ----------
@@ -479,7 +493,7 @@ export async function makePlan(
         }),
       reactions: pairs
         .filter((p) => p.n === n)
-        .map((p) => ({ trigger: `!${p.trigger.san}`, answer: p.answer.san, share: p.share, reason: p.reason, color: p.color, drawn: drawn.has(p) }))
+        .map((p) => ({ trigger: `!${p.trigger.san}`, answer: p.answer.san, share: p.share, reason: p.reason, color: p.color, drawn: drawn.has(p), ...(skipped.has(p) ? { skip: skipped.get(p) } : {}) }))
     });
   }
 
