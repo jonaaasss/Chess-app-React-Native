@@ -8,6 +8,7 @@ import { arrowColors, boardStyles, colors, radius, touchTarget } from '../theme'
 import { BoardCoords, ArrowsSvg, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, type NumberedArrow } from '../components/ChessBoard';
 import { ShieldBadges } from '../components/ShieldBadges';
 import { shieldsOn } from '../shields';
+import { DevelopmentMarks, useDevelopmentMarks } from '../components/DevelopmentMarks';
 import { usePieceAnimation, PieceAnimationGhosts, PIECE_ANIM_DURATION_MS } from '../components/PieceAnimation';
 import type { GuideTargets } from '../components/GuideCoach';
 import { CollapsibleDescription } from '../components/CollapsibleDescription';
@@ -332,6 +333,9 @@ export function ReactionStudy({
     for (const n of viewPath) st = makeMove(st, n.from, n.to, n.promotion).next;
     return st;
   }, [board, viewPath]);
+
+  // Where your undeveloped knights and bishops go (src/development.ts).
+  const devMarks = useDevelopmentMarks(board ? liveState : null, yourColor, !guideTargets && !wrongMovePreview);
 
   if (cursorRef) cursorRef.current = viewPath.length ? viewPath[viewPath.length - 1].id : null;
 
@@ -862,6 +866,7 @@ export function ReactionStudy({
             <PieceAnimationGhosts ghosts={ghosts} cell={CELL} />
             {/* Who takes back on your attacked pieces (src/shields.ts). */}
             {!guideTargets && !wrongMovePreview && <ShieldBadges shields={shieldsOn(liveState, yourColor, board.shields)} size={BOARD_SIZE} flipped={flipped} />}
+            {devMarks.length > 0 && <DevelopmentMarks marks={devMarks} size={BOARD_SIZE} flipped={flipped} />}
           </View>
           {rewinding && (
             <View style={[StyleSheet.absoluteFill, styles.rewindOverlay]} pointerEvents="none">

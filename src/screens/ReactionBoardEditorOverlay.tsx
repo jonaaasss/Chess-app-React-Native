@@ -22,6 +22,8 @@ import type { Arrow, ArrowColor, BoardFace, BoardMove, CardMode, Circle, MoveNod
 import { chooseRecapture, findTensions, shieldFor, shieldKey } from '../shields';
 import { ShieldBadges, type ShownShield } from '../components/ShieldBadges';
 import { isHiddenLinked, linkedArrows, REVEAL_BADGE, revealBadgeCenter, RevealBadges, type RevealTarget } from '../components/RevealBadges';
+import { devMarkCenter, devMarkSize, DevelopmentMarks, useDevelopmentMarks } from '../components/DevelopmentMarks';
+import { developmentText, type DevMark } from '../development';
 import { ARROW_COLOR_NAMES, arrowColors, BASE_ARROW_COLORS, boardStyles, colors, DARK_TINT, engineColors, radius, spacing, touchTarget, type, variationColor } from '../theme';
 import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, arrowIsOpponent, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, parallelOffsets, opponentTint, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts } from '../components/PieceAnimation';
@@ -817,14 +819,22 @@ function ReactionBoardEditorOverlay({
           const count = Math.max(1, mine.filter((x) => arrowIsOpponent(x, engineState.pieces, yourColor, allArrows) || !engineState.pieces[x.from]).length);
           return { key, to: a.to, count, color: arrowColors[mine[0]?.color ?? a.color], open: revealed.has(key) };
         });
-  // Where the tappable badges are (shields, reaction badges), for the board's
-  // touch handling (see hitsArrowNoteBadge). Kept fresh every render.
+  // Where your undeveloped knights and bishops go (src/development.ts); a tap
+  // gives the breakdown in words.
+  const devMarks = useDevelopmentMarks(engineState, yourColor, !guided);
+  function handleDevMark(mark: DevMark) {
+    void alertDialog(`${developmentText(mark)}\n\nFrom the Lichess explorer's lines from this position.`);
+  }
+  // Where the tappable badges are (shields, reaction badges, development
+  // marks), for the board's touch handling (see hitsArrowNoteBadge). Kept
+  // fresh every render.
   const badgeHitRef = useRef<{ x: number; y: number; r: number }[]>([]);
   {
     const cell = BOARD_SIZE / 8;
     const shield = Math.max(18, Math.round(cell * 0.52));
     badgeHitRef.current = [
       ...revealTargets.map((t) => ({ ...revealBadgeCenter(t.to, BOARD_SIZE, flipped), r: REVEAL_BADGE / 2 })),
+      ...devMarks.map((m) => ({ ...devMarkCenter(m.square, BOARD_SIZE, flipped), r: devMarkSize(BOARD_SIZE) / 2 })),
       ...shownShields.map((sh) => {
         const raw = squareIndex(sh.square);
         return { x: (flipIndex(raw.file, flipped) + 1) * cell - shield / 2, y: (flipIndex(raw.rank, flipped) + 1) * cell - shield / 2, r: shield / 2 };
@@ -2030,6 +2040,11 @@ function ReactionBoardEditorOverlay({
           {shownShields.length > 0 && (
             <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
               <ShieldBadges shields={shownShields} size={BOARD_SIZE} flipped={flipped} onPress={handleShield} />
+            </View>
+          )}
+          {devMarks.length > 0 && (
+            <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+              <DevelopmentMarks marks={devMarks} size={BOARD_SIZE} flipped={flipped} onPress={handleDevMark} />
             </View>
           )}
           {revealTargets.length > 0 && (

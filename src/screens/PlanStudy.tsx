@@ -18,6 +18,7 @@ import type { Arrow, ArrowColor, Card, Circle, PieceCode, ReactionBoard } from '
 import { ARROW_COLOR_NAMES, ARROW_COLOR_ORDER, arrowColors, BASE_ARROW_COLORS, boardStyles, DARK_TINT, colors, radius, touchTarget } from '../theme';
 import { ShieldBadges } from '../components/ShieldBadges';
 import { linkedArrows, RevealBadges, type RevealTarget } from '../components/RevealBadges';
+import { DevelopmentMarks, useDevelopmentMarks } from '../components/DevelopmentMarks';
 import { shieldsOn } from '../shields';
 import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, arrowIsOpponent, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, opponentTint, parallelOffsets, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
 import { PIECE_ANIM_DURATION_MS } from '../components/PieceAnimation';
@@ -250,6 +251,12 @@ export function PlanStudy({
     return { finalAnnotations: { arrows: colored.filter((x) => !isLinked(x)), circles: a.circles }, linked: links };
   }, [board, yourColor]);
   const [openReactions, setOpenReactions] = useState<Set<string>>(() => new Set());
+  // Where your undeveloped knights and bishops go (src/development.ts).
+  const devState = useMemo(
+    () => (board ? { pieces: board.back.pieces, turn: board.back.turn, castling: board.back.castling, enPassant: board.back.enPassant } : null),
+    [board]
+  );
+  const devMarks = useDevelopmentMarks(devState, yourColor, !guideTargets);
   function toggleReactions(key: string) {
     setOpenReactions((prev) => {
       const next = new Set(prev);
@@ -883,6 +890,7 @@ export function PlanStudy({
                 size={BOARD_SIZE}
                 flipped={flipped}
               />
+              <DevelopmentMarks marks={devMarks} size={BOARD_SIZE} flipped={flipped} />
             </View>
           )}
         </View>
