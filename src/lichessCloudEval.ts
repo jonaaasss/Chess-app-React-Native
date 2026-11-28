@@ -69,7 +69,7 @@ function toLines(pvs: Pv[]): CloudLine[] {
 
 async function ask(fen: string, multiPv: number, token: string | null): Promise<CloudEval | null> {
   const url = `https://lichess.org/api/cloud-eval?fen=${encodeURIComponent(fen)}&multiPv=${multiPv}`;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     let res: Response;
     try {
       res = await fetch(url, { headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) } });
@@ -78,6 +78,11 @@ async function ask(fen: string, multiPv: number, token: string | null): Promise<
     }
     if (res.status === 429) {
       await new Promise((r) => setTimeout(r, 61000));
+      continue;
+    }
+    // The cloud analysis is public: a refused token is simply left out.
+    if (res.status === 401 && token) {
+      token = null;
       continue;
     }
     if (!res.ok) return null;
