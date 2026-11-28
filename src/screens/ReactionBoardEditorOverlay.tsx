@@ -39,6 +39,7 @@ import { useStockfishEngine, type EngineLine } from '../engine/useStockfishEngin
 import { engineEvaluator, lineCp } from '../ownMove';
 import { ExplorerPanel } from '../components/ExplorerPanel';
 import { DB_LABEL, fetchExplorer, getLichessToken } from '../lichessExplorer';
+import { fetchCloudEval } from '../lichessCloudEval';
 import { MAKE_PLAN_OPTIONS, madePlanDescription, makePlan, type MadePlanDetails } from '../planMaker';
 import { PlanPanel, type PlanChoices } from '../components/PlanPanel';
 import { allowScreenOff, keepScreenOn } from '../keepAwake';
@@ -1557,17 +1558,23 @@ function ReactionBoardEditorOverlay({
         (f) => fetchExplorer(f, choices.db),
         { ...MAKE_PLAN_OPTIONS, depth: choices.depth },
         setGenStatus,
-        // Stockfish judges your moves: its top 3, or only some moves (depth 12, at most 15 s).
-        engine.ready
-          ? async (f, st, searchMoves) => {
-              const lines = await engine.analyzeOnce(f, st.turn, { searchMoves, depth: 12, timeoutMs: 15000 });
-              const out = lines.flatMap((l) => {
-                const cp = lineCp(l);
-                return cp === undefined ? [] : [{ from: l.from, to: l.to, promotion: l.promotion, cp }];
-              });
-              return out.length ? out : null;
-            }
-          : undefined,
+        // Stockfish judges your moves: first Lichess's cloud analysis (deep and
+        // instant), else Stockfish on the phone: its top 3, or only some
+        // moves (depth 12, at most 15 s).
+        async (f, st, searchMoves) => {
+          if (!searchMoves) {
+            const cloud = await fetchCloudEval(f);
+            if (cloud) return cloud.lines.map((l) => ({ ...l, source: 'cloud' as const }));
+          }
+          if (!engine.ready) return null;
+          setGenStatus('Stockfish on your phone…');
+          const lines = await engine.analyzeOnce(f, st.turn, { searchMoves, depth: 12, timeoutMs: 15000 });
+          const out = lines.flatMap((l) => {
+            const cp = lineCp(l);
+            return cp === undefined ? [] : [{ from: l.from, to: l.to, promotion: l.promotion, cp, source: 'phone' as const }];
+          });
+          return out.length ? out : null;
+        },
         () => genCancel.current
       );
       if (genCancel.current) return;

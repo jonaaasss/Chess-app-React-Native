@@ -6,10 +6,11 @@
 //    until `depth` of your moves. On the opponent's move every move that comes
 //    in at least 5% of the lines is followed (when none does, the most played
 //    one). Every line carries a weight: how often it is reached.
-// 2. On your move the ACCEPTABLE moves are listed: Stockfish's top 3 and your
-//    moves with at least 5% of the games, at most 0.1 pawn (`margin`) worse
-//    than Stockfish's best. Without Stockfish: the database rule's move
-//    (ownMove.ts).
+// 2. On your move the ACCEPTABLE moves are listed: Stockfish's best moves
+//    (Lichess cloud analysis, up to 5, else Stockfish on the phone, top 3)
+//    and your moves with at least 5% of the games, at most 0.1 pawn
+//    (`margin`) worse than Stockfish's best. Without either: the database
+//    rule's move (ownMove.ts).
 // 3. Two passes: the first notes in how many lines (weighted) each move is
 //    acceptable (`acceptWeight`); the second plays everywhere the acceptable
 //    move that is acceptable in the most lines, so one plan move is used
@@ -47,9 +48,10 @@ export interface EngineMove {
   to: string;
   promotion?: PromotionPiece;
   cp: number; // White's point of view (mate as ±100000 minus the moves to mate)
+  source?: 'cloud' | 'phone'; // Lichess cloud analysis or Stockfish on the phone
 }
 
-// Stockfish's best lines (up to 3) in a position, optionally only among
+// Stockfish's best lines (up to 5) in a position, optionally only among
 // `searchMoves` (UCI); null when it could not answer.
 export type EngineLines = (fen: string, state: GameState, searchMoves?: string[]) => Promise<EngineMove[] | null>;
 
@@ -103,6 +105,8 @@ export interface MadePlanTurn {
 export interface MadePlanDetails {
   lines: number;
   engine: boolean; // Stockfish judged your moves
+  // Where the evaluations of your positions came from.
+  evals: { cloud: number; phone: number };
   turns: MadePlanTurn[];
   // Where you play another move than the most played one, and why.
   choices: { after: string; chosen: string; instead: string; detail: string }[];
@@ -181,6 +185,7 @@ export async function makePlan(
   // Your acceptable moves in a position (see the top of the file), with
   // Stockfish's evaluations (White's point of view, by "from+to").
   let usedEngine = false;
+  const evalSource = new Map<string, 'cloud' | 'phone'>();
   async function acceptableMoves(st: GameState, res: ExplorerResult): Promise<{ accept: Cand[]; evals: Map<string, number>; most?: Cand; why?: string }> {
     const popular = res.moves.filter((m) => m.games >= Math.max(opts.minGames, res.games * opts.minShare));
     const keyOf = (san: string) => {
@@ -193,6 +198,7 @@ export async function makePlan(
     const top = engine ? await engineLinesFor(engine, st) : null;
     if (top) {
       usedEngine = true;
+      evalSource.set(fenOf(st), top[0].source ?? 'phone');
       for (const l of top) evals.set(`${l.from}${l.to}`, l.cp);
       const best = Math.max(...top.map((l) => forYou(l.cp)));
       const worstTop = Math.min(...top.map((l) => forYou(l.cp)));
@@ -500,7 +506,13 @@ export async function makePlan(
   const keyReactions = pairs.filter((p) => drawn.has(p)).map((p) => `!${p.trigger.san} => ${p.answer.san}`);
   return {
     arrows,
-    details: { lines: leaves.length, engine: usedEngine, turns, choices: [...choices.values()] },
+    details: {
+      lines: leaves.length,
+      engine: usedEngine,
+      evals: { cloud: [...evalSource.values()].filter((x) => x === 'cloud').length, phone: [...evalSource.values()].filter((x) => x === 'phone').length },
+      turns,
+      choices: [...choices.values()]
+    },
     lines: leaves.length,
     requests,
     keyMoves: [...planAt.values()].map((m) => m.san),

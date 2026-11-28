@@ -145,7 +145,11 @@ export function PlanPanel({
           {details && madeWith && (
             <View style={styles.results}>
               <Text style={styles.dim}>
-                {`From ${details.lines} lines · ${DB_LABEL[madeWith.db]} · depth ${madeWith.depth}${details.engine ? ' · with Stockfish' : ' · without Stockfish (database only)'}`}
+                {`From ${details.lines} lines · ${DB_LABEL[madeWith.db]} · depth ${madeWith.depth}${
+                  details.engine
+                    ? ` · Stockfish: ${details.evals.cloud} positions from the Lichess cloud, ${details.evals.phone} on your phone`
+                    : ' · without Stockfish (database only)'
+                }`}
               </Text>
 
               <Text style={styles.section}>The plan</Text>
