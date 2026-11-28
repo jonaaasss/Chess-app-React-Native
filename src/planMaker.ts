@@ -135,8 +135,15 @@ async function engineLinesFor(engine: EngineLines, state: GameState, searchMoves
   const key = `${fen}|${searchMoves ? [...searchMoves].sort().join(',') : '*'}`;
   const hit = engineCache.get(key);
   if (hit) return hit;
-  const got = await engine(fen, state, searchMoves).catch(() => null);
-  if (!got || got.length === 0) return null;
+  const raw = await engine(fen, state, searchMoves).catch(() => null);
+  if (!raw || raw.length === 0) return null;
+  // Lichess writes castling as the king taking its own rook (e8h8); the app
+  // as the king's own move (e8g8).
+  const got = raw.map((l) => {
+    const piece = state.pieces[l.from];
+    if (piece?.[1] !== 'K' || Math.abs(l.to.charCodeAt(0) - l.from.charCodeAt(0)) < 2) return l;
+    return { ...l, to: `${l.to[0] === 'h' ? 'g' : l.to[0] === 'a' ? 'c' : l.to[0]}${l.to[1]}` };
+  });
   engineCache.set(key, got);
   return got;
 }
@@ -286,7 +293,9 @@ export async function makePlan(
               : why ?? 'database rule';
           choices.set(fen, { after: last ? `!${last.occ.san}` : 'the start', chosen: chosen.san, instead: most.san, detail });
         }
-        const p = play(t.st, chosen.san);
+        // The chosen move, or the next acceptable one if it can't be played here.
+        let p = play(t.st, chosen.san);
+        if (!p) for (const c of [...accept].sort((a, b) => score(b) - score(a) || b.games - a.games)) if ((p = play(t.st, c.san))) break;
         if (!p) {
           finish();
           continue;
