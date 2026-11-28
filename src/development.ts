@@ -54,9 +54,10 @@ export interface DevMark {
   square: string;
   piece: PieceCode;
   slices: DevSlice[]; // largest first
-  // Per opponent move just before the piece leaves its square ("!c4"; "" =
-  // at once, before the opponent moves): where it goes then, most played
-  // first. Only opponent moves in at least 5% of the piece's lines.
+  // The exceptions: an opponent move just before the piece leaves its square
+  // ("!c4"; "" = at once, before the opponent moves) after which it mostly
+  // goes somewhere else than usual, and where it goes then. Only opponent
+  // moves in at least 5% of the piece's lines.
   after: { trigger: string; share: number; moves: { san: string; share: number; color: DevColor }[] }[];
 }
 
@@ -218,17 +219,21 @@ export async function developmentMarks(
     }
     const slices = [...byColor.values()].filter((s) => s.share >= 0.03).sort((a, b) => b.share - a.share);
     const sum = slices.reduce((s, x) => s + x.share, 0);
-    // Per opponent move: where the piece goes after it.
+    // The exceptions: opponent moves after which the piece mostly goes
+    // somewhere else than it usually does (`usual`: its most common
+    // destination, "" = stays).
+    const usual = [...m.entries()].sort((a, b) => b[1].w - a[1].w)[0]?.[0] ?? '';
     const after: DevMark['after'] = [...(byTrigger.get(square) ?? new Map<string, Map<string, { w: number; san: string }>>()).entries()]
       .map(([trigger, dests]) => {
         const w = [...dests.values()].reduce((s, e) => s + e.w, 0);
         const moves = [...dests.entries()]
-          .map(([to, e]) => ({ san: e.san.replace(/[+#]/g, ''), share: e.w / w, color: developmentColor(piece, square, to) }))
+          .map(([to, e]) => ({ to, san: e.san.replace(/[+#]/g, ''), share: e.w / w, color: developmentColor(piece, square, to) }))
           .filter((x) => x.share >= 0.15)
           .sort((a, b) => b.share - a.share);
-        return { trigger, share: w / total, moves };
+        return { trigger, share: w / total, moves, top: moves[0]?.to };
       })
-      .filter((x) => x.share >= 0.05 && x.moves.length > 0)
+      .filter((x) => x.share >= 0.05 && x.moves.length > 0 && x.top !== usual)
+      .map(({ trigger, share, moves }) => ({ trigger, share, moves: moves.map(({ san, share: s, color }) => ({ san, share: s, color })) }))
       .sort((a, b) => b.share - a.share)
       .slice(0, 6);
     if (sum > 0) marks.push({ square, piece, slices: slices.map((s) => ({ ...s, share: s.share / sum })), after });
@@ -244,5 +249,5 @@ export function developmentText(mark: DevMark): string {
   const lines = mark.after.map(
     (a) => `${a.trigger ? `After !${a.trigger.replace(/[+#]/g, '')}` : 'At once'}: ${a.moves.map((m) => `${m.san} ${Math.round(m.share * 100)}%`).join(' · ')}`
   );
-  return [`${name} on ${mark.square}: ${parts.join(' · ')}`, ...(lines.length ? ['', ...lines] : [])].join('\n');
+  return [`${name} on ${mark.square}: ${parts.join(' · ')}`, ...(lines.length ? ['', 'Exceptions:', ...lines] : [])].join('\n');
 }
