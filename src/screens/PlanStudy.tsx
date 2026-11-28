@@ -18,7 +18,7 @@ import type { Arrow, ArrowColor, Card, Circle, PieceCode, ReactionBoard } from '
 import { ARROW_COLOR_NAMES, ARROW_COLOR_ORDER, arrowColors, BASE_ARROW_COLORS, boardStyles, DARK_TINT, colors, radius, touchTarget } from '../theme';
 import { ShieldBadges } from '../components/ShieldBadges';
 import { linkedArrows, RevealBadges, type RevealTarget } from '../components/RevealBadges';
-import { DevelopmentMarks, useDevelopmentMarks } from '../components/DevelopmentMarks';
+import { DevelopmentMarks, openDevelopmentText, useDevelopmentMarks } from '../components/DevelopmentMarks';
 import { shieldsOn } from '../shields';
 import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, arrowIsOpponent, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, opponentTint, parallelOffsets, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
 import { PIECE_ANIM_DURATION_MS } from '../components/PieceAnimation';
@@ -895,7 +895,6 @@ export function PlanStudy({
                 size={BOARD_SIZE}
                 flipped={flipped}
               />
-              <DevelopmentMarks marks={devMarks} size={BOARD_SIZE} flipped={flipped} />
             </View>
           )}
         </View>
@@ -909,6 +908,12 @@ export function PlanStudy({
             onShowNote={setSummaryNote}
             positions={linkNotePositions}
           />
+        )}
+        {devMarks.length > 0 && (
+          // Above the board, so a tap reaches the mark and not the drawing.
+          <View style={[StyleSheet.absoluteFill, { width: BOARD_SIZE, height: BOARD_SIZE }]} pointerEvents="box-none">
+            <DevelopmentMarks marks={devMarks} size={BOARD_SIZE} flipped={flipped} onPress={openDevelopmentText} hitSlop={3} />
+          </View>
         )}
         {revealTargets.length > 0 && (
           // Above the board, so a tap reaches the badge and not the drawing.

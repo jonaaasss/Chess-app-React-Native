@@ -27,14 +27,15 @@ export const HELP_GENERATE_PLAN: HelpTopic = {
 export const HELP_VARIATIONS: HelpTopic = {
   title: 'How variations are found',
   simple:
-    'Finds the moments where an opponent move sends your pieces (knights, bishops, queen, castling side) to other squares. Each such moment is a plan and gets its own board on the position where it starts, with all the moves from the opening\'s start. Draw the arrows with Generate plan. "Next:" is a move still to come in that plan, "Played:" one already on the board.',
+    'Finds the moments where an opponent move sends your pieces (knights, bishops, queen, castling side) to other squares. Each such moment is a plan and gets its own board on the position where it starts, with all the moves from the opening\'s start. Create (and Add) also draws the plan on each board right away, as Generate plan does; that takes a while per board. "Next:" is a move still to come in that plan, "Played:" one already on the board.',
   technical: [
     "Scan from the opening's start, 8 of your moves deep (at most 800 positions). Opponent moves with at least 15% there and 2% of all games, otherwise the main move.",
     'Setup of a line: where your pieces stand after your first 6 moves. A move fixes a square when at least 40% choose it, when it was chosen for its score or by Stockfish, or when it is on your board; otherwise the piece is open. Recaptures and not-yet-castled don\'t count; a piece taken within those 6 moves doesn\'t count.',
     "Lines are merged bottom-up when no piece is fixed on two different squares (fixed against open counts half); a plan's square is the one fixed in at least 60% of its games.",
     'A plan whose position comes up in fewer than 2% of the games (real share from the start) joins the most similar plan.',
     'Board position: after the opponent move where the plan leaves the closest other line, plus the moves at least 70% play.',
-    'Add variations: a board\'s own plan is the most played plan through its position; a new plan through a board\'s position "Continues from board N".'
+    'Add variations: a board\'s own plan is the most played plan through its position; a new plan through a board\'s position "Continues from board N".',
+    'Create / Add: each new board gets its plan from Generate plan (at the Plan panel\'s depth): plan arrows, hidden reactions and "Key moves / Key reactions" in its Description; when no plan can be made, the Description says why.'
   ]
 };
 

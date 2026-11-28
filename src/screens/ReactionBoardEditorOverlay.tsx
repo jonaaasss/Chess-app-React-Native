@@ -22,8 +22,8 @@ import type { Arrow, ArrowColor, BoardFace, BoardMove, CardMode, Circle, MoveNod
 import { chooseRecapture, findTensions, shieldFor, shieldKey } from '../shields';
 import { ShieldBadges, type ShownShield } from '../components/ShieldBadges';
 import { isHiddenLinked, linkedArrows, REVEAL_BADGE, revealBadgeCenter, RevealBadges, type RevealTarget } from '../components/RevealBadges';
-import { devMarkCenter, devMarkSize, DevelopmentMarks, useDevelopmentMarks } from '../components/DevelopmentMarks';
-import { developmentText, type DevMark } from '../development';
+import { devMarkCenter, devMarkSize, DevelopmentMarks, openDevelopmentText, useDevelopmentMarks } from '../components/DevelopmentMarks';
+import type { DevMark } from '../development';
 import { ARROW_COLOR_NAMES, arrowColors, BASE_ARROW_COLORS, boardStyles, colors, DARK_TINT, engineColors, radius, spacing, touchTarget, type, variationColor } from '../theme';
 import { BoardCoords, CirclesSvg, PieceGlyph, NumberedArrowsSvg, NumberedArrowBadges, arrowIsOpponent, effectiveArrowColor, isOpponentArrow, numberBadgeCenter, parallelOffsets, opponentTint, separateBadgeCenters, type NumberedArrow, type Point } from '../components/ChessBoard';
 import { usePieceAnimation, PieceAnimationGhosts } from '../components/PieceAnimation';
@@ -36,11 +36,10 @@ import { getBoardEditorTipHidden, setBoardEditorTipHidden, uid } from '../storag
 import { ModeTip } from '../components/ModeTip';
 import { TutorialLayer, useTutorial, useTutorialTarget } from '../tutorial';
 import { useStockfishEngine, type EngineLine } from '../engine/useStockfishEngine';
-import { engineEvaluator, lineCp } from '../ownMove';
+import { engineEvaluator } from '../ownMove';
 import { ExplorerPanel } from '../components/ExplorerPanel';
 import { DB_LABEL, fetchExplorer, getLichessToken } from '../lichessExplorer';
-import { fetchCloudEval } from '../lichessCloudEval';
-import { MAKE_PLAN_OPTIONS, madePlanDescription, makePlan, type MadePlanDetails } from '../planMaker';
+import { cloudThenPhone, MAKE_PLAN_OPTIONS, makePlan, planSource, withPlanDescription, type MadePlanDetails } from '../planMaker';
 import { PlanPanel, type PlanChoices } from '../components/PlanPanel';
 import { allowScreenOff, keepScreenOn } from '../keepAwake';
 
@@ -826,7 +825,7 @@ function ReactionBoardEditorOverlay({
   // gives the breakdown in words.
   const devMarks = useDevelopmentMarks(engineState, yourColor, !guided);
   function handleDevMark(mark: DevMark) {
-    void alertDialog(`${developmentText(mark)}\n\nFrom the Lichess explorer's lines from this position.`);
+    openDevelopmentText(mark);
   }
   // Where the tappable badges are (shields, reaction badges, development
   // marks), for the board's touch handling (see hitsArrowNoteBadge). Kept
@@ -1558,23 +1557,11 @@ function ReactionBoardEditorOverlay({
         (f) => fetchExplorer(f, choices.db),
         { ...MAKE_PLAN_OPTIONS, depth: choices.depth },
         setGenStatus,
-        // Stockfish judges your moves: first Lichess's cloud analysis (deep and
-        // instant), else Stockfish on the phone: its top 3, or only some
-        // moves (depth 12, at most 15 s).
-        async (f, st, searchMoves) => {
-          if (!searchMoves) {
-            const cloud = await fetchCloudEval(f);
-            if (cloud) return cloud.lines.map((l) => ({ ...l, source: 'cloud' as const }));
-          }
-          if (!engine.ready) return null;
-          setGenStatus('Stockfish on your phone…');
-          const lines = await engine.analyzeOnce(f, st.turn, { searchMoves, depth: 12, timeoutMs: 15000 });
-          const out = lines.flatMap((l) => {
-            const cp = lineCp(l);
-            return cp === undefined ? [] : [{ from: l.from, to: l.to, promotion: l.promotion, cp, source: 'phone' as const }];
-          });
-          return out.length ? out : null;
-        },
+        // Stockfish judges your moves: the Lichess cloud first, else the phone.
+        cloudThenPhone(
+          () => (engine.ready ? engine.analyzeOnce : null),
+          () => setGenStatus('Stockfish on your phone…')
+        ),
         () => genCancel.current
       );
       if (genCancel.current) return;
@@ -1589,23 +1576,8 @@ function ReactionBoardEditorOverlay({
         // Threat arrows stay; the plan arrows on this position are replaced.
         const kept = at.arrows.filter((a) => threatOfArrow(a));
         const face = withFaceAnnotationsAt(prev[side], historyIndex, [...kept, ...res.arrows], at.circles);
-        // The Description gets "Key moves / Key reactions" in Jonas's own form:
-        // the whole text when empty; otherwise the old "Key moves:" and "Key
-        // reactions:" lines are replaced (in their place), or the new ones
-        // added below (e.g. "After 5.Nxc6 bxc6 6.e5" from Variations; no
-        // second "Source" line).
-        const gen = madePlanDescription(res, `Lichess explorer (${DB_LABEL[choices.db]}${res.details?.engine ? ' and Stockfish' : ''})`);
-        const own = face.text.trim();
-        const isKey = (l: string) => /^(Key moves|Key reactions):/.test(l.trim());
-        const ownLines = own ? own.split('\n') : [];
-        const keyAt = ownLines.findIndex(isKey);
-        const keptLines = ownLines.filter((l) => !isKey(l));
-        const extra = gen.split('\n').filter((l) => !(keptLines.some((k) => k.includes('Source:')) && l.startsWith('Source:')));
-        const text = !own
-          ? gen
-          : keyAt >= 0
-            ? [...keptLines.slice(0, keyAt), ...extra, ...keptLines.slice(keyAt)].join('\n')
-            : [...keptLines, ...extra].join('\n');
+        // The Description gets "Key moves / Key reactions" (planMaker.ts).
+        const text = withPlanDescription(face.text, res, planSource(DB_LABEL[choices.db], res));
         return { ...prev, [side]: { ...face, text } };
       });
       setRevealed(new Set());

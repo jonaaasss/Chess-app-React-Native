@@ -1,9 +1,10 @@
 // Variations: scans the explorer for the plans of an opening
 // (`variationMap.ts`: where your knights, bishops, queen and king go). Each
-// ticked plan becomes a Plan board (no arrows: Generate plan draws them) on
-// the plan's position — after the opponent move that starts it and the moves
-// everyone plays after it — with every move from the start kept on the
-// board, so it is clear where the position comes from.
+// ticked plan becomes a Plan board on the plan's position — after the
+// opponent move that starts it and the moves everyone plays after it — with
+// every move from the start kept on the board, so it is clear where the
+// position comes from. Create / Add also draws the plan on each board
+// (Generate plan, planMaker.ts, at the Plan panel's depth).
 // - New opening → "Variations (Lichess)" (`openVariationMap`): creates the
 //   opening with one Plan card "Variations". Nothing is saved until "Create";
 //   Cancel leaves no opening behind.
@@ -33,6 +34,8 @@ import { HelpButton } from '../components/HelpButton';
 import { HELP_VARIATIONS, HELP_YOUR_MOVE } from '../helpContent';
 import { makePlanBoard } from '../importOpening';
 import { allowScreenOff, keepScreenOn } from '../keepAwake';
+import { cloudThenPhone, MAKE_PLAN_OPTIONS, makePlan, planSource, withPlanDescription } from '../planMaker';
+import { rememberedPlanDepth } from '../components/PlanPanel';
 import { addOpening, deleteOpening, getBoardStyle, saveCard, uid } from '../storage';
 import { shareText } from '../boardShare';
 import type { BoardMove, OpeningStartPosition, ReactionBoard } from '../types';
@@ -281,8 +284,13 @@ function VariationMapOverlay({
     });
   }
 
-  function makeBoards(picked: { p: Plan; i: number }[], firstOrder: number): ReactionBoard[] {
-    return picked.map(({ p, i }, k) => {
+  // The boards, each with its plan drawn (Generate plan); null when cancelled.
+  async function makeBoards(picked: { p: Plan; i: number }[], firstOrder: number): Promise<ReactionBoard[] | null> {
+    const depth = await rememberedPlanDepth();
+    const out: ReactionBoard[] = [];
+    for (let k = 0; k < picked.length; k++) {
+      if (cancelled.current) return null;
+      const { p, i } = picked[k];
       const d = difference(p, picked.slice(0, k).map((e) => ({ p: e.p, label: `plan ${e.i + 1}` })));
       const text = [
         title(p, i),
@@ -295,21 +303,52 @@ function VariationMapOverlay({
         .filter(Boolean)
         .join('\n');
       const moves = p.line.slice(0, p.end);
-      return makePlanBoard(firstOrder + k, history(moves), planState(p), text, []);
-    });
+      const label = `Plan for board ${k + 1} of ${picked.length}`;
+      setStatus(`${label}…`);
+      let arrows: ReactionBoard['back']['arrows'] = [];
+      let boardText = text;
+      try {
+        const res = await makePlan(
+          planState(p),
+          yourColor,
+          (f) => fetchExplorer(f, db),
+          { ...MAKE_PLAN_OPTIONS, depth },
+          (s) => setStatus(`${label}: ${s}`),
+          cloudThenPhone(
+            () => (engineRef.current.ready ? engineRef.current.analyzeOnce : null),
+            () => setStatus(`${label}: Stockfish on your phone…`)
+          ),
+          () => cancelled.current
+        );
+        if (cancelled.current) return null;
+        if (!res.problem) {
+          arrows = res.arrows;
+          boardText = withPlanDescription(text, res, planSource(DB_LABEL[db], res));
+        } else {
+          boardText = `${text}\nNo plan drawn: ${res.problem}`;
+        }
+      } catch (e) {
+        boardText = `${text}\nNo plan drawn: ${e instanceof Error ? e.message : String(e)}`;
+      }
+      out.push(makePlanBoard(firstOrder + k, history(moves), planState(p), boardText, arrows));
+    }
+    return out;
   }
 
   async function finish() {
     if (!plans) return;
     const picked = plans.map((p, i) => ({ p, i })).filter(({ i }) => selected.has(i)).slice(0, maxNew);
     if (picked.length === 0) return;
+    const made = await makeBoards(picked, mode.kind === 'add' ? existing.length : 0);
+    setStatus(null);
+    if (!made) return;
     if (mode.kind === 'add') {
-      close(makeBoards(picked, existing.length));
+      close(made);
       return;
     }
     const opening = await addOpening(mode.repertoireId, mode.name, start.setupMoves.length > 0 ? start : undefined);
     try {
-      await saveCard({ id: uid(), openingId: opening.id, order: 0, name: 'Variations', mode: 'plan', boards: makeBoards(picked, 0), fastRevision: true });
+      await saveCard({ id: uid(), openingId: opening.id, order: 0, name: 'Variations', mode: 'plan', boards: made, fastRevision: true });
       close(opening.id);
     } catch (e) {
       await deleteOpening(opening.id);
@@ -339,7 +378,7 @@ function VariationMapOverlay({
       </View>
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.intro}>
-          Each ticked plan becomes a board on the position where it starts, with all moves from the start of the opening. Draw the arrows with Generate plan.
+          Each ticked plan becomes a board on the position where it starts, with all moves from the start of the opening, and its plan is drawn on it right away (Generate plan; this takes a while per board).
         </Text>
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Database</Text>

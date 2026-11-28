@@ -29,7 +29,8 @@
 import { toFen } from './chess';
 import { makeMove, type GameState } from './chessEngine';
 import { moveForSan, type ExplorerResult } from './lichessExplorer';
-import { evalText, pickOwnMove, scoreFor, uciOf } from './ownMove';
+import { evalText, lineCp, pickOwnMove, scoreFor, uciOf } from './ownMove';
+import { fetchCloudEval } from './lichessCloudEval';
 import { threatReason } from './planGenerator';
 import type { Arrow, ArrowColor, PromotionPiece } from './types';
 
@@ -527,6 +528,55 @@ export async function makePlan(
     keyMoves: [...planAt.values()].map((m) => m.san),
     keyReactions
   };
+}
+
+// Stockfish for Generate plan (board editor and Variations): first Lichess's
+// cloud analysis (deep and instant), else Stockfish on the phone when it is
+// ready (`analyze`, null when not): its top 3, or only some moves (depth 12,
+// at most 15 s). `onPhone` is told when the phone has to work.
+type AnalyzeOnce = (
+  fen: string,
+  turn: 'w' | 'b',
+  options: { searchMoves?: string[]; depth?: number; timeoutMs?: number }
+) => Promise<{ from: string; to: string; promotion?: PromotionPiece; cp: number | null; mate: number | null }[]>;
+export function cloudThenPhone(analyze: () => AnalyzeOnce | null, onPhone?: () => void): EngineLines {
+  return async (fen, st, searchMoves) => {
+    if (!searchMoves) {
+      const cloud = await fetchCloudEval(fen);
+      if (cloud) return cloud.lines.map((l) => ({ ...l, source: 'cloud' as const }));
+    }
+    const run = analyze();
+    if (!run) return null;
+    onPhone?.();
+    const lines = await run(fen, st.turn, { searchMoves, depth: 12, timeoutMs: 15000 });
+    const out = lines.flatMap((l) => {
+      const cp = lineCp(l);
+      return cp === undefined ? [] : [{ from: l.from, to: l.to, promotion: l.promotion, cp, source: 'phone' as const }];
+    });
+    return out.length ? out : null;
+  };
+}
+
+// A board's Description with the plan's "Key moves / Key reactions" in
+// Jonas's own form: the whole text when empty; otherwise the old "Key
+// moves:" and "Key reactions:" lines are replaced (in their place), or the
+// new ones added below (e.g. under "After 5.Nxc6 bxc6 6.e5" from Variations;
+// no second "Source" line).
+export function withPlanDescription(text: string, r: MadePlan, source: string): string {
+  const gen = madePlanDescription(r, source);
+  const own = text.trim();
+  if (!own) return gen;
+  const isKey = (l: string) => /^(Key moves|Key reactions):/.test(l.trim());
+  const ownLines = own.split('\n');
+  const keyAt = ownLines.findIndex(isKey);
+  const keptLines = ownLines.filter((l) => !isKey(l));
+  const extra = gen.split('\n').filter((l) => !(keptLines.some((k) => k.includes('Source:')) && l.startsWith('Source:')));
+  return keyAt >= 0 ? [...keptLines.slice(0, keyAt), ...extra, ...keptLines.slice(keyAt)].join('\n') : [...keptLines, ...extra].join('\n');
+}
+
+// "Lichess explorer (Lichess 2200–2500 and Stockfish)".
+export function planSource(dbLabel: string, r: MadePlan): string {
+  return `Lichess explorer (${dbLabel}${r.details?.engine ? ' and Stockfish' : ''})`;
 }
 
 // The description in Jonas's own form.

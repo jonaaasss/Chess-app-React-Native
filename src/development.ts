@@ -54,6 +54,10 @@ export interface DevMark {
   square: string;
   piece: PieceCode;
   slices: DevSlice[]; // largest first
+  // Per opponent move just before the piece leaves its square ("!c4"; "" =
+  // at once, before the opponent moves): where it goes then, most played
+  // first. Only opponent moves in at least 5% of the piece's lines.
+  after: { trigger: string; share: number; moves: { san: string; share: number; color: DevColor }[] }[];
 }
 
 const HOME: Record<'w' | 'b', Record<string, 'N' | 'B'>> = {
@@ -121,8 +125,19 @@ export async function developmentMarks(
     m.set(dest, e);
     tally.set(sq, m);
   };
-  type Task = { st: GameState; weight: number; own: number; open: string[] };
-  const queue: Task[] = [{ st: start, weight: 1, own: 0, open: tracked.map((t) => t.square) }];
+  // Per piece: per opponent move just before it moves, weight per destination.
+  const byTrigger = new Map<string, Map<string, Map<string, { w: number; san: string }>>>();
+  const addAfter = (sq: string, trigger: string, dest: string, san: string, w: number) => {
+    const forPiece = byTrigger.get(sq) ?? new Map<string, Map<string, { w: number; san: string }>>();
+    const forTrigger = forPiece.get(trigger) ?? new Map<string, { w: number; san: string }>();
+    const e = forTrigger.get(dest) ?? { w: 0, san };
+    e.w += w;
+    forTrigger.set(dest, e);
+    forPiece.set(trigger, forTrigger);
+    byTrigger.set(sq, forPiece);
+  };
+  type Task = { st: GameState; weight: number; own: number; open: string[]; last: string };
+  const queue: Task[] = [{ st: start, weight: 1, own: 0, open: tracked.map((t) => t.square), last: '' }];
   let requests = 0;
   // A line that reaches the depth: what is still on its square "stays". A
   // line that ends earlier (too few games, the budget) says nothing about it.
@@ -176,12 +191,13 @@ export async function developmentMarks(
       let open = t.open;
       if (mine && open.includes(mv.from)) {
         add(mv.from, mv.to, san, w);
+        addAfter(mv.from, t.last, mv.to, san, w);
         open = open.filter((sq) => sq !== mv.from);
       } else if (!mine && open.includes(mv.to)) {
         // Taken on its square before it moved: its fate is unknown.
         open = open.filter((sq) => sq !== mv.to);
       }
-      queue.push({ st: next, weight: w, own: t.own + (mine ? 1 : 0), open });
+      queue.push({ st: next, weight: w, own: t.own + (mine ? 1 : 0), open, last: mine ? t.last : san });
     }
   }
   if (failed && tally.size === 0) return [];
@@ -202,7 +218,20 @@ export async function developmentMarks(
     }
     const slices = [...byColor.values()].filter((s) => s.share >= 0.03).sort((a, b) => b.share - a.share);
     const sum = slices.reduce((s, x) => s + x.share, 0);
-    if (sum > 0) marks.push({ square, piece, slices: slices.map((s) => ({ ...s, share: s.share / sum })) });
+    // Per opponent move: where the piece goes after it.
+    const after: DevMark['after'] = [...(byTrigger.get(square) ?? new Map<string, Map<string, { w: number; san: string }>>()).entries()]
+      .map(([trigger, dests]) => {
+        const w = [...dests.values()].reduce((s, e) => s + e.w, 0);
+        const moves = [...dests.entries()]
+          .map(([to, e]) => ({ san: e.san.replace(/[+#]/g, ''), share: e.w / w, color: developmentColor(piece, square, to) }))
+          .filter((x) => x.share >= 0.15)
+          .sort((a, b) => b.share - a.share);
+        return { trigger, share: w / total, moves };
+      })
+      .filter((x) => x.share >= 0.05 && x.moves.length > 0)
+      .sort((a, b) => b.share - a.share)
+      .slice(0, 6);
+    if (sum > 0) marks.push({ square, piece, slices: slices.map((s) => ({ ...s, share: s.share / sum })), after });
   }
   if (!failed) memo.set(key, marks);
   return marks;
@@ -212,5 +241,8 @@ export async function developmentMarks(
 export function developmentText(mark: DevMark): string {
   const name = mark.piece[1] === 'N' ? 'Knight' : 'Bishop';
   const parts = mark.slices.map((s) => `${s.move ? s.move.replace(/[+#]/g, '') : 'stays'} ${Math.round(s.share * 100)}% (${DEV_COLOR_NAMES[s.color]})`);
-  return `${name} on ${mark.square}: ${parts.join(' · ')}`;
+  const lines = mark.after.map(
+    (a) => `${a.trigger ? `After !${a.trigger.replace(/[+#]/g, '')}` : 'At once'}: ${a.moves.map((m) => `${m.san} ${Math.round(m.share * 100)}%`).join(' · ')}`
+  );
+  return [`${name} on ${mark.square}: ${parts.join(' · ')}`, ...(lines.length ? ['', ...lines] : [])].join('\n');
 }

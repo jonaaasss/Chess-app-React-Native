@@ -19,6 +19,18 @@ export interface PlanChoices {
 }
 
 const CHOICES_KEY = 'generatePlan.choices';
+
+// The depth chosen in the Plan panel (4 until changed), also used by
+// Variations when it draws the plan on its boards.
+export async function rememberedPlanDepth(): Promise<number> {
+  try {
+    const raw = await AsyncStorage.getItem(CHOICES_KEY);
+    const d = raw ? (JSON.parse(raw) as { depth?: unknown }).depth : undefined;
+    return typeof d === 'number' && d >= 2 && d <= 6 ? d : 4;
+  } catch {
+    return 4;
+  }
+}
 const OPEN_KEY = 'planPanel.open';
 const pct = (x: number) => (x > 0 && x < 0.005 ? '<1%' : `${Math.round(x * 100)}%`);
 const ORDINAL = ['1st', '2nd', '3rd', '4th', '5th', '6th'];

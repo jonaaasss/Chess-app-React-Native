@@ -2,14 +2,20 @@
 // of each of your undeveloped knights and bishops, with where it goes in the
 // Lichess explorer's lines. `useDevelopmentMarks` works them out for a
 // position (after a short pause, so stepping through moves doesn't ask the
-// explorer for every position on the way); the board editor makes them
-// tappable (the breakdown in words), Study only shows them.
+// explorer for every position on the way). A tap shows the breakdown in
+// words, with where the piece goes after each opponent move (board editor
+// and Study; `openDevelopmentText`).
 import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { flipIndex, squareIndex, toFen } from '../chess';
 import type { GameState } from '../chessEngine';
-import { DEV_COLORS, developmentMarks, undevelopedMinors, type DevMark } from '../development';
+import { DEV_COLORS, developmentMarks, developmentText, undevelopedMinors, type DevMark } from '../development';
+import { alertDialog } from '../overlay';
+
+export function openDevelopmentText(mark: DevMark): void {
+  void alertDialog(`${developmentText(mark)}\n\nFrom the Lichess explorer's lines from this position.`);
+}
 import { fetchExplorer, getExplorerDb, getLichessToken, onExplorerDbChange } from '../lichessExplorer';
 
 export function devMarkSize(boardSize: number): number {
@@ -51,12 +57,15 @@ export function DevelopmentMarks({
   marks,
   size,
   flipped,
-  onPress
+  onPress,
+  hitSlop = 10
 }: {
   marks: DevMark[];
   size: number;
   flipped: boolean;
   onPress?: (mark: DevMark) => void;
+  // Smaller in Study, where you draw arrows from the same square.
+  hitSlop?: number;
 }) {
   const d = devMarkSize(size);
   return (
@@ -65,7 +74,7 @@ export function DevelopmentMarks({
         const c = devMarkCenter(m.square, size, flipped);
         const style = [styles.mark, { left: c.x - d / 2, top: c.y - d / 2, width: d, height: d }];
         return onPress ? (
-          <Pressable key={m.square} onPress={() => onPress(m)} hitSlop={10} style={style} accessibilityRole="button" accessibilityLabel={`Where the piece on ${m.square} goes`}>
+          <Pressable key={m.square} onPress={() => onPress(m)} hitSlop={hitSlop} style={style} accessibilityRole="button" accessibilityLabel={`Where the piece on ${m.square} goes`}>
             <Pie mark={m} d={d} />
           </Pressable>
         ) : (
